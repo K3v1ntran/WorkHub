@@ -10,9 +10,19 @@ Local-first, low resource use, no background services.
 | Project | Layer | Depends on |
 | --- | --- | --- |
 | `src/WorkHub.Core` | Domain model + application use cases (no UI, SQLite or file formats) | – |
-| `src/WorkHub.Infrastructure` | SQLite (`Microsoft.Data.Sqlite`), JSON settings, filesystem, logging | Core |
-| `src/WorkHub.App` | WPF views/view models, composition root (`WorkHub.exe`) | Core, Infrastructure |
-| `tests/WorkHub.Tests` | xUnit tests for Core + Infrastructure | Core, Infrastructure |
+| `src/WorkHub.Infrastructure` | SQLite (`Microsoft.Data.Sqlite`), JSON settings, filesystem, process launching, logging | Core |
+| `src/WorkHub.Presentation` | View models + MVVM helpers, WPF-free (dialogs via `IDialogService`) | Core |
+| `src/WorkHub.App` | WPF views, WPF dialog service, composition root (`WorkHub.exe`) | Core, Infrastructure, Presentation |
+| `tests/WorkHub.Tests` | xUnit tests for Core, Infrastructure and Presentation (no window, no external process) | Core, Infrastructure, Presentation |
+
+## Repository settings
+
+Configure in **Settings → Repository** (SVN / Git). Nothing site-specific ships in source:
+
+- SVN host, SVN SYSTEM / SVN ORACLE / RELEASE prefixes, path to `TortoiseProc.exe`
+- GitBucket host, GIT SYSTEM / GIT ORACLE prefixes
+
+Generated target = `host` + `/` + `prefix` + `SystemCode`, unless a System's repository membership has a custom target.
 
 ## Build and test
 

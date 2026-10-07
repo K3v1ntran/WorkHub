@@ -3,7 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:vm="clr-namespace:WorkHub.App.ViewModels"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:repo="clr-namespace:WorkHub.Core.Repositories;assembly=WorkHub.Core"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         Title="WorkHub"
@@ -18,7 +19,6 @@
         <Style x:Key="Banner" TargetType="Border">
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
-            <Setter Property="Visibility" Value="Visible" />
         </Style>
     </Window.Resources>
 
@@ -32,14 +32,18 @@
 
         <!-- Header -->
         <Border Grid.Row="0" Background="{StaticResource Brush.Surface}"
-                BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" Padding="16,10">
+                BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" Padding="16,8">
             <DockPanel LastChildFill="False">
                 <TextBlock DockPanel.Dock="Left" Text="WorkHub" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center"
                            Foreground="{StaticResource Brush.MutedText}" Text="{Binding StatusText}" />
-                <!-- Settings is a separate window; implemented in a later phase. -->
-                <Button DockPanel.Dock="Right" Content="Settings" Padding="12,4" IsEnabled="False"
-                        ToolTipService.ShowOnDisabled="True" ToolTip="Settings will be available in a later phase." />
+                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Settings" AutomationProperties.Name="Settings"
+                        Command="{Binding Repository.OpenSettingsCommand}">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Style="{StaticResource Icon}" Text="&#xE713;" />
+                        <TextBlock Margin="6,0,0,0" Text="Settings" />
+                    </StackPanel>
+                </Button>
             </DockPanel>
         </Border>
 
@@ -57,7 +61,7 @@
             <TextBlock Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorMessage}" />
         </Border>
 
-        <!-- Non-fatal warning -->
+        <!-- Non-fatal startup warning -->
         <Border Grid.Row="2" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}">
             <Border.Style>
                 <Style TargetType="Border" BasedOn="{StaticResource Banner}">
@@ -71,42 +75,220 @@
             <TextBlock Foreground="{StaticResource Brush.Warning}" TextWrapping="Wrap" Text="{Binding WarningMessage}" />
         </Border>
 
-        <TabControl Grid.Row="3" Margin="12" IsEnabled="{Binding IsReady}" Padding="0">
-            <TabItem Header="Repository" Padding="16,4">
+        <TabControl x:Name="PrimaryTabs" Grid.Row="3" Margin="12" IsEnabled="{Binding IsReady}" Padding="0">
+            <TabItem x:Name="RepositoryTab" Header="Repository" Padding="16,4">
                 <Grid DataContext="{Binding Repository}" Background="{StaticResource Brush.Surface}">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="240" MinWidth="180" />
+                        <ColumnDefinition Width="220" MinWidth="180" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
+                    <!-- Left: fixed built-in groups, then the (future) Owner area. -->
                     <DockPanel Grid.Column="0">
-                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Text="REPOSITORIES" />
-                        <ListBox DockPanel.Dock="Top" BorderThickness="0" Background="Transparent"
-                                 ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory}">
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Text="REPOSITORY" />
+                        <ListBox x:Name="CategoryList" DockPanel.Dock="Top" BorderThickness="0" Background="Transparent"
+                                 ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory}"
+                                 AutomationProperties.Name="Repository groups">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding DisplayName}" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
                             <ListBox.ItemTemplate>
                                 <DataTemplate DataType="{x:Type vm:RepositoryCategoryViewModel}">
                                     <DockPanel Margin="4,3">
                                         <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0" FontSize="10"
                                                    Foreground="{StaticResource Brush.MutedText}" VerticalAlignment="Center"
                                                    Text="{Binding VersionControl}" />
-                                        <TextBlock Text="{Binding DisplayName}" />
+                                        <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" />
                                     </DockPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Margin="12,20,12,4" Text="OWNER" />
+                        <Border DockPanel.Dock="Top" Margin="12,14,12,0" BorderThickness="0,1,0,0" BorderBrush="{StaticResource Brush.Border}" />
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Text="OWNER" />
                         <TextBlock DockPanel.Dock="Top" Margin="12,0" FontSize="12" TextWrapping="Wrap"
                                    Foreground="{StaticResource Brush.MutedText}" Text="No Owner groups yet." />
                     </DockPanel>
 
-                    <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource Brush.Border}" />
+                    <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource Brush.Border}" Focusable="False" />
 
+                    <!-- Right: toolbar, banner, list -->
                     <DockPanel Grid.Column="2">
-                        <TextBlock DockPanel.Dock="Top" Margin="16,12" FontSize="15" FontWeight="SemiBold"
-                                   Text="{Binding SelectedCategory.DisplayName}" />
-                        <TextBlock Style="{StaticResource EmptyState}" Text="{Binding SelectedCategory.EmptyStateText}" />
+                        <Grid DockPanel.Dock="Top" Margin="16,8,8,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock FontSize="15" FontWeight="SemiBold" Text="{Binding SelectedCategory.DisplayName}" />
+                                <TextBlock Margin="10,0,0,0" VerticalAlignment="Bottom" Foreground="{StaticResource Brush.MutedText}" Text="{Binding CountText}" />
+                            </StackPanel>
+
+                            <Grid Grid.Column="2" Width="240" Margin="0,0,4,0"
+                                  Visibility="{Binding IsSearchVisible, Converter={StaticResource BoolToVisibility}}">
+                                <TextBox x:Name="SearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                         AutomationProperties.Name="Search systems" PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                                <TextBlock Margin="7,0" IsHitTestVisible="False" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Brush.MutedText}" Text="Search code or name…">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+
+                            <Button Grid.Column="3" Style="{StaticResource ToolButton}" ToolTip="Search (Ctrl+F)" AutomationProperties.Name="Search" Click="SearchButton_Click">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE721;" />
+                            </Button>
+                            <Button Grid.Column="4" Style="{StaticResource ToolButton}" Command="{Binding AddSystemCommand}" ToolTip="Add a System" AutomationProperties.Name="Add System">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Add System" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="MoreButton" Grid.Column="5" Style="{StaticResource ToolButton}" ToolTip="More" AutomationProperties.Name="More" Click="MoreButton_Click">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE712;" />
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Show inactive systems" IsCheckable="True" IsChecked="{Binding ShowInactive}" />
+                                        <Separator />
+                                        <MenuItem Header="Repository settings…" Command="{Binding OpenSettingsCommand}" />
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </Grid>
+
+                        <!-- Repository warning (e.g. missing TortoiseSVN / host) with a direct fix action. -->
+                        <Border DockPanel.Dock="Top" Margin="16,0,16,8" Padding="12,8" CornerRadius="4"
+                                Background="{StaticResource Brush.WarningBackground}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BannerMessage}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Dismiss" AutomationProperties.Name="Dismiss" Command="{Binding DismissBannerCommand}">
+                                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
+                                </Button>
+                                <Button DockPanel.Dock="Right" Margin="8,0" Content="Fix Settings" Command="{Binding FixSettingsCommand}"
+                                        Visibility="{Binding BannerCanFixSettings, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Foreground="{StaticResource Brush.Warning}" Text="{Binding BannerMessage}" AutomationProperties.AutomationId="RepositoryBanner" />
+                            </DockPanel>
+                        </Border>
+
+                        <Border DockPanel.Dock="Top" BorderThickness="0,0,0,1" BorderBrush="{StaticResource Brush.Border}" Padding="14,0,12,4">
+                            <Grid TextElement.Foreground="{StaticResource Brush.MutedText}" TextElement.FontSize="11">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="System Code" />
+                                <TextBlock Grid.Column="1" Text="System Name" />
+                            </Grid>
+                        </Border>
+
+                        <Grid>
+                            <ListView x:Name="SystemList" BorderThickness="0" Background="Transparent"
+                                      ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}"
+                                      SelectionMode="Single"
+                                      
+                                      VirtualizingPanel.IsVirtualizing="True"
+                                      VirtualizingPanel.VirtualizationMode="Recycling"
+                                      ScrollViewer.CanContentScroll="True"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      AutomationProperties.Name="Systems"
+                                      MouseDoubleClick="SystemList_MouseDoubleClick">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
+                                        <Setter Property="AutomationProperties.Name">
+                                            <Setter.Value>
+                                                <MultiBinding StringFormat="{}{0} {1}">
+                                                    <Binding Path="SystemCode" />
+                                                    <Binding Path="SystemName" />
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding OpenSelectedCommand}" />
+                                    <KeyBinding Key="F2" Command="{Binding EditSystemCommand}" />
+                                </ListView.InputBindings>
+                                <ListView.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open" InputGestureText="Enter" FontWeight="SemiBold" Command="{Binding OpenSelectedCommand}" />
+                                        <MenuItem Header="Copy target" Command="{Binding CopyTargetCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditSystemCommand}" />
+                                        <MenuItem Command="{Binding ToggleActiveCommand}">
+                                            <MenuItem.Style>
+                                                <Style TargetType="MenuItem">
+                                                    <Setter Property="Header" Value="Deactivate" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedIsActive}" Value="False">
+                                                            <Setter Property="Header" Value="Reactivate" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </MenuItem.Style>
+                                        </MenuItem>
+                                        <Separator />
+                                        <MenuItem Header="Delete permanently…" Command="{Binding DeletePermanentlyCommand}" />
+                                    </ContextMenu>
+                                </ListView.ContextMenu>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type repo:SystemListItem}">
+                                        <Grid x:Name="Row">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="170" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding SystemCode}" FontFamily="Consolas" FontSize="13" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding SystemName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                                <Border x:Name="CustomTag" Style="{StaticResource Tag}" Visibility="Collapsed" ToolTip="{Binding CustomTarget}">
+                                                    <TextBlock FontSize="10" Text="custom target" Foreground="{StaticResource Brush.MutedText}" />
+                                                </Border>
+                                                <Border x:Name="InactiveTag" Style="{StaticResource Tag}" Visibility="Collapsed">
+                                                    <TextBlock FontSize="10" Text="inactive" Foreground="{StaticResource Brush.MutedText}" />
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding HasCustomTarget}" Value="True">
+                                                <Setter TargetName="CustomTag" Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsActive}" Value="False">
+                                                <Setter TargetName="InactiveTag" Property="Visibility" Value="Visible" />
+                                                <Setter TargetName="Row" Property="Opacity" Value="0.6" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <TextBlock Style="{StaticResource EmptyState}" Text="{Binding EmptyStateText}"
+                                       Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                        </Grid>
                     </DockPanel>
                 </Grid>
             </TabItem>

@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
-namespace WorkHub.App.Mvvm;
+namespace WorkHub.Presentation.Mvvm;
 
 /// <summary>Minimal INotifyPropertyChanged base; avoids an MVVM framework dependency for now.</summary>
 public abstract class ObservableObject : INotifyPropertyChanged

@@ -28,7 +28,7 @@ public sealed class TempWorkHubRoot : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        new SqliteConnectionFactory(Paths.DatabaseFile).ClearPools();
         var testDirectory = Directory.GetParent(Paths.Root)!.FullName;
         if (Directory.Exists(testDirectory))
             Directory.Delete(testDirectory, recursive: true);

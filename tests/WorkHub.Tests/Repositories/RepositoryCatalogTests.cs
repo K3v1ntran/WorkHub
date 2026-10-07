@@ -45,8 +45,12 @@ public sealed class RepositoryCatalogTests
     [Fact]
     public void EverySettingsSlotExistsForEveryType()
     {
-        var settings = new RepositorySettings();
-        Assert.All(RepositoryCatalog.All, info => Assert.NotNull(settings.For(info.Type)));
+        var settings = new RepositorySettings { Svn = { Host = "svn-host" }, Git = { Host = "git-host" } };
+        Assert.All(RepositoryCatalog.All, info =>
+        {
+            Assert.NotNull(settings.PrefixFor(info.Type));
+            Assert.Equal(info.VersionControl == VersionControlKind.Svn ? "svn-host" : "git-host", settings.HostFor(info.Type));
+        });
     }
 
     [Theory]

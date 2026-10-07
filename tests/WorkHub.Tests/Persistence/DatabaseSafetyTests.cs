@@ -22,7 +22,7 @@ public sealed class DatabaseSafetyTests : IDisposable
         var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateInitializer().Initialize());
 
         Assert.Equal(DatabaseStartupFailure.Unreadable, ex.Failure);
-        SqliteConnection.ClearAllPools();
+        new SqliteConnectionFactory(_root.Paths.DatabaseFile).ClearPools();
         Assert.Equal(garbage, File.ReadAllBytes(_root.Paths.DatabaseFile));
     }
 

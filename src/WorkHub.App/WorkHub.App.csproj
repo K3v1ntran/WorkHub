@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- WPF presentation layer and composition root. -->
+  <!-- WPF views, WPF dialog service and composition root. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\WorkHub.Core\WorkHub.Core.csproj" />
     <ProjectReference Include="..\WorkHub.Infrastructure\WorkHub.Infrastructure.csproj" />
+    <ProjectReference Include="..\WorkHub.Presentation\WorkHub.Presentation.csproj" />
   </ItemGroup>
 
 </Project>

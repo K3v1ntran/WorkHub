@@ -19,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\WorkHub.Core\WorkHub.Core.csproj" />
     <ProjectReference Include="..\..\src\WorkHub.Infrastructure\WorkHub.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\WorkHub.Presentation\WorkHub.Presentation.csproj" />
   </ItemGroup>
 
 </Project>

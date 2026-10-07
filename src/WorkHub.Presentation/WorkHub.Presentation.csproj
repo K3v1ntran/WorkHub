@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- View models and MVVM helpers. Deliberately free of WPF types so they can be unit tested on plain .NET;
+       windows, dialogs and the clipboard are reached through IDialogService (implemented in WorkHub.App). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WorkHub.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WorkHub.Core\WorkHub.Core.csproj" />
+  </ItemGroup>
+
+</Project>

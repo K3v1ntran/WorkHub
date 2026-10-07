@@ -97,7 +97,7 @@ public sealed class FirstRunInitializationTests : IDisposable
         _root.CreateInitializer().Initialize();
         var store = new JsonSettingsStore(_root.Paths.SettingsFile);
         var settings = store.LoadOrCreate().Settings;
-        settings.Repositories.SvnOracle.Prefix = "Custom_";
+        settings.Repository.Svn.OraclePrefix = "Custom_";
         store.Save(settings);
         var before = File.ReadAllBytes(_root.Paths.SettingsFile);
         var writeTime = File.GetLastWriteTimeUtc(_root.Paths.SettingsFile);
@@ -105,7 +105,7 @@ public sealed class FirstRunInitializationTests : IDisposable
         var second = _root.CreateInitializer().Initialize();
 
         Assert.Equal(SettingsLoadStatus.Loaded, second.Settings.Status);
-        Assert.Equal("Custom_", second.Settings.Settings.Repositories.SvnOracle.Prefix);
+        Assert.Equal("Custom_", second.Settings.Settings.Repository.Svn.OraclePrefix);
         Assert.Equal(before, File.ReadAllBytes(_root.Paths.SettingsFile));
         Assert.Equal(writeTime, File.GetLastWriteTimeUtc(_root.Paths.SettingsFile));
     }

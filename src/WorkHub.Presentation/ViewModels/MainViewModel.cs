@@ -1,9 +1,9 @@
-using WorkHub.App.Mvvm;
+using WorkHub.Presentation.Mvvm;
 using WorkHub.Core.Diagnostics;
 using WorkHub.Core.Settings;
 using WorkHub.Core.Startup;
 
-namespace WorkHub.App.ViewModels;
+namespace WorkHub.Presentation.ViewModels;
 
 public enum ShellState
 {
@@ -12,14 +12,15 @@ public enum ShellState
     Failed,
 }
 
-public sealed class MainViewModel(AppInitializer initializer, IAppLog log) : ObservableObject
+public sealed class MainViewModel(AppInitializer initializer, SettingsService settings, RepositoryAreaViewModel repository, IAppLog log)
+    : ObservableObject
 {
     private ShellState _state = ShellState.Initializing;
     private string _statusText = "Starting…";
     private string? _errorMessage;
     private string? _warningMessage;
 
-    public RepositoryAreaViewModel Repository { get; } = new();
+    public RepositoryAreaViewModel Repository { get; } = repository;
 
     public ShellState State
     {
@@ -57,9 +58,10 @@ public sealed class MainViewModel(AppInitializer initializer, IAppLog log) : Obs
         try
         {
             var result = await Task.Run(initializer.Initialize);
+            settings.Initialize(result.Settings);
 
             if (result.Settings.Status == SettingsLoadStatus.InvalidFileUsingDefaults)
-                WarningMessage = $"settings.json could not be read and was left unchanged; defaults are in use. ({result.Settings.Problem})";
+                WarningMessage = $"settings.json could not be read and was left unchanged; defaults are in use until you save Settings. ({result.Settings.Problem})";
 
             StatusText = $"Ready · schema v{result.Database.SchemaVersion}";
             State = ShellState.Ready;
@@ -68,12 +70,16 @@ public sealed class MainViewModel(AppInitializer initializer, IAppLog log) : Obs
         {
             log.Error($"Database startup refused ({ex.Failure}).", ex);
             Fail(ex.Message);
+            return;
         }
         catch (Exception ex)
         {
             log.Error("Startup failed.", ex);
             Fail("WorkHub could not finish starting. See the log in the Logs folder for details.");
+            return;
         }
+
+        await Repository.ActivateAsync();
     }
 
     private void Fail(string message)

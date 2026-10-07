@@ -1,8 +1,10 @@
 using System.Windows;
-using WorkHub.App.ViewModels;
+using WorkHub.App.Services;
+using WorkHub.Presentation.ViewModels;
 using WorkHub.App.Views;
 using WorkHub.Core.Startup;
 using WorkHub.Infrastructure;
+using WorkHub.Infrastructure.Launching;
 
 namespace WorkHub.App;
 
@@ -14,9 +16,22 @@ public partial class App : Application
         base.OnStartup(e);
 
         var services = WorkHubServices.Create(WorkHubPaths.ForCurrentUser());
-        DispatcherUnhandledException += (_, args) => services.Log.Error("Unhandled UI exception.", args.Exception);
+        DispatcherUnhandledException += (_, args) =>
+        {
+            services.Log.Error("Unhandled UI exception.", args.Exception);
+            MessageBox.Show(args.Exception.Message, "WorkHub", MessageBoxButton.OK, MessageBoxImage.Error);
+            args.Handled = true;
+        };
 
-        var viewModel = new MainViewModel(services.Initializer, services.Log);
+        var repository = new RepositoryAreaViewModel(
+            services.Systems,
+            services.RepositoryOpener,
+            services.Settings,
+            new DialogService(),
+            services.Log,
+            () => TortoiseLocator.Detect());
+
+        var viewModel = new MainViewModel(services.Initializer, services.Settings, repository, services.Log);
         MainWindow = new MainWindow { DataContext = viewModel };
         MainWindow.Show();
 

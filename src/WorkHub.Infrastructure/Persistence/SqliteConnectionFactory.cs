@@ -13,17 +13,19 @@ public sealed class SqliteConnectionFactory(string databaseFile)
     /// <summary>Opens the existing database. Never creates a file.</summary>
     public SqliteConnection OpenExisting() => Open(SqliteOpenMode.ReadWrite);
 
+    /// <summary>Releases pooled connections for this database file only (other databases' pools are untouched).</summary>
+    public void ClearPools()
+    {
+        foreach (var mode in new[] { SqliteOpenMode.ReadWrite, SqliteOpenMode.ReadWriteCreate })
+        {
+            using var connection = new SqliteConnection(ConnectionString(mode, pooling: true));
+            SqliteConnection.ClearPool(connection);
+        }
+    }
+
     internal SqliteConnection Open(SqliteOpenMode mode, bool pooling = true)
     {
-        var connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = DatabaseFile,
-            Mode = mode,
-            ForeignKeys = true,
-            Pooling = pooling,
-        }.ToString();
-
-        var connection = new SqliteConnection(connectionString);
+        var connection = new SqliteConnection(ConnectionString(mode, pooling));
         try
         {
             connection.Open();
@@ -35,4 +37,12 @@ public sealed class SqliteConnectionFactory(string databaseFile)
             throw;
         }
     }
+
+    private string ConnectionString(SqliteOpenMode mode, bool pooling) => new SqliteConnectionStringBuilder
+    {
+        DataSource = DatabaseFile,
+        Mode = mode,
+        ForeignKeys = true,
+        Pooling = pooling,
+    }.ToString();
 }

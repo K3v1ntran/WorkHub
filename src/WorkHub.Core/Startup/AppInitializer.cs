@@ -28,6 +28,8 @@ public sealed class AppInitializer(
             log.Warn($"Settings file could not be read; using defaults in memory and leaving the file unchanged. {settings.Problem}");
         else
             log.Info($"Settings {settings.Status.ToString().ToLowerInvariant()}.");
+        if (settings.UpgradedFromVersion is { } from)
+            log.Info($"Settings format upgraded in memory from v{from} to v{AppSettings.CurrentSettingsVersion}; the file is rewritten on the next save.");
 
         var database = databaseInitializer.Initialize();
         log.Info($"Database {database.Outcome.ToString().ToLowerInvariant()} (schema v{database.PreviousSchemaVersion} -> v{database.SchemaVersion}).");
