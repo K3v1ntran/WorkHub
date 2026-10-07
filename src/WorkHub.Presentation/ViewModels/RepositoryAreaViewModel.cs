@@ -302,7 +302,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
 
         if (item.IsActive && !_dialogs.Confirm("Deactivate System",
                 $"Deactivate {item.SystemCode} ({item.SystemName})?\n\nIt stays stored and is hidden from repository lists. " +
-                "Turn on “Show inactive systems” to see or reactivate it."))
+                "Turn on “Show inactive systems” to see or reactivate it.", "Deactivate"))
             return;
 
         await _systems.SetActiveAsync(item.Id, !item.IsActive);
@@ -317,7 +317,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
         if (!_dialogs.Confirm("Delete System permanently",
                 $"Permanently delete {item.SystemCode} ({item.SystemName}) from WorkHub?\n\n" +
                 "This removes the System and its repository memberships from every group. " +
-                "External SVN/Git repositories are not affected.\n\nTo hide it instead, use Deactivate."))
+                "External SVN/Git repositories are not affected.\n\nTo hide it instead, use Deactivate.", "Delete"))
             return;
 
         await _systems.DeletePermanentlyAsync(item.Id);

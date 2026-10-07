@@ -12,7 +12,7 @@ public enum ShellState
     Failed,
 }
 
-public sealed class MainViewModel(AppInitializer initializer, SettingsService settings, RepositoryAreaViewModel repository, IAppLog log)
+public sealed class MainViewModel(AppInitializer initializer, SettingsService settings, RepositoryNavigationViewModel navigation, IAppLog log)
     : ObservableObject
 {
     private ShellState _state = ShellState.Initializing;
@@ -20,7 +20,11 @@ public sealed class MainViewModel(AppInitializer initializer, SettingsService se
     private string? _errorMessage;
     private string? _warningMessage;
 
-    public RepositoryAreaViewModel Repository { get; } = repository;
+    public RepositoryNavigationViewModel Navigation { get; } = navigation;
+
+    public RepositoryAreaViewModel Repository => Navigation.Repository;
+
+    public OwnerAreaViewModel Owner => Navigation.Owner;
 
     public ShellState State
     {
@@ -80,6 +84,7 @@ public sealed class MainViewModel(AppInitializer initializer, SettingsService se
         }
 
         await Repository.ActivateAsync();
+        await Owner.ActivateAsync();
     }
 
     private void Fail(string message)

@@ -23,15 +23,19 @@ public partial class App : Application
             args.Handled = true;
         };
 
+        var dialogs = new DialogService();
         var repository = new RepositoryAreaViewModel(
             services.Systems,
             services.RepositoryOpener,
             services.Settings,
-            new DialogService(),
+            dialogs,
             services.Log,
             () => TortoiseLocator.Detect());
 
-        var viewModel = new MainViewModel(services.Initializer, services.Settings, repository, services.Log);
+        var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
+        var navigation = new RepositoryNavigationViewModel(repository, owner);
+
+        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, services.Log);
         MainWindow = new MainWindow { DataContext = viewModel };
         MainWindow.Show();
 

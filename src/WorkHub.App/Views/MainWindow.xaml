@@ -77,18 +77,18 @@
 
         <TabControl x:Name="PrimaryTabs" Grid.Row="3" Margin="12" IsEnabled="{Binding IsReady}" Padding="0">
             <TabItem x:Name="RepositoryTab" Header="Repository" Padding="16,4">
-                <Grid DataContext="{Binding Repository}" Background="{StaticResource Brush.Surface}">
+                <Grid DataContext="{Binding Navigation}" Background="{StaticResource Brush.Surface}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="220" MinWidth="180" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <!-- Left: fixed built-in groups, then the (future) Owner area. -->
+                    <!-- Left: the five fixed Repository groups, then the user-defined Owner groups. One active selection. -->
                     <DockPanel Grid.Column="0">
                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Text="REPOSITORY" />
                         <ListBox x:Name="CategoryList" DockPanel.Dock="Top" BorderThickness="0" Background="Transparent"
-                                 ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory}"
+                                 ItemsSource="{Binding Repository.Categories}" SelectedItem="{Binding SelectedCategory}"
                                  AutomationProperties.Name="Repository groups">
                             <ListBox.ItemContainerStyle>
                                 <Style TargetType="ListBoxItem">
@@ -108,15 +108,203 @@
                         </ListBox>
 
                         <Border DockPanel.Dock="Top" Margin="12,14,12,0" BorderThickness="0,1,0,0" BorderBrush="{StaticResource Brush.Border}" />
-                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Text="OWNER" />
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,6,0">
+                            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="6,2" Margin="0,8,0,0"
+                                    ToolTip="Add Owner group" AutomationProperties.Name="Add Owner group" Command="{Binding Owner.AddGroupCommand}">
+                                <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE710;" />
+                            </Button>
+                            <TextBlock Style="{StaticResource SectionHeader}" Text="OWNER" />
+                        </DockPanel>
                         <TextBlock DockPanel.Dock="Top" Margin="12,0" FontSize="12" TextWrapping="Wrap"
-                                   Foreground="{StaticResource Brush.MutedText}" Text="No Owner groups yet." />
+                                   Foreground="{StaticResource Brush.MutedText}" Text="No Owner groups yet. Use + to add one.">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasOwnerGroups}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ListBox x:Name="OwnerGroupList" BorderThickness="0" Background="Transparent"
+                                 ItemsSource="{Binding Owner.Groups}" SelectedItem="{Binding Owner.SelectedGroup}"
+                                 AutomationProperties.Name="Owner groups"
+                                 VirtualizingPanel.IsVirtualizing="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:OwnerGroupViewModel}">
+                                    <TextBlock Margin="4,3" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                            <ListBox.InputBindings>
+                                <KeyBinding Key="F2" Command="{Binding Owner.RenameGroupCommand}" />
+                                <KeyBinding Key="Up" Modifiers="Alt" Command="{Binding Owner.MoveGroupUpCommand}" />
+                                <KeyBinding Key="Down" Modifiers="Alt" Command="{Binding Owner.MoveGroupDownCommand}" />
+                            </ListBox.InputBindings>
+                            <ListBox.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Add Group…" Command="{Binding Owner.AddGroupCommand}" />
+                                    <MenuItem Header="Rename…" InputGestureText="F2" Command="{Binding Owner.RenameGroupCommand}" />
+                                    <Separator />
+                                    <MenuItem Header="Move Up" InputGestureText="Alt+Up" Command="{Binding Owner.MoveGroupUpCommand}" />
+                                    <MenuItem Header="Move Down" InputGestureText="Alt+Down" Command="{Binding Owner.MoveGroupDownCommand}" />
+                                    <Separator />
+                                    <MenuItem Header="Delete Group…" Command="{Binding Owner.DeleteGroupCommand}" />
+                                </ContextMenu>
+                            </ListBox.ContextMenu>
+                        </ListBox>
                     </DockPanel>
 
                     <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource Brush.Border}" Focusable="False" />
 
-                    <!-- Right: toolbar, banner, list -->
-                    <DockPanel Grid.Column="2">
+                    <!-- Right (Owner group selected): launcher list -->
+                    <DockPanel Grid.Column="2" DataContext="{Binding Owner}"
+                               Visibility="{Binding DataContext.IsOwnerActive, RelativeSource={RelativeSource AncestorType=Grid}, Converter={StaticResource BoolToVisibility}}">
+                        <Grid DockPanel.Dock="Top" Margin="16,8,8,8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock FontSize="15" FontWeight="SemiBold" Text="{Binding SelectedGroup.Name}" />
+                                <TextBlock Margin="10,0,0,0" VerticalAlignment="Bottom" Foreground="{StaticResource Brush.MutedText}" Text="{Binding CountText}" />
+                            </StackPanel>
+                            <Button Grid.Column="2" Style="{StaticResource ToolButton}" Command="{Binding AddItemCommand}" ToolTip="Add a launcher" AutomationProperties.Name="Add Item">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Add Item" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="OwnerMoreButton" Grid.Column="3" Style="{StaticResource ToolButton}" ToolTip="More" AutomationProperties.Name="Owner more" Click="OwnerMoreButton_Click">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE712;" />
+                                <Button.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Rename Group…" Command="{Binding RenameGroupCommand}" />
+                                        <MenuItem Header="Move Group Up" Command="{Binding MoveGroupUpCommand}" />
+                                        <MenuItem Header="Move Group Down" Command="{Binding MoveGroupDownCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Add Group…" Command="{Binding AddGroupCommand}" />
+                                        <MenuItem Header="Delete Group…" Command="{Binding DeleteGroupCommand}" />
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </Grid>
+
+                        <!-- Open failure (missing target etc.) with a direct Edit action. -->
+                        <Border DockPanel.Dock="Top" Margin="16,0,16,8" Padding="12,8" CornerRadius="4" Background="{StaticResource Brush.WarningBackground}">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BannerMessage}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Dismiss" AutomationProperties.Name="Dismiss owner message" Command="{Binding DismissBannerCommand}">
+                                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
+                                </Button>
+                                <Button DockPanel.Dock="Right" Margin="8,0" Content="Edit" AutomationProperties.Name="Edit launcher" Command="{Binding EditFromBannerCommand}"
+                                        Visibility="{Binding BannerCanEdit, Converter={StaticResource BoolToVisibility}}" />
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Brush.Warning}" Text="{Binding BannerMessage}"
+                                               AutomationProperties.AutomationId="OwnerBanner" />
+                                    <TextBlock TextWrapping="Wrap" FontSize="11" Foreground="{StaticResource Brush.MutedText}"
+                                               Text="{Binding BannerTarget, StringFormat=Target: {0}}" AutomationProperties.AutomationId="OwnerBannerTarget">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding BannerTarget}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <Border DockPanel.Dock="Top" BorderThickness="0,0,0,1" BorderBrush="{StaticResource Brush.Border}" Padding="14,0,12,4">
+                            <Grid TextElement.Foreground="{StaticResource Brush.MutedText}" TextElement.FontSize="11">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="100" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Name" />
+                                <TextBlock Grid.Column="1" Text="Type" />
+                            </Grid>
+                        </Border>
+
+                        <Grid>
+                            <ListView x:Name="OwnerItemList" BorderThickness="0" Background="Transparent"
+                                      ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}" SelectionMode="Single"
+                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                      ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      AutomationProperties.Name="Launchers" MouseDoubleClick="OwnerItemList_MouseDoubleClick">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
+                                        <Setter Property="AutomationProperties.Name">
+                                            <Setter.Value>
+                                                <MultiBinding StringFormat="{}{0} ({1})">
+                                                    <Binding Path="Name" />
+                                                    <Binding Path="ActionType" />
+                                                </MultiBinding>
+                                            </Setter.Value>
+                                        </Setter>
+                                        <Setter Property="ToolTip" Value="{Binding Target}" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.InputBindings>
+                                    <KeyBinding Key="Enter" Command="{Binding OpenItemCommand}" />
+                                    <KeyBinding Key="F2" Command="{Binding EditItemCommand}" />
+                                    <KeyBinding Key="Delete" Command="{Binding DeleteItemCommand}" />
+                                    <KeyBinding Key="Up" Modifiers="Alt" Command="{Binding MoveItemUpCommand}" />
+                                    <KeyBinding Key="Down" Modifiers="Alt" Command="{Binding MoveItemDownCommand}" />
+                                </ListView.InputBindings>
+                                <ListView.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open" InputGestureText="Enter" FontWeight="SemiBold" Command="{Binding OpenItemCommand}" />
+                                        <MenuItem Header="Copy target" Command="{Binding CopyTargetCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditItemCommand}" />
+                                        <MenuItem Header="Move to…" Command="{Binding MoveItemToGroupCommand}" />
+                                        <MenuItem Header="Move Up" InputGestureText="Alt+Up" Command="{Binding MoveItemUpCommand}" />
+                                        <MenuItem Header="Move Down" InputGestureText="Alt+Down" Command="{Binding MoveItemDownCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Delete…" InputGestureText="Del" Command="{Binding DeleteItemCommand}" />
+                                    </ContextMenu>
+                                </ListView.ContextMenu>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="100" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Text="{Binding ActionType}" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+
+                            <TextBlock Style="{StaticResource EmptyState}" Text="{Binding EmptyStateText}"
+                                       Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                        </Grid>
+                    </DockPanel>
+
+                    <!-- Right (fixed Repository group selected): toolbar, banner, System list -->
+                    <DockPanel Grid.Column="2" DataContext="{Binding Repository}"
+                               Visibility="{Binding DataContext.IsRepositoryActive, RelativeSource={RelativeSource AncestorType=Grid}, Converter={StaticResource BoolToVisibility}}">
                         <Grid DockPanel.Dock="Top" Margin="16,8,8,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto" />

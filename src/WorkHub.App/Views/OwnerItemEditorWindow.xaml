@@ -1,0 +1,77 @@
+<Window x:Class="WorkHub.App.Views.OwnerItemEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:OwnerItemEditorViewModel}"
+        Title="{Binding Title}"
+        Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=NameBox}">
+    <DockPanel Margin="20,12,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" IsCancel="True" Command="{Binding CancelCommand}" />
+            <Button Content="Save" IsDefault="True" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding SaveCommand}" />
+        </StackPanel>
+
+        <StackPanel>
+            <TextBlock Style="{StaticResource FieldError}" FontSize="12" Text="{Binding GeneralError}" />
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="140" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Name" />
+                    <TextBox x:Name="NameBox" MaxLength="200" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Name" />
+                    <TextBlock Style="{StaticResource FieldError}" Text="{Binding NameError}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Type" />
+                    <ComboBox ItemsSource="{Binding ActionTypes}" SelectedItem="{Binding ActionType}" AutomationProperties.Name="Type" />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Target" />
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Margin="6,0,0,0" Content="Browse…" Command="{Binding BrowseTargetCommand}" AutomationProperties.Name="Browse target" />
+                <TextBox MaxLength="2048" Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Target" />
+            </DockPanel>
+            <TextBlock Style="{StaticResource FieldHint}" Text="{Binding TargetHint}" />
+            <TextBlock Style="{StaticResource FieldError}" Text="{Binding TargetError}" />
+
+            <StackPanel Visibility="{Binding IsExecutable, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Arguments (optional)" />
+                <TextBox MaxLength="2000" FontFamily="Consolas" Text="{Binding Arguments, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Arguments" />
+                <TextBlock Style="{StaticResource FieldHint}" Text="Passed to the program exactly as typed; quote values that contain spaces. No shell is used." />
+                <TextBlock Style="{StaticResource FieldError}" Text="{Binding ArgumentsError}" />
+
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Working directory (optional)" />
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Margin="6,0,0,0" Content="Browse…" Command="{Binding BrowseWorkingDirectoryCommand}" AutomationProperties.Name="Browse working directory" />
+                    <TextBox Text="{Binding WorkingDirectory, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Working directory" />
+                </DockPanel>
+                <TextBlock Style="{StaticResource FieldHint}" Text="Defaults to the program's folder." />
+                <TextBlock Style="{StaticResource FieldError}" Text="{Binding WorkingDirectoryError}" />
+            </StackPanel>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="User name (optional)" />
+            <TextBox MaxLength="200" Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="User name" />
+            <TextBlock Style="{StaticResource FieldHint}" Text="Reference only. Passwords are never stored here." />
+            <TextBlock Style="{StaticResource FieldError}" Text="{Binding UsernameError}" />
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Note (optional)" />
+            <TextBox MaxLength="4000" Height="56" TextWrapping="Wrap" AcceptsReturn="True" VerticalContentAlignment="Top"
+                     VerticalScrollBarVisibility="Auto" Text="{Binding Note, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Note" />
+            <TextBlock Style="{StaticResource FieldError}" Text="{Binding NoteError}" />
+        </StackPanel>
+    </DockPanel>
+</Window>

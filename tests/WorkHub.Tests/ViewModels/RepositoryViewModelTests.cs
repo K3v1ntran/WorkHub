@@ -352,25 +352,6 @@ public sealed class RepositoryViewModelTests : IDisposable
         }
     }
 
-    private sealed class FakeDialogs : IDialogService
-    {
-        public Func<SystemEditorViewModel, bool> OnSystemEditor { get; set; } = _ => false;
-
-        public bool ConfirmAnswer { get; set; } = true;
-
-        public bool ShowSystemEditor(SystemEditorViewModel viewModel) => OnSystemEditor(viewModel);
-
-        public bool ShowSettings(SettingsViewModel viewModel) => false;
-
-        public bool Confirm(string title, string message) => ConfirmAnswer;
-
-        public string? PickExecutable(string title, string? initialPath) => null;
-
-        public void CopyToClipboard(string text)
-        {
-        }
-    }
-
     private sealed class CountingStore(ISystemStore inner) : ISystemStore
     {
         private int _queryCount;

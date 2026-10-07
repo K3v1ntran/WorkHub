@@ -15,11 +15,14 @@ public partial class MainWindow : Window
         PreviewKeyDown += OnPreviewKeyDown;
     }
 
-    private RepositoryAreaViewModel? Repository => (DataContext as MainViewModel)?.Repository;
+    private MainViewModel? Main => DataContext as MainViewModel;
+
+    private RepositoryAreaViewModel? Repository => Main?.Repository;
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && PrimaryTabs.SelectedItem == RepositoryTab && PrimaryTabs.IsEnabled)
+        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && PrimaryTabs.SelectedItem == RepositoryTab && PrimaryTabs.IsEnabled
+            && Main?.Navigation.IsRepositoryActive == true)
         {
             ShowAndFocusSearch();
             e.Handled = true;
@@ -72,11 +75,21 @@ public partial class MainWindow : Window
             Repository?.OpenSelectedCommand.Execute(null);
     }
 
-    private void MoreButton_Click(object sender, RoutedEventArgs e)
+    private void OwnerItemList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        var menu = MoreButton.ContextMenu!;
-        menu.DataContext = MoreButton.DataContext;
-        menu.PlacementTarget = MoreButton;
+        if (ItemsControl.ContainerFromElement(OwnerItemList, (DependencyObject)e.OriginalSource) is ListViewItem)
+            Main?.Owner.OpenItemCommand.Execute(null);
+    }
+
+    private void OwnerMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(OwnerMoreButton);
+
+    private void MoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(MoreButton);
+
+    private static void ShowButtonMenu(Button button)
+    {
+        var menu = button.ContextMenu!;
+        menu.DataContext = button.DataContext;
+        menu.PlacementTarget = button;
         menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         menu.IsOpen = true;
     }

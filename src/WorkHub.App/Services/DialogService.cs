@@ -1,9 +1,9 @@
 using System.IO;
 using System.Windows;
 using Microsoft.Win32;
+using WorkHub.App.Views;
 using WorkHub.Presentation.Services;
 using WorkHub.Presentation.ViewModels;
-using WorkHub.App.Views;
 
 namespace WorkHub.App.Services;
 
@@ -23,27 +23,55 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
-    public bool Confirm(string title, string message) =>
-        MessageBox.Show(ActiveWindow(), message, title, MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel)
-        == MessageBoxResult.OK;
-
-    public string? PickExecutable(string title, string? initialPath)
+    public bool ShowOwnerGroupEditor(OwnerGroupEditorViewModel viewModel)
     {
-        var dialog = new OpenFileDialog
-        {
-            Title = title,
-            Filter = "TortoiseProc.exe|TortoiseProc.exe|Programs (*.exe)|*.exe",
-            CheckFileExists = true,
-        };
+        var window = new OwnerGroupEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        return window.ShowDialog() == true;
+    }
 
+    public bool ShowOwnerItemEditor(OwnerItemEditorViewModel viewModel)
+    {
+        var window = new OwnerItemEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        return window.ShowDialog() == true;
+    }
+
+    public bool ShowMoveOwnerItem(MoveOwnerItemViewModel viewModel)
+    {
+        var window = new MoveOwnerItemWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, moved) => window.DialogResult = moved;
+        return window.ShowDialog() == true;
+    }
+
+    public bool Confirm(string title, string message, string confirmText) =>
+        new ConfirmWindow(title, message, confirmText) { Owner = ActiveWindow() }.ShowDialog() == true;
+
+    public string? PickExecutable(string title, string? initialPath) =>
+        PickFileCore(title, initialPath, "Programs (*.exe)|*.exe");
+
+    public string? PickFile(string title, string? initialPath) =>
+        PickFileCore(title, initialPath, "All files (*.*)|*.*");
+
+    public string? PickFolder(string title, string? initialPath)
+    {
+        var dialog = new OpenFolderDialog { Title = title };
+        if (!string.IsNullOrWhiteSpace(initialPath) && Directory.Exists(initialPath))
+            dialog.InitialDirectory = initialPath;
+        return dialog.ShowDialog(ActiveWindow()) == true ? dialog.FolderName : null;
+    }
+
+    public void CopyToClipboard(string text) => Clipboard.SetText(text);
+
+    private static string? PickFileCore(string title, string? initialPath, string filter)
+    {
+        var dialog = new OpenFileDialog { Title = title, Filter = filter, CheckFileExists = true };
         var directory = string.IsNullOrWhiteSpace(initialPath) ? null : Path.GetDirectoryName(initialPath);
         if (directory is not null && Directory.Exists(directory))
             dialog.InitialDirectory = directory;
 
         return dialog.ShowDialog(ActiveWindow()) == true ? dialog.FileName : null;
     }
-
-    public void CopyToClipboard(string text) => Clipboard.SetText(text);
 
     private static Window? ActiveWindow() =>
         Application.Current.Windows.OfType<Window>().FirstOrDefault(w => w.IsActive) ?? Application.Current.MainWindow;
