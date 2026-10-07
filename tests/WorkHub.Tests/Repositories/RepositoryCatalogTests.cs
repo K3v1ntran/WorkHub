@@ -67,6 +67,8 @@ public sealed class RepositoryCatalogTests
     [InlineData("A\\B")]
     [InlineData("A?B")]
     [InlineData("A#B")]
+    [InlineData("ÄBC")]
+    [InlineData("ＡBC")]
     public void SystemCode_RejectsInvalidValues(string? raw)
     {
         Assert.False(SystemCode.TryNormalize(raw, out _, out var error));

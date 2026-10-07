@@ -59,15 +59,17 @@ public sealed class FirstRunInitializationTests : IDisposable
     }
 
     [Fact]
-    public void FreshRun_HasNoWorkspaceTablesYet()
+    public void FreshRun_HasNoOwnerOrWorkspaceTablesYet()
     {
         _root.CreateInitializer().Initialize();
 
         using var connection = _root.Open();
         Assert.DoesNotContain(Db.UserTables(connection),
-            name => name.StartsWith("Workspace", StringComparison.Ordinal)
+            name => name.StartsWith("Owner", StringComparison.Ordinal)
+                    || name.StartsWith("Workspace", StringComparison.Ordinal)
                     || name.StartsWith("Project", StringComparison.Ordinal)
-                    || name.Contains("Tag", StringComparison.Ordinal));
+                    || name.Contains("Tag", StringComparison.Ordinal)
+                    || name.Contains("Credential", StringComparison.Ordinal));
     }
 
     [Fact]

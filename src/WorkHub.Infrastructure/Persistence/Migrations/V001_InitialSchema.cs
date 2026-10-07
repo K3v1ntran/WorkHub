@@ -3,17 +3,23 @@ using Microsoft.Data.Sqlite;
 namespace WorkHub.Infrastructure.Persistence.Migrations;
 
 /// <summary>
-/// Repository (Systems, SystemRepositories) and Owner (OwnerGroups, OwnerItems) tables.
+/// Repository tables only (Systems, SystemRepositories).
 /// Built-in repository types are NOT a table: they are application-defined
 /// (see <c>RepositoryCatalog</c>) and only referenced here by stable storage code.
-/// Workspace tables arrive in a later migration. No rows are inserted.
+/// Owner and Workspace tables arrive in their own later migrations. No rows are inserted.
 /// Timestamps are ISO-8601 UTC text. Booleans are 0/1 integers.
 /// </summary>
+/// <remarks>
+/// SystemCode integrity: the column is declared <c>COLLATE NOCASE</c>, so the UNIQUE constraint's
+/// automatic index compares with NOCASE and rejects codes differing only by case (ABC001 vs abc001).
+/// NOCASE folds ASCII letters only, so a CHECK restricts codes to ASCII <c>[A-Za-z0-9._-]</c>,
+/// which makes the case-insensitive guarantee complete.
+/// </remarks>
 internal sealed class V001_InitialSchema : ISchemaMigration
 {
     public int Version => 1;
 
-    public string Description => "Repository systems and Owner launcher tables";
+    public string Description => "Repository systems tables";
 
     public void Apply(SqliteConnection connection, SqliteTransaction transaction) =>
         connection.Execute(Sql, transaction);
@@ -23,7 +29,9 @@ internal sealed class V001_InitialSchema : ISchemaMigration
             Id          INTEGER PRIMARY KEY,
             SystemCode  TEXT    NOT NULL COLLATE NOCASE
                                 CONSTRAINT UQ_Systems_SystemCode UNIQUE
-                                CHECK (length(SystemCode) BETWEEN 1 AND 100 AND SystemCode = trim(SystemCode)),
+                                CONSTRAINT CK_Systems_SystemCode
+                                CHECK (length(SystemCode) BETWEEN 1 AND 100
+                                       AND SystemCode NOT GLOB '*[^A-Za-z0-9._-]*'),
             SystemName  TEXT    NOT NULL CHECK (length(trim(SystemName)) > 0),
             Description TEXT    NULL,
             IsActive    INTEGER NOT NULL DEFAULT 1 CHECK (IsActive IN (0, 1)),
@@ -41,29 +49,5 @@ internal sealed class V001_InitialSchema : ISchemaMigration
         ) STRICT, WITHOUT ROWID;
 
         CREATE INDEX IX_SystemRepositories_RepositoryType ON SystemRepositories (RepositoryType, SystemId);
-
-        CREATE TABLE OwnerGroups (
-            Id        INTEGER PRIMARY KEY,
-            Name      TEXT    NOT NULL COLLATE NOCASE
-                              CONSTRAINT UQ_OwnerGroups_Name UNIQUE
-                              CHECK (length(trim(Name)) > 0),
-            SortOrder INTEGER NOT NULL DEFAULT 0,
-            CreatedAt TEXT    NOT NULL,
-            UpdatedAt TEXT    NOT NULL
-        ) STRICT;
-
-        CREATE TABLE OwnerItems (
-            Id        INTEGER PRIMARY KEY,
-            GroupId   INTEGER NOT NULL REFERENCES OwnerGroups (Id) ON DELETE RESTRICT,
-            Name      TEXT    NOT NULL CHECK (length(trim(Name)) > 0),
-            ItemType  TEXT    NOT NULL CHECK (ItemType IN ('Web', 'File', 'Folder', 'Executable')),
-            Target    TEXT    NOT NULL CHECK (length(trim(Target)) > 0),
-            Arguments TEXT    NULL,
-            SortOrder INTEGER NOT NULL DEFAULT 0,
-            CreatedAt TEXT    NOT NULL,
-            UpdatedAt TEXT    NOT NULL
-        ) STRICT;
-
-        CREATE INDEX IX_OwnerItems_GroupId_SortOrder ON OwnerItems (GroupId, SortOrder);
         """;
 }

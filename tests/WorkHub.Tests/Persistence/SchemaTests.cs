@@ -32,7 +32,7 @@ public sealed class SchemaTests : IDisposable
     [Fact]
     public void InitialSchema_HasExactlyTheExpectedTables()
     {
-        Assert.Equal(["OwnerGroups", "OwnerItems", "SystemRepositories", "Systems"], Db.UserTables(_connection));
+        Assert.Equal(["SystemRepositories", "Systems"], Db.UserTables(_connection));
     }
 
     [Fact]
@@ -48,18 +48,69 @@ public sealed class SchemaTests : IDisposable
         Assert.Equal(19, ex.SqliteErrorCode); // SQLITE_CONSTRAINT
     }
 
-    [Fact]
-    public void SystemCode_IsUniqueIgnoringCase()
+    [Theory]
+    [InlineData("ABC001", "abc001")]
+    [InlineData("abc001", "ABC001")]
+    [InlineData("GeSL_Abc", "gesl_aBC")]
+    public void SystemCode_CaseVariantsCannotCoexist_OnInsert(string existing, string duplicate)
     {
-        Db.InsertSystem(_connection, "Abc");
-        Assert.Throws<SqliteException>(() => Db.InsertSystem(_connection, "ABC"));
+        Db.InsertSystem(_connection, existing);
+
+        var ex = Assert.Throws<SqliteException>(() => Db.InsertSystem(_connection, duplicate));
+
+        Assert.Equal(19, ex.SqliteErrorCode); // SQLITE_CONSTRAINT
+        Assert.Equal(2067, ex.SqliteExtendedErrorCode); // SQLITE_CONSTRAINT_UNIQUE
+        Assert.Equal(1, Db.Count(_connection, "Systems"));
+    }
+
+    [Fact]
+    public void SystemCode_CaseVariantsCannotCoexist_OnUpdate()
+    {
+        Db.InsertSystem(_connection, "ABC001");
+        var otherId = Db.InsertSystem(_connection, "XYZ001");
+
+        var ex = Assert.Throws<SqliteException>(() =>
+            Db.Exec(_connection, "UPDATE Systems SET SystemCode = 'abc001' WHERE Id = $id;", ("$id", otherId)));
+
+        Assert.Equal(2067, ex.SqliteExtendedErrorCode);
+    }
+
+    [Fact]
+    public void SystemCode_StoredCaseIsPreserved_AndLookupIgnoresCase()
+    {
+        Db.InsertSystem(_connection, "ABC001");
+
+        Assert.Equal(1, Db.ScalarLong(_connection, "SELECT count(*) FROM Systems WHERE SystemCode = 'abc001';"));
+        Assert.Equal(1, Db.ScalarLong(_connection, "SELECT count(*) FROM Systems WHERE SystemCode = 'ABC001' COLLATE BINARY;"));
+    }
+
+    [Fact]
+    public void SystemCode_UniqueIndexUsesNocaseCollation()
+    {
+        using var command = _connection.CreateCommand();
+        command.CommandText = """
+            SELECT il."unique", ix.coll
+            FROM pragma_index_list('Systems') AS il
+            JOIN pragma_index_xinfo(il.name) AS ix ON ix.key = 1
+            WHERE ix.name = 'SystemCode';
+            """;
+        using var reader = command.ExecuteReader();
+
+        Assert.True(reader.Read(), "No index on Systems.SystemCode");
+        Assert.Equal(1L, reader.GetInt64(0));
+        Assert.Equal("NOCASE", reader.GetString(1));
+        Assert.False(reader.Read(), "Expected exactly one index on Systems.SystemCode");
     }
 
     [Theory]
     [InlineData("")]
     [InlineData(" ABC")]
     [InlineData("ABC ")]
-    public void SystemCode_RejectsEmptyOrUntrimmedValues(string code)
+    [InlineData("A B")]
+    [InlineData("A/B")]
+    [InlineData("ÄBC")]
+    [InlineData("ABC ")]
+    public void SystemCode_RejectsEmptyUntrimmedOrNonAsciiValues(string code)
     {
         Assert.Throws<SqliteException>(() => Db.InsertSystem(_connection, code));
     }
@@ -95,26 +146,6 @@ public sealed class SchemaTests : IDisposable
         Db.Exec(_connection, "DELETE FROM Systems WHERE Id = $id;", ("$id", id));
 
         Assert.Equal(0, Db.Count(_connection, "SystemRepositories"));
-    }
-
-    [Fact]
-    public void OwnerGroupWithItems_CannotBeDeletedImplicitly()
-    {
-        Db.Exec(_connection, "INSERT INTO OwnerGroups (Id, Name, CreatedAt, UpdatedAt) VALUES (1, 'Tools', $now, $now);", ("$now", Db.Now));
-        Db.Exec(_connection,
-            "INSERT INTO OwnerItems (GroupId, Name, ItemType, Target, CreatedAt, UpdatedAt) VALUES (1, 'Docs', 'Web', 'https://example.invalid', $now, $now);",
-            ("$now", Db.Now));
-
-        Assert.Throws<SqliteException>(() => Db.Exec(_connection, "DELETE FROM OwnerGroups WHERE Id = 1;"));
-    }
-
-    [Fact]
-    public void OwnerItemType_RejectsUnknownKinds()
-    {
-        Db.Exec(_connection, "INSERT INTO OwnerGroups (Id, Name, CreatedAt, UpdatedAt) VALUES (1, 'Tools', $now, $now);", ("$now", Db.Now));
-        Assert.Throws<SqliteException>(() => Db.Exec(_connection,
-            "INSERT INTO OwnerItems (GroupId, Name, ItemType, Target, CreatedAt, UpdatedAt) VALUES (1, 'Secret', 'Password', 'x', $now, $now);",
-            ("$now", Db.Now)));
     }
 
     [Fact]
