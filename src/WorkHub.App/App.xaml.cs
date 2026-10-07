@@ -28,6 +28,7 @@ public partial class App : Application
             services.Systems,
             services.RepositoryOpener,
             services.Settings,
+            services.LegacyImport,
             dialogs,
             services.Log,
             () => TortoiseLocator.Detect());

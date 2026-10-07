@@ -1,5 +1,6 @@
 using WorkHub.Presentation.Mvvm;
 using WorkHub.Presentation.Services;
+using WorkHub.Core.LegacyImport;
 using WorkHub.Core.Repositories;
 using WorkHub.Core.Settings;
 
@@ -20,20 +21,33 @@ public sealed class SettingsViewModel : ObservableObject
     private readonly Func<string?> _detectTortoise;
     private readonly RepositorySettings _draft;
     private RepositoryUsage _usage = RepositoryUsage.None;
-    private SettingsSection _selectedSection;
+    private SettingsPageItem _selectedPage;
     private string _sampleCode = DefaultSampleCode;
     private IReadOnlyList<TargetPreviewRow> _preview = [];
     private IReadOnlyList<SettingsIssue> _issues = [];
     private string? _saveError;
 
-    public SettingsViewModel(SettingsService settings, SystemService systems, IDialogService dialogs, Func<string?> detectTortoise, SettingsSection initialSection = SettingsSection.Svn)
+    public SettingsViewModel(
+        SettingsService settings,
+        SystemService systems,
+        LegacyImportService legacyImport,
+        IDialogService dialogs,
+        Func<string?> detectTortoise,
+        SettingsSection initialSection = SettingsSection.Svn)
     {
         _settings = settings;
         _systems = systems;
         _dialogs = dialogs;
         _detectTortoise = detectTortoise;
         _draft = settings.CreateRepositoryDraft();
-        _selectedSection = initialSection;
+        Pages =
+        [
+            new SettingsPageItem(SettingsPage.Svn, "SVN", "REPOSITORY"),
+            new SettingsPageItem(SettingsPage.Git, "Git", "REPOSITORY"),
+            new SettingsPageItem(SettingsPage.LegacyImport, "Import Legacy XML", "DATA"),
+        ];
+        _selectedPage = PageFor(initialSection);
+        LegacyImport = new LegacyImportViewModel(legacyImport, dialogs);
 
         SaveCommand = new AsyncRelayCommand(SaveAsync, onError: ex => SaveError = $"Could not save settings: {ex.Message}");
         CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false));
@@ -44,7 +58,13 @@ public sealed class SettingsViewModel : ObservableObject
 
     public event EventHandler<bool>? CloseRequested;
 
-    public IReadOnlyList<SettingsSection> Sections { get; } = [SettingsSection.Svn, SettingsSection.Git];
+    /// <summary>Settings navigation: Repository (SVN, Git) and Data (legacy import).</summary>
+    public IReadOnlyList<SettingsPageItem> Pages { get; }
+
+    public LegacyImportViewModel LegacyImport { get; }
+
+    /// <summary>True once a legacy import committed while this window was open (callers refresh their lists).</summary>
+    public bool DataChanged => LegacyImport.ImportedAny;
 
     public AsyncRelayCommand SaveCommand { get; }
 
@@ -54,22 +74,39 @@ public sealed class SettingsViewModel : ObservableObject
 
     public RelayCommand DetectTortoiseCommand { get; }
 
-    public SettingsSection SelectedSection
+    public SettingsPageItem SelectedPage
     {
-        get => _selectedSection;
+        get => _selectedPage;
         set
         {
-            if (SetProperty(ref _selectedSection, value))
-            {
-                OnPropertyChanged(nameof(IsSvnSelected));
-                OnPropertyChanged(nameof(IsGitSelected));
-            }
+            if (value is null || !SetProperty(ref _selectedPage, value))
+                return;
+
+            OnPropertyChanged(nameof(SelectedSection));
+            OnPropertyChanged(nameof(IsSvnSelected));
+            OnPropertyChanged(nameof(IsGitSelected));
+            OnPropertyChanged(nameof(IsLegacyImportSelected));
+            OnPropertyChanged(nameof(IsRepositoryPageSelected));
         }
     }
 
-    public bool IsSvnSelected => SelectedSection == SettingsSection.Svn;
+    /// <summary>The Repository settings section shown (SVN when a non-repository page is selected).</summary>
+    public SettingsSection SelectedSection
+    {
+        get => _selectedPage.Page == SettingsPage.Git ? SettingsSection.Git : SettingsSection.Svn;
+        set => SelectedPage = PageFor(value);
+    }
 
-    public bool IsGitSelected => SelectedSection == SettingsSection.Git;
+    public bool IsSvnSelected => _selectedPage.Page == SettingsPage.Svn;
+
+    public bool IsGitSelected => _selectedPage.Page == SettingsPage.Git;
+
+    public bool IsLegacyImportSelected => _selectedPage.Page == SettingsPage.LegacyImport;
+
+    public bool IsRepositoryPageSelected => !IsLegacyImportSelected;
+
+    private SettingsPageItem PageFor(SettingsSection section) =>
+        Pages.First(p => p.Page == (section == SettingsSection.Git ? SettingsPage.Git : SettingsPage.Svn));
 
     public string SvnHost { get => _draft.Svn.Host; set => Edit(() => _draft.Svn.Host = value); }
 
@@ -190,3 +227,16 @@ public sealed class SettingsViewModel : ObservableObject
 }
 
 public sealed record TargetPreviewRow(string DisplayName, string Text, bool IsProblem);
+
+public enum SettingsPage
+{
+    Svn,
+    Git,
+    LegacyImport,
+}
+
+/// <summary>One entry of the Settings navigation, grouped under <see cref="Group"/> (REPOSITORY, DATA).</summary>
+public sealed record SettingsPageItem(SettingsPage Page, string Title, string Group)
+{
+    public override string ToString() => Title;
+}

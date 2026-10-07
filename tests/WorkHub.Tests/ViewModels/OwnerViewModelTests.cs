@@ -33,7 +33,7 @@ public sealed class OwnerViewModelTests : IDisposable
         settings.Initialize(settingsStore.LoadOrCreate());
 
         _owner = new OwnerAreaViewModel(_owners, _dialogs, NullAppLog.Instance);
-        _repository = new RepositoryAreaViewModel(_systems, new RepositoryOpenService(settings, new NoLauncher()), settings, _dialogs,
+        _repository = new RepositoryAreaViewModel(_systems, new RepositoryOpenService(settings, new NoLauncher()), settings, _root.CreateLegacyImportService(), _dialogs,
             NullAppLog.Instance, () => null, searchDelayMs: 10);
         _navigation = new RepositoryNavigationViewModel(_repository, _owner);
     }

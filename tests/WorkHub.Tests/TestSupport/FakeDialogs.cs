@@ -22,7 +22,9 @@ internal sealed class FakeDialogs : IDialogService
 
     public bool ShowSystemEditor(SystemEditorViewModel viewModel) => OnSystemEditor(viewModel);
 
-    public bool ShowSettings(SettingsViewModel viewModel) => false;
+    public Func<SettingsViewModel, bool> OnSettings { get; set; } = _ => false;
+
+    public bool ShowSettings(SettingsViewModel viewModel) => OnSettings(viewModel);
 
     public bool ShowOwnerGroupEditor(OwnerGroupEditorViewModel viewModel) => OnOwnerGroupEditor(viewModel);
 
@@ -38,7 +40,16 @@ internal sealed class FakeDialogs : IDialogService
 
     public string? PickExecutable(string title, string? initialPath) => null;
 
-    public string? PickFile(string title, string? initialPath) => null;
+    /// <summary>What the file picker "chooses" (null = cancelled).</summary>
+    public string? PickFileResult { get; set; }
+
+    public string? LastPickFileFilter { get; private set; }
+
+    public string? PickFile(string title, string? initialPath, string? filter = null)
+    {
+        LastPickFileFilter = filter;
+        return PickFileResult;
+    }
 
     public string? PickFolder(string title, string? initialPath) => null;
 

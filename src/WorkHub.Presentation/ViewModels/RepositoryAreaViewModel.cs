@@ -1,6 +1,7 @@
 using WorkHub.Presentation.Mvvm;
 using WorkHub.Presentation.Services;
 using WorkHub.Core.Diagnostics;
+using WorkHub.Core.LegacyImport;
 using WorkHub.Core.Repositories;
 using WorkHub.Core.Settings;
 
@@ -20,6 +21,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
     private readonly SettingsService _settings;
     private readonly IDialogService _dialogs;
     private readonly IAppLog _log;
+    private readonly LegacyImportService _legacyImport;
     private readonly Func<string?> _detectTortoise;
     private readonly int _searchDelayMs;
 
@@ -40,6 +42,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
         SystemService systems,
         RepositoryOpenService opener,
         SettingsService settings,
+        LegacyImportService legacyImport,
         IDialogService dialogs,
         IAppLog log,
         Func<string?> detectTortoise,
@@ -48,6 +51,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
         _systems = systems;
         _opener = opener;
         _settings = settings;
+        _legacyImport = legacyImport;
         _dialogs = dialogs;
         _log = log;
         _detectTortoise = detectTortoise;
@@ -338,10 +342,14 @@ public sealed class RepositoryAreaViewModel : ObservableObject
 
     private async Task OpenSettingsAsync(SettingsSection? section)
     {
-        var viewModel = new SettingsViewModel(_settings, _systems, _dialogs, _detectTortoise, section ?? SettingsSection.Svn);
+        var viewModel = new SettingsViewModel(_settings, _systems, _legacyImport, _dialogs, _detectTortoise, section ?? SettingsSection.Svn);
         await viewModel.LoadUsageAsync();
         if (_dialogs.ShowSettings(viewModel))
             ClearBanner();
+
+        // A legacy import commits immediately (even if Settings was cancelled): re-query only the visible list.
+        if (viewModel.DataChanged)
+            await ReloadAsync();
     }
 
     private void CloseSearch()

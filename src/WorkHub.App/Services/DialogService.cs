@@ -50,8 +50,8 @@ public sealed class DialogService : IDialogService
     public string? PickExecutable(string title, string? initialPath) =>
         PickFileCore(title, initialPath, "Programs (*.exe)|*.exe");
 
-    public string? PickFile(string title, string? initialPath) =>
-        PickFileCore(title, initialPath, "All files (*.*)|*.*");
+    public string? PickFile(string title, string? initialPath, string? filter = null) =>
+        PickFileCore(title, initialPath, filter ?? "All files (*.*)|*.*");
 
     public string? PickFolder(string title, string? initialPath)
     {

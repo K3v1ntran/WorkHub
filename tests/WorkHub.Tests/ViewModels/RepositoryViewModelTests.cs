@@ -35,7 +35,10 @@ public sealed class RepositoryViewModelTests : IDisposable
     public void Dispose() => _root.Dispose();
 
     private RepositoryAreaViewModel CreateArea(int searchDelayMs = 30) =>
-        new(_systems, new RepositoryOpenService(_settings, _launcher), _settings, _dialogs, NullAppLog.Instance, () => null, searchDelayMs);
+        new(_systems, new RepositoryOpenService(_settings, _launcher), _settings, _root.CreateLegacyImportService(), _dialogs, NullAppLog.Instance, () => null, searchDelayMs);
+
+    private SettingsViewModel CreateSettings(SettingsSection section = SettingsSection.Svn) =>
+        new(_settings, _systems, _root.CreateLegacyImportService(), _dialogs, () => null, section);
 
     private async Task SeedAsync(string code, string name, params RepositoryType[] types) =>
         Assert.True((await _systems.CreateAsync(new SystemDraft(code, name, null, true, types.Select(t => new MembershipDraft(t, true)).ToList()))).Succeeded);
@@ -273,7 +276,7 @@ public sealed class RepositoryViewModelTests : IDisposable
     public async Task SettingsCancel_PersistsNothing()
     {
         var before = File.ReadAllBytes(_root.Paths.SettingsFile);
-        var vm = new SettingsViewModel(_settings, _systems, _dialogs, () => null);
+        var vm = CreateSettings();
         bool? closedWith = null;
         vm.CloseRequested += (_, saved) => closedWith = saved;
         await vm.LoadUsageAsync();
@@ -289,7 +292,7 @@ public sealed class RepositoryViewModelTests : IDisposable
     [Fact]
     public async Task SettingsPreview_UsesTheResolverOnTheDraft()
     {
-        var vm = new SettingsViewModel(_settings, _systems, _dialogs, () => null);
+        var vm = CreateSettings();
         await vm.LoadUsageAsync();
 
         vm.SvnHost = "https://svn.example.test/svn";
@@ -311,7 +314,7 @@ public sealed class RepositoryViewModelTests : IDisposable
     [Fact]
     public async Task SettingsSave_WithInvalidValue_StaysOpenAndKeepsInput()
     {
-        var vm = new SettingsViewModel(_settings, _systems, _dialogs, () => null, SettingsSection.Git);
+        var vm = CreateSettings(SettingsSection.Git);
         var closed = false;
         vm.CloseRequested += (_, _) => closed = true;
         await vm.LoadUsageAsync();
@@ -330,7 +333,7 @@ public sealed class RepositoryViewModelTests : IDisposable
     [Fact]
     public async Task SettingsSave_UpdatesResolverInput()
     {
-        var vm = new SettingsViewModel(_settings, _systems, _dialogs, () => null);
+        var vm = CreateSettings();
         await vm.LoadUsageAsync();
         vm.SvnHost = "https://svn.example.test/svn/";
 

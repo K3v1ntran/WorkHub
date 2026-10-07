@@ -29,7 +29,8 @@ public interface IDialogService
     /// <returns>The selected file, or null when cancelled.</returns>
     string? PickExecutable(string title, string? initialPath);
 
-    string? PickFile(string title, string? initialPath);
+    /// <param name="filter">Win32 file filter (e.g. "XML (*.xml)|*.xml"); null for all files.</param>
+    string? PickFile(string title, string? initialPath, string? filter = null);
 
     string? PickFolder(string title, string? initialPath);
 
