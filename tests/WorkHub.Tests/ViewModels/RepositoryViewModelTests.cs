@@ -95,6 +95,22 @@ public sealed class RepositoryViewModelTests : IDisposable
         Assert.Equal(["ABC001"], area.Items.Select(i => i.SystemCode));
     }
 
+    [Theory]
+    [InlineData("販売", "ABC001")]
+    [InlineData("bill", "XYZ002")]
+    public async Task Search_MatchesSystemNameThroughTheViewModel(string query, string expected)
+    {
+        await SeedAsync("ABC001", "販売管理システム", RepositoryType.SvnSystem);
+        await SeedAsync("XYZ002", "Billing System", RepositoryType.SvnSystem);
+        var area = CreateArea();
+        await area.ActivateAsync();
+
+        area.SearchText = query;
+        await area.CurrentLoad;
+
+        Assert.Equal([expected], area.Items.Select(i => i.SystemCode));
+    }
+
     [Fact]
     public async Task CloseSearch_ClearsThenHides()
     {

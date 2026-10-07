@@ -251,6 +251,80 @@ public sealed class SystemServiceTests : IDisposable
         Assert.Equal(expected, (await ListAsync(RepositoryType.SvnSystem, query)).Select(i => i.SystemCode));
     }
 
+    [Theory]
+    [InlineData("abc", "ABC001")]   // SystemCode only, lower-case query
+    [InlineData("C00", "ABC001")]   // SystemCode, middle of the code
+    public async Task Search_MatchesSystemCodeCaseInsensitively(string query, string expected)
+    {
+        await CreateAsync("ABC001", "Payroll", RepositoryType.SvnSystem);
+        await CreateAsync("XYZ002", "Inventory", RepositoryType.SvnSystem);
+
+        Assert.Equal([expected], (await ListAsync(RepositoryType.SvnSystem, query)).Select(i => i.SystemCode));
+    }
+
+    [Theory]
+    [InlineData("bill")]
+    [InlineData("BILL")]
+    [InlineData("ling Sys")]
+    public async Task Search_MatchesSystemNameWhenCodeDoesNotContainQuery(string query)
+    {
+        await CreateAsync("XYZ002", "Billing System", RepositoryType.SvnSystem);
+        await CreateAsync("ABC003", "Payroll", RepositoryType.SvnSystem);
+
+        Assert.Equal(["XYZ002"], (await ListAsync(RepositoryType.SvnSystem, query)).Select(i => i.SystemCode));
+    }
+
+    [Theory]
+    [InlineData("販売")]
+    [InlineData("管理")]
+    [InlineData("システム")]
+    [InlineData("販売管理システム")]
+    public async Task Search_MatchesJapaneseSystemName(string query)
+    {
+        await CreateAsync("ABC001", "販売管理システム", RepositoryType.SvnSystem);
+        await CreateAsync("ABC002", "Billing System", RepositoryType.SvnSystem);
+
+        Assert.Equal(["ABC001"], (await ListAsync(RepositoryType.SvnSystem, query)).Select(i => i.SystemCode));
+    }
+
+    [Theory]
+    [InlineData("zzz")]
+    [InlineData("在庫")]
+    [InlineData("ABC001x")]
+    public async Task Search_ReturnsNothingWhenNeitherFieldContainsQuery(string query)
+    {
+        await CreateAsync("ABC001", "販売管理システム", RepositoryType.SvnSystem);
+        await CreateAsync("ABC002", "Billing System", RepositoryType.SvnSystem);
+
+        Assert.Empty(await ListAsync(RepositoryType.SvnSystem, query));
+    }
+
+    [Fact]
+    public async Task Search_KeepsRepositoryTypeFilter()
+    {
+        await CreateAsync("ABC001", "販売管理システム", RepositoryType.SvnSystem);
+        await CreateAsync("GIT001", "販売 Git only", RepositoryType.GitSystem);
+        await CreateAsync("BOTH01", "販売 both", RepositoryType.SvnSystem, RepositoryType.GitSystem);
+
+        Assert.Equal(["ABC001", "BOTH01"], (await ListAsync(RepositoryType.SvnSystem, "販売")).Select(i => i.SystemCode));
+        Assert.Equal(["BOTH01", "GIT001"], (await ListAsync(RepositoryType.GitSystem, "販売")).Select(i => i.SystemCode));
+        Assert.Empty(await ListAsync(RepositoryType.Release, "販売"));
+    }
+
+    [Fact]
+    public async Task Search_KeepsInactiveAndDisabledMembershipFiltering()
+    {
+        await CreateAsync("ACT01", "Billing active", RepositoryType.SvnSystem);
+        var inactive = await CreateAsync("INA01", "Billing inactive", RepositoryType.SvnSystem);
+        await _service.SetActiveAsync(inactive, false);
+        await _service.CreateAsync(new SystemDraft("DIS01", "Billing disabled", null, true,
+            [new MembershipDraft(RepositoryType.GitSystem, true), new MembershipDraft(RepositoryType.SvnSystem, false)]));
+
+        Assert.Equal(["ACT01"], (await ListAsync(RepositoryType.SvnSystem, "billing")).Select(i => i.SystemCode));
+        Assert.Equal(["ACT01", "INA01"], (await ListAsync(RepositoryType.SvnSystem, "billing", includeInactive: true)).Select(i => i.SystemCode));
+        Assert.Equal(["DIS01"], (await ListAsync(RepositoryType.GitSystem, "billing")).Select(i => i.SystemCode));
+    }
+
     [Fact]
     public async Task Search_TreatsLikeWildcardsLiterally()
     {
