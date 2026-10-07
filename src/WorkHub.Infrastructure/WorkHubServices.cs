@@ -1,4 +1,5 @@
 using WorkHub.Core.Diagnostics;
+using WorkHub.Core.Owner;
 using WorkHub.Core.Repositories;
 using WorkHub.Core.Settings;
 using WorkHub.Core.Startup;
@@ -27,6 +28,7 @@ public sealed class WorkHubServices
         Settings = new SettingsService(settingsStore);
         Systems = new SystemService(new SqliteSystemStore(Connections));
         RepositoryOpener = new RepositoryOpenService(Settings, new ProcessRepositoryLauncher());
+        Owners = new OwnerService(new SqliteOwnerStore(Connections), new ProcessOwnerLauncher());
     }
 
     public static WorkHubServices Create(WorkHubPaths paths) => new(paths);
@@ -44,4 +46,6 @@ public sealed class WorkHubServices
     public SystemService Systems { get; }
 
     public RepositoryOpenService RepositoryOpener { get; }
+
+    public OwnerService Owners { get; }
 }

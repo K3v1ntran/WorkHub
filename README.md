@@ -24,6 +24,12 @@ Configure in **Settings → Repository** (SVN / Git). Nothing site-specific ship
 
 Generated target = `host` + `/` + `prefix` + `SystemCode`, unless a System's repository membership has a custom target.
 
+## Owner Manager
+
+User-defined launcher groups below the fixed Repository groups (schema v2). Items open a web page (http/https),
+a file (default app), a folder (Explorer) or a program (.exe started directly, no shell). Targets are used as entered;
+WorkHub never deletes or modifies them. Passwords are never stored; `CredentialId` is reserved for a future vault.
+
 ## Build and test
 
 ```powershell

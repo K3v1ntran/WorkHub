@@ -1,5 +1,6 @@
 using WorkHub.Core.Settings;
 using WorkHub.Core.Startup;
+using WorkHub.Infrastructure.Persistence.Migrations;
 using WorkHub.Infrastructure.Settings;
 using WorkHub.Tests.TestSupport;
 
@@ -59,14 +60,13 @@ public sealed class FirstRunInitializationTests : IDisposable
     }
 
     [Fact]
-    public void FreshRun_HasNoOwnerOrWorkspaceTablesYet()
+    public void FreshRun_HasNoWorkspaceOrCredentialTablesYet()
     {
         _root.CreateInitializer().Initialize();
 
         using var connection = _root.Open();
         Assert.DoesNotContain(Db.UserTables(connection),
-            name => name.StartsWith("Owner", StringComparison.Ordinal)
-                    || name.StartsWith("Workspace", StringComparison.Ordinal)
+            name => name.StartsWith("Workspace", StringComparison.Ordinal)
                     || name.StartsWith("Project", StringComparison.Ordinal)
                     || name.Contains("Tag", StringComparison.Ordinal)
                     || name.Contains("Credential", StringComparison.Ordinal));
@@ -85,7 +85,7 @@ public sealed class FirstRunInitializationTests : IDisposable
         var second = _root.CreateInitializer().Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Opened, second.Database.Outcome);
-        Assert.Equal(1, second.Database.PreviousSchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, second.Database.PreviousSchemaVersion);
         using var reopened = _root.Open();
         Assert.Equal(1, Db.Count(reopened, "Systems"));
         Assert.Equal(1, Db.Count(reopened, "SystemRepositories"));

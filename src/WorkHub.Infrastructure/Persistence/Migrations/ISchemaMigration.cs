@@ -22,6 +22,7 @@ public static class SchemaMigrations
     public static IReadOnlyList<ISchemaMigration> All { get; } =
     [
         new V001_InitialSchema(),
+        new V002_OwnerManager(),
     ];
 
     public static int LatestVersion => All[^1].Version;
