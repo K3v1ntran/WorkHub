@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- WPF presentation layer and composition root. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>WorkHub</AssemblyName>
+    <RootNamespace>WorkHub.App</RootNamespace>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WorkHub.Core\WorkHub.Core.csproj" />
+    <ProjectReference Include="..\WorkHub.Infrastructure\WorkHub.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

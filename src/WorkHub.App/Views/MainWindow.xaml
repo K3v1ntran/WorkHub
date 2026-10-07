@@ -1,0 +1,121 @@
+<Window x:Class="WorkHub.App.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.App.ViewModels"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        Title="WorkHub"
+        Width="1100" Height="720" MinWidth="720" MinHeight="460"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Brush.Background}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <Style x:Key="Banner" TargetType="Border">
+            <Setter Property="Padding" Value="12,8" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="Visibility" Value="Visible" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource Brush.Surface}"
+                BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" Padding="16,10">
+            <DockPanel LastChildFill="False">
+                <TextBlock DockPanel.Dock="Left" Text="WorkHub" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center"
+                           Foreground="{StaticResource Brush.MutedText}" Text="{Binding StatusText}" />
+                <!-- Settings is a separate window; implemented in a later phase. -->
+                <Button DockPanel.Dock="Right" Content="Settings" Padding="12,4" IsEnabled="False"
+                        ToolTipService.ShowOnDisabled="True" ToolTip="Settings will be available in a later phase." />
+            </DockPanel>
+        </Border>
+
+        <!-- Startup error -->
+        <Border Grid.Row="1" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource Banner}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ErrorMessage}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorMessage}" />
+        </Border>
+
+        <!-- Non-fatal warning -->
+        <Border Grid.Row="2" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource Banner}">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding WarningMessage}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <TextBlock Foreground="{StaticResource Brush.Warning}" TextWrapping="Wrap" Text="{Binding WarningMessage}" />
+        </Border>
+
+        <TabControl Grid.Row="3" Margin="12" IsEnabled="{Binding IsReady}" Padding="0">
+            <TabItem Header="Repository" Padding="16,4">
+                <Grid DataContext="{Binding Repository}" Background="{StaticResource Brush.Surface}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="240" MinWidth="180" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <DockPanel Grid.Column="0">
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Text="REPOSITORIES" />
+                        <ListBox DockPanel.Dock="Top" BorderThickness="0" Background="Transparent"
+                                 ItemsSource="{Binding Categories}" SelectedItem="{Binding SelectedCategory}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:RepositoryCategoryViewModel}">
+                                    <DockPanel Margin="4,3">
+                                        <TextBlock DockPanel.Dock="Right" Margin="8,0,0,0" FontSize="10"
+                                                   Foreground="{StaticResource Brush.MutedText}" VerticalAlignment="Center"
+                                                   Text="{Binding VersionControl}" />
+                                        <TextBlock Text="{Binding DisplayName}" />
+                                    </DockPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource SectionHeader}" Margin="12,20,12,4" Text="OWNER" />
+                        <TextBlock DockPanel.Dock="Top" Margin="12,0" FontSize="12" TextWrapping="Wrap"
+                                   Foreground="{StaticResource Brush.MutedText}" Text="No Owner groups yet." />
+                    </DockPanel>
+
+                    <GridSplitter Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource Brush.Border}" />
+
+                    <DockPanel Grid.Column="2">
+                        <TextBlock DockPanel.Dock="Top" Margin="16,12" FontSize="15" FontWeight="SemiBold"
+                                   Text="{Binding SelectedCategory.DisplayName}" />
+                        <TextBlock Style="{StaticResource EmptyState}" Text="{Binding SelectedCategory.EmptyStateText}" />
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Workspace" Padding="16,4">
+                <Grid Background="{StaticResource Brush.Surface}">
+                    <TextBlock Style="{StaticResource EmptyState}" Text="Workspace is empty." />
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>
