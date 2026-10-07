@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WorkHub.Core.Diagnostics;
+using WorkHub.Core.LegacyImport;
+using WorkHub.Infrastructure.LegacyImport;
 using WorkHub.Core.Startup;
 using WorkHub.Infrastructure.FileSystem;
 using WorkHub.Infrastructure.Persistence;
@@ -25,6 +27,9 @@ public sealed class TempWorkHubRoot : IDisposable
         new(Paths, migrations, TimeProvider.System, NullAppLog.Instance);
 
     public SqliteConnection Open() => new SqliteConnectionFactory(Paths.DatabaseFile).OpenExisting();
+
+    public LegacyImportService CreateLegacyImportService(IAppLog? log = null) =>
+        new(new LegacyXmlParser(), new SqliteLegacyImportStore(new SqliteConnectionFactory(Paths.DatabaseFile)), log ?? NullAppLog.Instance);
 
     public void Dispose()
     {

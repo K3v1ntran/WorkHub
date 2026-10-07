@@ -16,6 +16,11 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Legacy import fixture: SystemCode / SystemName master data only (no hosts, URLs or credentials). -->
+  <ItemGroup>
+    <None Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\WorkHub.Core\WorkHub.Core.csproj" />
     <ProjectReference Include="..\..\src\WorkHub.Infrastructure\WorkHub.Infrastructure.csproj" />
