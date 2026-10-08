@@ -46,6 +46,27 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
+    public bool ShowWorkspaceNameEditor(WorkspaceNameEditorViewModel viewModel)
+    {
+        var window = new WorkspaceNameEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        return window.ShowDialog() == true;
+    }
+
+    public bool ShowProjectEditor(ProjectEditorViewModel viewModel)
+    {
+        var window = new ProjectEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        return window.ShowDialog() == true;
+    }
+
+    public bool ShowWorkspaceMove(WorkspaceMoveViewModel viewModel)
+    {
+        var window = new WorkspaceMoveWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, moved) => window.DialogResult = moved;
+        return window.ShowDialog() == true;
+    }
+
     public bool Confirm(string title, string message, string confirmText) =>
         new ConfirmWindow(title, message, confirmText) { Owner = ActiveWindow() }.ShowDialog() == true;
 

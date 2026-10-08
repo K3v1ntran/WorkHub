@@ -30,6 +30,22 @@ User-defined launcher groups below the fixed Repository groups (schema v2). Item
 a file (default app), a folder (Explorer) or a program (.exe started directly, no shell). Targets are used as entered;
 WorkHub never deletes or modifies them. Passwords are never stored; `CredentialId` is reserved for a future vault.
 
+## Workspace
+
+The **Workspace** tab is a logical tree of Workspace Folders and Projects (schema v3). It is WorkHub metadata only:
+creating, renaming or moving a folder or project never creates, moves, renames or deletes anything on disk.
+
+- Folders can be nested; Projects sit at the top level or in a folder and cannot contain tree children.
+- Folders and projects share one name space per location. Names keep their spelling, case and Unicode text (up to 200
+  characters) but are compared ignoring case and width (NFKC + upper case), so `Tools`, `TOOLS` and `ＴＯＯＬＳ` clash.
+- A Project has an internal, immutable id, a status (Planning, Active, Maintenance, On Hold, Completed; default Active)
+  and optional Owner, Project manager (free text, 100 characters each) and Description (4000 characters).
+- **Move to…** moves a folder or project to another folder or the top level; a folder cannot move into itself or one of
+  its subfolders, and a name clash at the destination is rejected without changing anything.
+- The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
+
+Not available yet: delete, Trash, Archive, project folders, links, notes, tags, search, drag-and-drop and manual ordering.
+
 ## Legacy XML import
 
 **Settings → Data → Import Legacy XML** reads an old WorkHub `HubData` file once, on demand. Only `SystemCode`,

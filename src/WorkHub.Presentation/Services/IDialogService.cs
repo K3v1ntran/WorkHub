@@ -23,6 +23,15 @@ public interface IDialogService
     /// <returns>True when a destination group was chosen.</returns>
     bool ShowMoveOwnerItem(MoveOwnerItemViewModel viewModel);
 
+    /// <returns>True when the folder was created or the node renamed.</returns>
+    bool ShowWorkspaceNameEditor(WorkspaceNameEditorViewModel viewModel);
+
+    /// <returns>True when the Project was created or saved.</returns>
+    bool ShowProjectEditor(ProjectEditorViewModel viewModel);
+
+    /// <returns>True when the move was confirmed (see <see cref="WorkspaceMoveViewModel.Moved"/>).</returns>
+    bool ShowWorkspaceMove(WorkspaceMoveViewModel viewModel);
+
     /// <summary>Confirmation with an explicit action button (e.g. "Delete"). Cancel is the default button.</summary>
     bool Confirm(string title, string message, string confirmText);
 

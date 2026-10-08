@@ -81,6 +81,21 @@ public partial class MainWindow : Window
             Main?.Owner.OpenItemCommand.Execute(null);
     }
 
+    private void WorkspaceTree_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // WPF trees do not select on right-click; select the clicked node so the context menu acts on it.
+        for (var d = e.OriginalSource as DependencyObject; d is not null;
+             d = d is System.Windows.Media.Visual ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+        {
+            if (d is TreeViewItem { DataContext: WorkspaceNodeViewModel node } item)
+            {
+                node.IsSelected = true;
+                item.Focus();
+                return;
+            }
+        }
+    }
+
     private void OwnerMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(OwnerMoreButton);
 
     private void MoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(MoreButton);

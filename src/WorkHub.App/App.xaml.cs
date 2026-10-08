@@ -47,8 +47,9 @@ public partial class App : Application
 
         var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
         var navigation = new RepositoryNavigationViewModel(repository, owner);
+        var workspace = new WorkspaceAreaViewModel(services.Workspace, dialogs, services.Log);
 
-        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, services.Log)
+        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, workspace, services.Log)
         {
             CustomDataRoot = options.Options.IsCustomDataRoot ? services.Paths.Root : null,
         };

@@ -494,9 +494,211 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Workspace" Padding="16,4">
-                <Grid Background="{StaticResource Brush.Surface}">
-                    <TextBlock Style="{StaticResource EmptyState}" Text="Workspace is empty." />
+            <TabItem x:Name="WorkspaceTab" Header="Workspace" Padding="16,4" IsSelected="{Binding Workspace.IsTabSelected, Mode=TwoWay}">
+                <Grid Background="{StaticResource Brush.Surface}" DataContext="{Binding Workspace}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="340" MinWidth="220" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" MinWidth="300" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Workspace banner (errors that did not change anything) -->
+                    <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource Banner}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding BannerMessage}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding DismissBannerCommand}"
+                                    AutomationProperties.Name="Dismiss workspace message" Content="Dismiss" />
+                            <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap"
+                                       Text="{Binding BannerMessage}" AutomationProperties.AutomationId="WorkspaceBanner" />
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Tree -->
+                    <DockPanel Grid.Row="1" Grid.Column="0">
+                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,8,8,4">
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewFolderCommand}" AutomationProperties.Name="New Folder" ToolTip="New folder (a WorkHub reference only)">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE8F4;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Folder" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewProjectCommand}" AutomationProperties.Name="New Project" ToolTip="New project">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE710;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Project" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding RenameCommand}" AutomationProperties.Name="Rename" ToolTip="Rename (F2)">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8AC;" />
+                            </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move to" ToolTip="Move to…">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8DE;" />
+                            </Button>
+                        </StackPanel>
+
+                        <Grid>
+                            <TreeView x:Name="WorkspaceTree" BorderThickness="0" Background="Transparent" Padding="4"
+                                      ItemsSource="{Binding Roots}" AutomationProperties.Name="Workspace tree"
+                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      PreviewMouseRightButtonDown="WorkspaceTree_PreviewMouseRightButtonDown">
+                                <TreeView.InputBindings>
+                                    <KeyBinding Key="F2" Command="{Binding RenameCommand}" />
+                                </TreeView.InputBindings>
+                                <TreeView.ItemContainerStyle>
+                                    <Style TargetType="TreeViewItem">
+                                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                        <Setter Property="Padding" Value="2,2" />
+                                    </Style>
+                                </TreeView.ItemContainerStyle>
+                                <TreeView.ItemTemplate>
+                                    <HierarchicalDataTemplate DataType="{x:Type vm:WorkspaceNodeViewModel}" ItemsSource="{Binding Children}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" />
+                                            <TextBlock x:Name="Label" Margin="6,1,4,1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <HierarchicalDataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsProject}" Value="True">
+                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE8A5;" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsPlaceholder}" Value="True">
+                                                <Setter TargetName="Glyph" Property="Visibility" Value="Collapsed" />
+                                                <Setter TargetName="Label" Property="Foreground" Value="{StaticResource Brush.MutedText}" />
+                                            </DataTrigger>
+                                        </HierarchicalDataTemplate.Triggers>
+                                    </HierarchicalDataTemplate>
+                                </TreeView.ItemTemplate>
+                                <TreeView.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}" />
+                                        <MenuItem Header="New Project…" Command="{Binding NewProjectCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Rename…" InputGestureText="F2" Command="{Binding RenameCommand}" />
+                                        <MenuItem Header="Edit Project…" Command="{Binding EditProjectCommand}" />
+                                        <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
+                                    </ContextMenu>
+                                </TreeView.ContextMenu>
+                            </TreeView>
+
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Workspace is empty. Create a folder or project."
+                                       Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Loading…"
+                                       Visibility="{Binding IsLoadingRoots, Converter={StaticResource BoolToVisibility}}" />
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="16">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding RootLoadError}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" TextAlignment="Center" Text="{Binding RootLoadError}" />
+                                <Button Margin="0,8,0,0" HorizontalAlignment="Center" Content="Retry" Command="{Binding RetryLoadCommand}" AutomationProperties.Name="Retry loading Workspace" />
+                            </StackPanel>
+                        </Grid>
+                    </DockPanel>
+
+                    <GridSplitter Grid.Row="1" Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource Brush.Border}" />
+
+                    <!-- Details -->
+                    <ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="20,14">
+                            <TextBlock HorizontalAlignment="Left" Margin="0" Text="Select a folder or project.">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock" BasedOn="{StaticResource EmptyState}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding SelectedNode}" Value="{x:Null}" />
+                                                    <Condition Binding="{Binding IsActivated}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <!-- Folder -->
+                            <StackPanel Visibility="{Binding IsFolderSelected, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Style="{StaticResource SectionHeader}" Margin="0" Text="FOLDER" />
+                                <TextBlock Margin="0,4,0,0" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedNode.Name}"
+                                           AutomationProperties.AutomationId="SelectedFolderName" />
+                                <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding SelectedNode.Path}" />
+                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                    <Button Content="Rename…" Command="{Binding RenameCommand}" />
+                                    <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <!-- Project -->
+                            <TextBlock Style="{StaticResource FieldHint}" Text="Loading project…"
+                                       Visibility="{Binding IsLoadingDetails, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Style="{StaticResource FieldError}" FontSize="12" Text="{Binding DetailsMessage}" AutomationProperties.AutomationId="DetailsMessage" />
+                            <StackPanel>
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedProject}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Style="{StaticResource SectionHeader}" Margin="0" Text="PROJECT" />
+                                <TextBlock Margin="0,4,0,0" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedProject.Name}"
+                                           AutomationProperties.AutomationId="SelectedProjectName" />
+                                <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding SelectedNode.Path}" />
+                                <Border Style="{StaticResource Tag}" HorizontalAlignment="Left" Margin="0,8,0,0">
+                                    <TextBlock Text="{Binding SelectedProjectStatus}" AutomationProperties.AutomationId="SelectedProjectStatus" />
+                                </Border>
+
+                                <Grid Margin="0,12,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Foreground="{StaticResource Brush.MutedText}" Text="Owner" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" TextWrapping="Wrap" Text="{Binding SelectedProject.Owner, TargetNullValue=—}" AutomationProperties.AutomationId="SelectedProjectOwner" />
+                                    <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="{StaticResource Brush.MutedText}" Text="Project manager" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SelectedProject.ProjectManager, TargetNullValue=—}" AutomationProperties.AutomationId="SelectedProjectManager" />
+                                    <TextBlock Grid.Row="2" Margin="0,4,0,0" Foreground="{StaticResource Brush.MutedText}" Text="Created" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" Text="{Binding SelectedProject.CreatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}" />
+                                    <TextBlock Grid.Row="3" Margin="0,4,0,0" Foreground="{StaticResource Brush.MutedText}" Text="Updated" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Margin="0,4,0,0" Text="{Binding SelectedProject.UpdatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}" />
+                                </Grid>
+
+                                <TextBlock Margin="0,12,0,2" Foreground="{StaticResource Brush.MutedText}" Text="Description" />
+                                <TextBlock TextWrapping="Wrap" Text="{Binding SelectedProject.Description, TargetNullValue=—}" AutomationProperties.AutomationId="SelectedProjectDescription" />
+
+                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                    <Button Content="Edit…" Style="{StaticResource PrimaryButton}" Command="{Binding EditProjectCommand}" AutomationProperties.Name="Edit Project" />
+                                    <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
             </TabItem>
         </TabControl>

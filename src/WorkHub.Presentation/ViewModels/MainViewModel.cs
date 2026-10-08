@@ -12,7 +12,12 @@ public enum ShellState
     Failed,
 }
 
-public sealed class MainViewModel(AppInitializer initializer, SettingsService settings, RepositoryNavigationViewModel navigation, IAppLog log)
+public sealed class MainViewModel(
+    AppInitializer initializer,
+    SettingsService settings,
+    RepositoryNavigationViewModel navigation,
+    WorkspaceAreaViewModel workspace,
+    IAppLog log)
     : ObservableObject
 {
     private ShellState _state = ShellState.Initializing;
@@ -25,6 +30,9 @@ public sealed class MainViewModel(AppInitializer initializer, SettingsService se
     public RepositoryAreaViewModel Repository => Navigation.Repository;
 
     public OwnerAreaViewModel Owner => Navigation.Owner;
+
+    /// <summary>Workspace tab; loads on first selection of the tab, not at startup.</summary>
+    public WorkspaceAreaViewModel Workspace { get; } = workspace;
 
     public ShellState State
     {

@@ -1,0 +1,111 @@
+using System.Collections.ObjectModel;
+using WorkHub.Core.Workspace;
+using WorkHub.Presentation.Mvvm;
+
+namespace WorkHub.Presentation.ViewModels;
+
+/// <summary>
+/// One Folder or Project in the Workspace tree. A Folder's children are loaded on first expand; until then a
+/// placeholder child gives the tree its expander. Projects never have tree children.
+/// The same instance is reused for a node Id wherever it appears, so changes merge by Id and appear exactly once.
+/// </summary>
+public sealed class WorkspaceNodeViewModel : ObservableObject
+{
+    private readonly WorkspaceAreaViewModel? _area;
+    private string _name;
+    private bool _hasChildren;
+    private bool _isExpanded;
+    private bool _isSelected;
+
+    internal WorkspaceNodeViewModel(WorkspaceAreaViewModel area, WorkspaceNode node, WorkspaceNodeViewModel? parent)
+    {
+        _area = area;
+        Id = node.Id;
+        Type = node.Type;
+        _name = node.Name;
+        Parent = parent;
+        SetHasChildren(node.HasChildren);
+    }
+
+    private WorkspaceNodeViewModel()
+    {
+        _name = "Loading…";
+        IsPlaceholder = true;
+    }
+
+    /// <summary>Stand-in child shown under an unloaded Folder so it can be expanded.</summary>
+    internal static WorkspaceNodeViewModel CreatePlaceholder() => new();
+
+    public long Id { get; }
+
+    public WorkspaceNodeType Type { get; }
+
+    public bool IsFolder => !IsPlaceholder && Type == WorkspaceNodeType.Folder;
+
+    public bool IsProject => !IsPlaceholder && Type == WorkspaceNodeType.Project;
+
+    public bool IsPlaceholder { get; }
+
+    public string Name
+    {
+        get => _name;
+        internal set => SetProperty(ref _name, value);
+    }
+
+    /// <summary>Loaded parent Folder, or null at the root.</summary>
+    public WorkspaceNodeViewModel? Parent { get; internal set; }
+
+    public ObservableCollection<WorkspaceNodeViewModel> Children { get; } = [];
+
+    internal bool IsChildrenLoaded { get; set; }
+
+    /// <summary>The child load in flight, if any (reused by every caller until it finishes).</summary>
+    internal Task<bool>? ChildrenLoad { get; set; }
+
+    public bool IsExpanded
+    {
+        get => _isExpanded;
+        set
+        {
+            if (!SetProperty(ref _isExpanded, value) || !value || !IsFolder)
+                return;
+            _area?.OnExpanded(this);
+        }
+    }
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (IsPlaceholder || !SetProperty(ref _isSelected, value))
+                return;
+            _area?.OnSelectionChanged(this, value);
+        }
+    }
+
+    /// <summary>"Clients / Tokyo / Sales" for display in editors.</summary>
+    public string Path => Parent is null ? Name : $"{Parent.Path} / {Name}";
+
+    internal (WorkspaceNodeType, string, long) SortKey => (Type, Name, Id);
+
+    /// <summary>Whether the Folder has children in the database (drives the expander before loading).</summary>
+    internal void SetHasChildren(bool hasChildren)
+    {
+        _hasChildren = hasChildren;
+        if (IsChildrenLoaded || !IsFolder)
+            return;
+
+        var hasPlaceholder = Children.Count == 1 && Children[0].IsPlaceholder;
+        if (hasChildren && !hasPlaceholder)
+            Children.Add(CreatePlaceholder());
+        else if (!hasChildren && hasPlaceholder)
+            Children.Clear();
+    }
+
+    internal bool HasChildren => IsChildrenLoaded ? Children.Count > 0 : _hasChildren;
+
+    internal void CollapseAfterFailedLoad() => SetProperty(ref _isExpanded, false, nameof(IsExpanded));
+
+    public override string ToString() => Name;
+}
