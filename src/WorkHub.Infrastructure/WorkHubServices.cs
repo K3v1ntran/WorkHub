@@ -4,6 +4,7 @@ using WorkHub.Core.Owner;
 using WorkHub.Core.Repositories;
 using WorkHub.Core.Settings;
 using WorkHub.Core.Startup;
+using WorkHub.Core.Workspace;
 using WorkHub.Infrastructure.FileSystem;
 using WorkHub.Infrastructure.Launching;
 using WorkHub.Infrastructure.LegacyImport;
@@ -32,6 +33,7 @@ public sealed class WorkHubServices
         RepositoryOpener = new RepositoryOpenService(Settings, new ProcessRepositoryLauncher());
         Owners = new OwnerService(new SqliteOwnerStore(Connections), new ProcessOwnerLauncher());
         LegacyImport = new LegacyImportService(new LegacyXmlParser(), new SqliteLegacyImportStore(Connections), Log);
+        Workspace = new WorkspaceService(new SqliteWorkspaceStore(Connections));
     }
 
     public static WorkHubServices Create(WorkHubPaths paths) => new(paths);
@@ -53,4 +55,6 @@ public sealed class WorkHubServices
     public OwnerService Owners { get; }
 
     public LegacyImportService LegacyImport { get; }
+
+    public WorkspaceService Workspace { get; }
 }

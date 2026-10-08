@@ -29,6 +29,34 @@ internal static class Db
         return (long)command.ExecuteScalar()!;
     }
 
+    public static string? ScalarString(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        return command.ExecuteScalar() as string;
+    }
+
+    /// <summary>Raw Workspace node insert (schema tests); the key is whatever the caller passes.</summary>
+    public static long InsertNode(SqliteConnection connection, long? parentId, string type, string name, string? key = null)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO WorkspaceNodes (ParentId, NodeType, Name, NameKey, CreatedAt, UpdatedAt)
+            VALUES ($parent, $type, $name, $key, $now, $now) RETURNING Id;
+            """;
+        command.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$type", type);
+        command.Parameters.AddWithValue("$name", name);
+        command.Parameters.AddWithValue("$key", key ?? name.ToUpperInvariant());
+        command.Parameters.AddWithValue("$now", Now);
+        return (long)command.ExecuteScalar()!;
+    }
+
+    public static void InsertProjectDetails(SqliteConnection connection, long nodeId, string projectId = "0123456789abcdef0123456789abcdef") =>
+        Exec(connection, "INSERT INTO Projects (NodeId, ProjectId) VALUES ($id, $pid);", ("$id", nodeId), ("$pid", projectId));
+
     public static List<string> UserTables(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
