@@ -20,6 +20,8 @@ public sealed class DialogService : IDialogService
     {
         var window = new SettingsWindow { DataContext = viewModel, Owner = ActiveWindow() };
         viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        // Title-bar close and Alt+F4 bypass the commands; keep the window open while an import is in flight.
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
         return window.ShowDialog() == true;
     }
 

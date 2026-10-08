@@ -15,15 +15,19 @@ public sealed class LegacyImportViewModel : ObservableObject
 
     private readonly LegacyImportService _service;
     private readonly IDialogService _dialogs;
+    private readonly Func<bool> _canStartImport;
     private LegacyImportPreview? _preview;
     private bool _isBusy;
+    private bool _isImporting;
     private string? _error;
     private string? _resultMessage;
 
-    public LegacyImportViewModel(LegacyImportService service, IDialogService dialogs)
+    /// <param name="canStartImport">Extra gate for starting an import (the Settings window blocks it while its own Save runs).</param>
+    public LegacyImportViewModel(LegacyImportService service, IDialogService dialogs, Func<bool>? canStartImport = null)
     {
         _service = service;
         _dialogs = dialogs;
+        _canStartImport = canStartImport ?? (() => true);
         ChooseFileCommand = new AsyncRelayCommand(ChooseFileAsync, () => !IsBusy, ex => Error = $"The file could not be previewed: {ex.Message}");
         ImportCommand = new AsyncRelayCommand(ImportAsync, () => CanImport, ex => Error = $"The import failed: {ex.Message}");
         ClearCommand = new RelayCommand(Clear, () => !IsBusy && (HasPreview || Error is not null));
@@ -47,6 +51,9 @@ public sealed class LegacyImportViewModel : ObservableObject
                 RaiseCommands();
         }
     }
+
+    /// <summary>True from the Import click until the transaction committed or failed. The host window must stay open meanwhile.</summary>
+    public bool IsImporting { get => _isImporting; private set => SetProperty(ref _isImporting, value); }
 
     public string? Error { get => _error; private set => SetProperty(ref _error, value); }
 
@@ -78,7 +85,7 @@ public sealed class LegacyImportViewModel : ObservableObject
 
     public string? SourceName => Preview?.SourceName;
 
-    public bool CanImport => !IsBusy && Plan is { HasChanges: true };
+    public bool CanImport => !IsBusy && Plan is { HasChanges: true } && _canStartImport();
 
     public string? NothingToImportMessage => Plan switch
     {
@@ -137,6 +144,7 @@ public sealed class LegacyImportViewModel : ObservableObject
     {
         var preview = Preview!;
         IsBusy = true;
+        IsImporting = true;
         Error = null;
         try
         {
@@ -162,6 +170,7 @@ public sealed class LegacyImportViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            IsImporting = false; // last: the result or error is already set when the host may close again
         }
     }
 
@@ -172,7 +181,7 @@ public sealed class LegacyImportViewModel : ObservableObject
         ResultMessage = null;
     }
 
-    private void RaiseCommands()
+    internal void RaiseCommands()
     {
         OnPropertyChanged(nameof(CanImport));
         ChooseFileCommand.RaiseCanExecuteChanged();

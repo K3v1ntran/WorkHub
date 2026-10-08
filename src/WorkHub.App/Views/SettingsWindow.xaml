@@ -144,6 +144,9 @@
                         <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="Working…"
                                    Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                     </StackPanel>
+                    <TextBlock Margin="0,6,0,0" Style="{StaticResource FieldHint}" AutomationProperties.AutomationId="LegacyImportInProgress"
+                               Text="Importing… Settings stays open until the import has finished."
+                               Visibility="{Binding IsImporting, Converter={StaticResource BoolToVisibility}}" />
 
                     <TextBlock Margin="0,10,0,0" Style="{StaticResource FieldError}" FontSize="12" Text="{Binding Error}" AutomationProperties.AutomationId="LegacyImportError" />
                     <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Text="{Binding ResultMessage}" AutomationProperties.AutomationId="LegacyImportResult">

@@ -26,6 +26,7 @@ public sealed class SettingsViewModel : ObservableObject
     private IReadOnlyList<TargetPreviewRow> _preview = [];
     private IReadOnlyList<SettingsIssue> _issues = [];
     private string? _saveError;
+    private bool _isSaving;
 
     public SettingsViewModel(
         SettingsService settings,
@@ -47,10 +48,15 @@ public sealed class SettingsViewModel : ObservableObject
             new SettingsPageItem(SettingsPage.LegacyImport, "Import Legacy XML", "DATA"),
         ];
         _selectedPage = PageFor(initialSection);
-        LegacyImport = new LegacyImportViewModel(legacyImport, dialogs);
+        LegacyImport = new LegacyImportViewModel(legacyImport, dialogs, () => !_isSaving);
+        LegacyImport.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LegacyImportViewModel.IsImporting))
+                OnCanCloseChanged();
+        };
 
-        SaveCommand = new AsyncRelayCommand(SaveAsync, onError: ex => SaveError = $"Could not save settings: {ex.Message}");
-        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false));
+        SaveCommand = new AsyncRelayCommand(SaveAsync, () => CanClose, ex => SaveError = $"Could not save settings: {ex.Message}");
+        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false), () => CanClose);
         BrowseTortoiseCommand = new RelayCommand(BrowseTortoise);
         DetectTortoiseCommand = new RelayCommand(DetectTortoise);
         Refresh();
@@ -65,6 +71,13 @@ public sealed class SettingsViewModel : ObservableObject
 
     /// <summary>True once a legacy import committed while this window was open (callers refresh their lists).</summary>
     public bool DataChanged => LegacyImport.ImportedAny;
+
+    /// <summary>
+    /// False while a legacy import is in flight. The window must not close then: the caller reads <see cref="DataChanged"/>
+    /// right after the dialog returns, and the import's result or error is only shown in this window. Save, Cancel/Escape
+    /// and the window's own close (title bar, Alt+F4) all honour it.
+    /// </summary>
+    public bool CanClose => !LegacyImport.IsImporting;
 
     public AsyncRelayCommand SaveCommand { get; }
 
@@ -192,10 +205,34 @@ public sealed class SettingsViewModel : ObservableObject
         }).ToList();
     }
 
+    private void SetSaving(bool saving)
+    {
+        _isSaving = saving;
+        LegacyImport.RaiseCommands();
+    }
+
+    private void OnCanCloseChanged()
+    {
+        OnPropertyChanged(nameof(CanClose));
+        SaveCommand.RaiseCanExecuteChanged();
+        CancelCommand.RaiseCanExecuteChanged();
+    }
+
     private async Task SaveAsync()
     {
         SaveError = null;
-        var result = await _settings.SaveRepositoryAsync(_draft, _usage);
+        SettingsSaveResult result;
+        // While Save runs, Import cannot start: a successful Save closes the window, which must not happen mid-import.
+        SetSaving(true);
+        try
+        {
+            result = await _settings.SaveRepositoryAsync(_draft, _usage);
+        }
+        finally
+        {
+            SetSaving(false);
+        }
+
         Issues = result.Issues;
         if (result.Saved)
         {

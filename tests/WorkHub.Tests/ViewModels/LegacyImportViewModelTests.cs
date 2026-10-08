@@ -1,6 +1,8 @@
 using WorkHub.Core.Diagnostics;
+using WorkHub.Core.LegacyImport;
 using WorkHub.Core.Repositories;
 using WorkHub.Core.Settings;
+using WorkHub.Infrastructure.LegacyImport;
 using WorkHub.Infrastructure.Persistence;
 using WorkHub.Infrastructure.Settings;
 using WorkHub.Presentation.ViewModels;
@@ -165,6 +167,115 @@ public sealed class LegacyImportViewModelTests : IDisposable
 
         Assert.Equal(42, area.Items.Count);
         Assert.Contains(area.Items, i => i.SystemCode == "4000000211" && i.SystemName == "Repor Service");
+    }
+
+    [Fact]
+    public async Task SettingsCannotCloseWhileImportIsPending_ThenSuccessRefreshesTheSelectedList()
+    {
+        var gated = new GatedImportStore(new SqliteLegacyImportStore(new SqliteConnectionFactory(_root.Paths.DatabaseFile)));
+        var area = CreateArea(gated);
+        await area.ActivateAsync();
+        area.SelectedCategory = area.Categories.Single(c => c.Type == RepositoryType.SvnOracle);
+        await area.CurrentLoad;
+        Assert.Empty(area.Items);
+
+        _dialogs.OnSettings = settings => PlayUserClosingDuringImport(settings, gated, () => gated.Release());
+
+        await area.OpenSettingsCommand.ExecuteAsync();
+        await area.CurrentLoad;
+
+        Assert.Equal(75, SystemCount());
+        Assert.Equal(33, area.Items.Count); // the selected group (SVN ORACLE) was re-queried
+        Assert.Equal(RepositoryType.SvnOracle, area.SelectedCategory.Type);
+    }
+
+    [Fact]
+    public async Task SettingsCannotCloseWhileImportIsPending_ThenFailureStaysVisibleWithoutSuccess()
+    {
+        var gated = new GatedImportStore(new SqliteLegacyImportStore(new SqliteConnectionFactory(_root.Paths.DatabaseFile)));
+        var area = CreateArea(gated);
+        await area.ActivateAsync();
+        SettingsViewModel? shown = null;
+
+        _dialogs.OnSettings = settings =>
+        {
+            shown = settings;
+            return PlayUserClosingDuringImport(settings, gated, () => gated.Fail(new InvalidOperationException("disk I/O error")));
+        };
+
+        await area.OpenSettingsCommand.ExecuteAsync();
+
+        var import = shown!.LegacyImport;
+        Assert.Equal("The import failed and was rolled back. No changes were made.", import.Error);
+        Assert.Null(import.ResultMessage);
+        Assert.False(import.ImportedAny);
+        Assert.False(shown.DataChanged);
+        Assert.True(import.HasPreview); // the preview stays so the user can see what was attempted
+        Assert.Equal(0, SystemCount());
+        Assert.Empty(area.Items);
+    }
+
+    /// <summary>
+    /// Plays the modal Settings window: start the import, try every close path while the store is held, then let the
+    /// store finish and close with Cancel. Returns the dialog result like ShowDialog would.
+    /// </summary>
+    private static bool PlayUserClosingDuringImport(SettingsViewModel settings, GatedImportStore gated, Action finishStore)
+    {
+        var closeRequests = new List<bool>();
+        settings.CloseRequested += (_, saved) => closeRequests.Add(saved);
+        settings.SelectedPage = settings.Pages.Single(p => p.Page == SettingsPage.LegacyImport);
+        settings.LegacyImport.PreviewAsync(FixturePath).GetAwaiter().GetResult();
+
+        var import = settings.LegacyImport.ImportCommand.ExecuteAsync();
+        Assert.True(gated.Entered.Wait(TimeSpan.FromSeconds(10)), "import never reached the store");
+
+        // Save, Cancel / Escape (IsCancel button → CancelCommand) and title-bar close / Alt+F4 (Closing → CanClose).
+        Assert.True(settings.LegacyImport.IsImporting);
+        Assert.False(settings.CanClose);
+        Assert.False(settings.CancelCommand.CanExecute(null));
+        Assert.False(settings.SaveCommand.CanExecute(null));
+        settings.CancelCommand.Execute(null);
+        settings.SaveCommand.ExecuteAsync().GetAwaiter().GetResult();
+        Assert.Empty(closeRequests);
+        Assert.False(import.IsCompleted);
+
+        finishStore();
+        import.GetAwaiter().GetResult();
+
+        Assert.False(settings.LegacyImport.IsImporting);
+        Assert.True(settings.CanClose); // normal closing is back
+        Assert.True(settings.CancelCommand.CanExecute(null));
+        Assert.True(settings.SaveCommand.CanExecute(null));
+        settings.CancelCommand.Execute(null);
+        Assert.Equal([false], closeRequests);
+        return false;
+    }
+
+    private RepositoryAreaViewModel CreateArea(ILegacyImportStore store) =>
+        new(_systems, new RepositoryOpenService(_settings, new NoLauncher()), _settings,
+            new LegacyImportService(new LegacyXmlParser(), store, NullAppLog.Instance), _dialogs, NullAppLog.Instance, () => null, searchDelayMs: 10);
+
+    /// <summary>Holds <see cref="ApplyAsync"/> until the test releases it (then applies for real) or fails it.</summary>
+    private sealed class GatedImportStore(ILegacyImportStore inner) : ILegacyImportStore
+    {
+        private readonly TaskCompletionSource<Exception?> _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ManualResetEventSlim Entered { get; } = new();
+
+        public void Release() => _gate.SetResult(null);
+
+        public void Fail(Exception exception) => _gate.SetResult(exception);
+
+        public Task<IReadOnlyDictionary<string, ExistingSystemSnapshot>> LoadSnapshotAsync(IReadOnlyList<string> systemCodes, CancellationToken cancellationToken = default) =>
+            inner.LoadSnapshotAsync(systemCodes, cancellationToken);
+
+        public async Task<LegacyImportPlan> ApplyAsync(IReadOnlyList<LegacyEntry> entries, CancellationToken cancellationToken = default)
+        {
+            Entered.Set();
+            if (await _gate.Task is { } failure)
+                throw failure;
+            return await inner.ApplyAsync(entries, cancellationToken);
+        }
     }
 
     private sealed class NoLauncher : IRepositoryLauncher
