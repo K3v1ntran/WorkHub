@@ -38,6 +38,9 @@ public sealed class MainViewModel(AppInitializer initializer, SettingsService se
 
     public bool IsReady => State == ShellState.Ready;
 
+    /// <summary>The <c>--data-root</c> folder when WorkHub runs on isolated data; null for the normal profile.</summary>
+    public string? CustomDataRoot { get; init; }
+
     public string StatusText
     {
         get => _statusText;

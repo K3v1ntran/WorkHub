@@ -38,6 +38,16 @@ SVN ORACLE and GIT ORACLE. A read-only preview shows counts, conflicts and inval
 the import itself is one transaction. Existing names, disabled memberships and custom targets are never changed, and
 re-importing the same file adds nothing. SQLite stays the source of truth — the XML is not synchronized or exported.
 
+## Isolated data root (`--data-root`)
+
+`WorkHub.exe --data-root C:\WorkHubTest` runs WorkHub against a separate data folder instead of
+`%LOCALAPPDATA%\WorkHub` (for testing or trying things out). Without arguments nothing changes.
+
+The path must be a full local path whose parent exists. The folder must be new, empty, or an existing WorkHub data
+folder. It may not be (or overlap) the normal `%LOCALAPPDATA%\WorkHub` folder. Arguments are checked before anything
+is created; an invalid or unknown argument shows an error and exits (code 2). WorkHub never falls back to the normal
+profile when an override was given. The header shows "Test data root: …" and the choice is logged in that root's log.
+
 ## Build and test
 
 ```powershell

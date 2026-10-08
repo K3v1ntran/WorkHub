@@ -15,7 +15,19 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        var services = WorkHubServices.Create(WorkHubPaths.ForCurrentUser());
+        // Arguments are validated before any folder, log or database exists. An invalid explicit --data-root
+        // stops here: WorkHub never falls back to the real profile when an override was requested.
+        var options = StartupOptions.Parse(e.Args, WorkHubPaths.ForCurrentUser().Root);
+        if (!options.IsValid)
+        {
+            MessageBox.Show(options.Error, "WorkHub — invalid startup option", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(2);
+            return;
+        }
+
+        var services = WorkHubServices.Create(options.Options!.Paths);
+        if (options.Options.IsCustomDataRoot)
+            services.Log.Info($"Using custom data root ({StartupOptions.DataRootOption}): {services.Paths.Root}");
         DispatcherUnhandledException += (_, args) =>
         {
             services.Log.Error("Unhandled UI exception.", args.Exception);
@@ -36,7 +48,10 @@ public partial class App : Application
         var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
         var navigation = new RepositoryNavigationViewModel(repository, owner);
 
-        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, services.Log);
+        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, services.Log)
+        {
+            CustomDataRoot = options.Options.IsCustomDataRoot ? services.Paths.Root : null,
+        };
         MainWindow = new MainWindow { DataContext = viewModel };
         MainWindow.Show();
 

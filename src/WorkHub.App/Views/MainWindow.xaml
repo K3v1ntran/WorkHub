@@ -37,6 +37,19 @@
                 <TextBlock DockPanel.Dock="Left" Text="WorkHub" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
                 <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center"
                            Foreground="{StaticResource Brush.MutedText}" Text="{Binding StatusText}" />
+                <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                           Foreground="{StaticResource Brush.Warning}" AutomationProperties.AutomationId="CustomDataRoot"
+                           Text="{Binding CustomDataRoot, StringFormat=Test data root: {0}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding CustomDataRoot}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
                 <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Settings" AutomationProperties.Name="Settings"
                         Command="{Binding Repository.OpenSettingsCommand}">
                     <StackPanel Orientation="Horizontal">
