@@ -21,6 +21,8 @@
         </StackPanel>
         <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" Style="{StaticResource FieldError}" TextWrapping="Wrap"
                    Text="{Binding Error}" AutomationProperties.AutomationId="MoveError" />
+        <TextBlock DockPanel.Dock="Bottom" Style="{StaticResource FieldHint}" Text="Moving… this window stays open until the change is stored."
+                   Visibility="{Binding IsMoving, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="SavingHint" />
         <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldLabel}" Margin="0,4,0,6" Text="Destination" />
         <ListBox x:Name="DestinationList" ItemsSource="{Binding Destinations}" SelectedItem="{Binding SelectedDestination}"
                  DisplayMemberPath="Path" AutomationProperties.Name="Destinations"

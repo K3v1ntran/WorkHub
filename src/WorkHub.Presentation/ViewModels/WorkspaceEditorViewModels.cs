@@ -11,6 +11,7 @@ public sealed class WorkspaceNameEditorViewModel : ObservableObject
     private readonly long? _nodeId;
     private string _name;
     private string? _error;
+    private bool _isSaving;
 
     private WorkspaceNameEditorViewModel(WorkspaceService workspace, string title, long? parentId, long? nodeId, string name, string? parentPath)
     {
@@ -20,8 +21,8 @@ public sealed class WorkspaceNameEditorViewModel : ObservableObject
         _name = name;
         Title = title;
         LocationText = LocationOf(parentPath);
-        SaveCommand = new AsyncRelayCommand(SaveAsync, onError: ex => Error = $"Could not save: {ex.Message}");
-        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false));
+        SaveCommand = new AsyncRelayCommand(SaveAsync);
+        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false), () => CanClose);
     }
 
     public static WorkspaceNameEditorViewModel ForNewFolder(WorkspaceService workspace, long? parentId, string? parentPath) =>
@@ -44,6 +45,22 @@ public sealed class WorkspaceNameEditorViewModel : ObservableObject
 
     public string? Error { get => _error; private set => SetProperty(ref _error, value); }
 
+    /// <summary>True from Save until the write committed or failed.</summary>
+    public bool IsSaving
+    {
+        get => _isSaving;
+        private set
+        {
+            if (!SetProperty(ref _isSaving, value))
+                return;
+            OnPropertyChanged(nameof(CanClose));
+            CancelCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>False while a write is pending: Cancel, Escape, title-bar close and Alt+F4 wait for its outcome.</summary>
+    public bool CanClose => !IsSaving;
+
     /// <summary>Set after a successful create.</summary>
     public WorkspaceNode? CreatedNode { get; private set; }
 
@@ -56,30 +73,40 @@ public sealed class WorkspaceNameEditorViewModel : ObservableObject
     private async Task SaveAsync()
     {
         Error = null;
+        IsSaving = true;
+        bool saved;
+        try
+        {
+            saved = await WriteAsync();
+        }
+        catch (Exception ex)
+        {
+            Error = $"Could not save: {ex.Message}"; // set before closing is allowed again
+            saved = false;
+        }
+        finally
+        {
+            IsSaving = false;
+        }
+
+        if (saved)
+            CloseRequested?.Invoke(this, true);
+    }
+
+    private async Task<bool> WriteAsync()
+    {
         if (_nodeId is { } id)
         {
             var renamed = await _workspace.RenameAsync(id, Name);
-            if (!renamed.Succeeded)
-            {
-                Error = renamed.Error;
-                return;
-            }
-
+            Error = renamed.Error;
             SavedName = renamed.Value;
-        }
-        else
-        {
-            var created = await _workspace.CreateFolderAsync(_parentId, Name);
-            if (!created.Succeeded)
-            {
-                Error = created.Error;
-                return;
-            }
-
-            CreatedNode = created.Value;
+            return renamed.Succeeded;
         }
 
-        CloseRequested?.Invoke(this, true);
+        var created = await _workspace.CreateFolderAsync(_parentId, Name);
+        Error = created.Error;
+        CreatedNode = created.Value;
+        return created.Succeeded;
     }
 }
 
@@ -100,6 +127,7 @@ public sealed class ProjectEditorViewModel : ObservableObject
     private string? _ownerError;
     private string? _projectManagerError;
     private string? _generalError;
+    private bool _isSaving;
 
     private ProjectEditorViewModel(WorkspaceService workspace, long? parentId, ProjectDetails? existing, string? parentPath)
     {
@@ -112,8 +140,8 @@ public sealed class ProjectEditorViewModel : ObservableObject
         _owner = existing?.Owner ?? string.Empty;
         _projectManager = existing?.ProjectManager ?? string.Empty;
         LocationText = WorkspaceNameEditorViewModel.LocationOf(parentPath);
-        SaveCommand = new AsyncRelayCommand(SaveAsync, onError: ex => GeneralError = $"Could not save: {ex.Message}");
-        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false));
+        SaveCommand = new AsyncRelayCommand(SaveAsync);
+        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false), () => CanClose);
     }
 
     public static ProjectEditorViewModel ForCreate(WorkspaceService workspace, long? parentId, string? parentPath) =>
@@ -160,6 +188,22 @@ public sealed class ProjectEditorViewModel : ObservableObject
 
     public string? GeneralError { get => _generalError; private set => SetProperty(ref _generalError, value); }
 
+    /// <summary>True from Save until the write committed or failed.</summary>
+    public bool IsSaving
+    {
+        get => _isSaving;
+        private set
+        {
+            if (!SetProperty(ref _isSaving, value))
+                return;
+            OnPropertyChanged(nameof(CanClose));
+            CancelCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>False while a write is pending: Cancel, Escape, title-bar close and Alt+F4 wait for its outcome.</summary>
+    public bool CanClose => !IsSaving;
+
     /// <summary>Set after a successful create.</summary>
     public WorkspaceNode? CreatedNode { get; private set; }
 
@@ -171,26 +215,41 @@ public sealed class ProjectEditorViewModel : ObservableObject
         NameError = StatusError = DescriptionError = OwnerError = ProjectManagerError = GeneralError = null;
         var draft = new ProjectDraft(Name, Status.Status, Description, Owner, ProjectManager);
 
+        IsSaving = true;
         string? field, error;
-        if (_existing is null)
+        try
         {
-            var created = await _workspace.CreateProjectAsync(_parentId, draft);
-            (field, error) = (created.Field, created.Error);
-            CreatedNode = created.Value;
+            if (_existing is null)
+            {
+                var created = await _workspace.CreateProjectAsync(_parentId, draft);
+                (field, error) = (created.Field, created.Error);
+                CreatedNode = created.Value;
+            }
+            else
+            {
+                var updated = await _workspace.UpdateProjectAsync(_existing.NodeId, draft);
+                (field, error) = (updated.Field, updated.Error);
+                SavedDetails = updated.Value;
+            }
         }
-        else
+        catch (Exception ex)
         {
-            var updated = await _workspace.UpdateProjectAsync(_existing.NodeId, draft);
-            (field, error) = (updated.Field, updated.Error);
-            SavedDetails = updated.Value;
+            (field, error) = (null, $"Could not save: {ex.Message}");
         }
 
         if (error is null)
         {
+            IsSaving = false;
             CloseRequested?.Invoke(this, true);
             return;
         }
 
+        ShowError(field, error); // set before closing is allowed again
+        IsSaving = false;
+    }
+
+    private void ShowError(string? field, string error)
+    {
         switch (field)
         {
             case ProjectDraftValidator.Fields.Name: NameError = error; break;
@@ -218,6 +277,7 @@ public sealed class WorkspaceMoveViewModel : ObservableObject
     private readonly long _nodeId;
     private WorkspaceMoveDestination? _selectedDestination;
     private string? _error;
+    private bool _isMoving;
 
     public WorkspaceMoveViewModel(WorkspaceService workspace, long nodeId, string nodeName, long? currentParentId, IEnumerable<WorkspaceFolderPath> folders)
     {
@@ -230,8 +290,8 @@ public sealed class WorkspaceMoveViewModel : ObservableObject
             .. folders.Select(f => new WorkspaceMoveDestination(f.Id, f.Path)),
         ];
         _selectedDestination = Destinations.FirstOrDefault(d => d.FolderId == currentParentId);
-        MoveCommand = new AsyncRelayCommand(MoveAsync, () => SelectedDestination is not null, ex => Error = $"Could not move: {ex.Message}");
-        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false));
+        MoveCommand = new AsyncRelayCommand(MoveAsync, () => SelectedDestination is not null);
+        CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false), () => CanClose);
     }
 
     public event EventHandler<bool>? CloseRequested;
@@ -260,6 +320,22 @@ public sealed class WorkspaceMoveViewModel : ObservableObject
 
     public string? Error { get => _error; private set => SetProperty(ref _error, value); }
 
+    /// <summary>True from Move until the write committed or failed.</summary>
+    public bool IsMoving
+    {
+        get => _isMoving;
+        private set
+        {
+            if (!SetProperty(ref _isMoving, value))
+                return;
+            OnPropertyChanged(nameof(CanClose));
+            CancelCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>False while the move is pending: Cancel, Escape, title-bar close and Alt+F4 wait for its outcome.</summary>
+    public bool CanClose => !IsMoving;
+
     /// <summary>True when the node actually moved (false for "already there").</summary>
     public bool Moved { get; private set; }
 
@@ -269,15 +345,27 @@ public sealed class WorkspaceMoveViewModel : ObservableObject
     {
         Error = null;
         var destination = SelectedDestination!;
-        var result = await _workspace.MoveAsync(_nodeId, destination.FolderId);
+        IsMoving = true;
+        WorkspaceResult<bool> result;
+        try
+        {
+            result = await _workspace.MoveAsync(_nodeId, destination.FolderId);
+        }
+        catch (Exception ex)
+        {
+            result = WorkspaceResult<bool>.Failed($"Could not move: {ex.Message}");
+        }
+
         if (!result.Succeeded)
         {
-            Error = result.Error;
+            Error = result.Error; // set before closing is allowed again
+            IsMoving = false;
             return;
         }
 
         Moved = result.Value;
         MovedTo = destination.FolderId;
+        IsMoving = false;
         CloseRequested?.Invoke(this, true);
     }
 }

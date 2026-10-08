@@ -23,6 +23,8 @@
         <StackPanel>
             <TextBlock Style="{StaticResource FieldHint}" Margin="0,0,0,4" Text="{Binding LocationText}" TextTrimming="CharacterEllipsis" />
             <TextBlock Style="{StaticResource FieldError}" FontSize="12" Text="{Binding GeneralError}" AutomationProperties.AutomationId="GeneralError" />
+            <TextBlock Style="{StaticResource FieldHint}" Text="Saving… this window stays open until the change is stored."
+                       Visibility="{Binding IsSaving, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="SavingHint" />
 
             <Grid>
                 <Grid.ColumnDefinitions>

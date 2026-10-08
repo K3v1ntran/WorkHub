@@ -24,6 +24,8 @@
             <TextBlock Style="{StaticResource FieldLabel}" Text="Name" />
             <TextBox x:Name="NameBox" MaxLength="200" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Name" />
             <TextBlock Style="{StaticResource FieldError}" Text="{Binding Error}" AutomationProperties.AutomationId="NameError" />
+            <TextBlock Style="{StaticResource FieldHint}" Text="Saving… this window stays open until the change is stored."
+                       Visibility="{Binding IsSaving, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="SavingHint" />
         </StackPanel>
     </DockPanel>
 </Window>

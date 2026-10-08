@@ -50,6 +50,8 @@ public sealed class DialogService : IDialogService
     {
         var window = new WorkspaceNameEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
         viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        // Title-bar close and Alt+F4 bypass the commands; keep the window open while the write is pending.
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
         return window.ShowDialog() == true;
     }
 
@@ -57,6 +59,7 @@ public sealed class DialogService : IDialogService
     {
         var window = new ProjectEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
         viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
         return window.ShowDialog() == true;
     }
 
@@ -64,6 +67,7 @@ public sealed class DialogService : IDialogService
     {
         var window = new WorkspaceMoveWindow { DataContext = viewModel, Owner = ActiveWindow() };
         viewModel.CloseRequested += (_, moved) => window.DialogResult = moved;
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
         return window.ShowDialog() == true;
     }
 
