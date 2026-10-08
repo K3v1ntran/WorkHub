@@ -30,6 +30,14 @@ User-defined launcher groups below the fixed Repository groups (schema v2). Item
 a file (default app), a folder (Explorer) or a program (.exe started directly, no shell). Targets are used as entered;
 WorkHub never deletes or modifies them. Passwords are never stored; `CredentialId` is reserved for a future vault.
 
+## Legacy XML import
+
+**Settings → Data → Import Legacy XML** reads an old WorkHub `HubData` file once, on demand. Only `SystemCode`,
+`SystemName` and the section are imported: `SYSTEM` items join SVN SYSTEM, GIT SYSTEM and RELEASE; `ORACLE` items join
+SVN ORACLE and GIT ORACLE. A read-only preview shows counts, conflicts and invalid entries before anything is written;
+the import itself is one transaction. Existing names, disabled memberships and custom targets are never changed, and
+re-importing the same file adds nothing. SQLite stays the source of truth — the XML is not synchronized or exported.
+
 ## Build and test
 
 ```powershell
