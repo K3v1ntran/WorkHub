@@ -32,6 +32,15 @@ public interface IDialogService
     /// <returns>True when the move was confirmed (see <see cref="WorkspaceMoveViewModel.Moved"/>).</returns>
     bool ShowWorkspaceMove(WorkspaceMoveViewModel viewModel);
 
+    /// <returns>True when the ProjectFolder was created or renamed.</returns>
+    bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel);
+
+    /// <returns>True when the Link was created or saved.</returns>
+    bool ShowProjectLinkEditor(ProjectLinkEditorViewModel viewModel);
+
+    /// <returns>True when the move was confirmed (see <see cref="ProjectContentMoveViewModel.Moved"/>).</returns>
+    bool ShowProjectContentMove(ProjectContentMoveViewModel viewModel);
+
     /// <summary>Confirmation with an explicit action button (e.g. "Delete"). Cancel is the default button.</summary>
     bool Confirm(string title, string message, string confirmText);
 

@@ -60,19 +60,19 @@ public sealed class FirstRunInitializationTests : IDisposable
     }
 
     [Fact]
-    public void FreshRun_HasOnlyTheWorkspaceFoundation_NoDeferredOrCredentialTablesYet()
+    public void FreshRun_HasOnlyTheWorkspaceFoundationAndProjectFoldersAndLinks_NoDeferredOrCredentialTablesYet()
     {
         _root.CreateInitializer().Initialize();
 
         using var connection = _root.Open();
         var tables = Db.UserTables(connection);
-        Assert.Equal(["Projects", "WorkspaceNodes"], tables.Where(name =>
+        Assert.Equal(["ProjectFolders", "ProjectLinks", "Projects", "WorkspaceNodes"], tables.Where(name =>
             name.StartsWith("Workspace", StringComparison.Ordinal) || name.StartsWith("Project", StringComparison.Ordinal)));
         Assert.DoesNotContain(tables,
             name => name.Contains("Tag", StringComparison.Ordinal)
                     || name.Contains("Credential", StringComparison.Ordinal)
                     || name.Contains("Trash", StringComparison.Ordinal)
-                    || name.Contains("Link", StringComparison.Ordinal)
+                    || (name.Contains("Link", StringComparison.Ordinal) && name != "ProjectLinks")
                     || name.Contains("Note", StringComparison.Ordinal)
                     || name.Contains("Alias", StringComparison.Ordinal));
     }

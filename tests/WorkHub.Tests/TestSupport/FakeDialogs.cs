@@ -44,6 +44,18 @@ internal sealed class FakeDialogs : IDialogService
 
     public bool ShowWorkspaceMove(WorkspaceMoveViewModel viewModel) => OnWorkspaceMove(viewModel);
 
+    public Func<ProjectFolderNameEditorViewModel, bool> OnProjectFolderNameEditor { get; set; } = _ => false;
+
+    public Func<ProjectLinkEditorViewModel, bool> OnProjectLinkEditor { get; set; } = _ => false;
+
+    public Func<ProjectContentMoveViewModel, bool> OnProjectContentMove { get; set; } = _ => false;
+
+    public bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel) => OnProjectFolderNameEditor(viewModel);
+
+    public bool ShowProjectLinkEditor(ProjectLinkEditorViewModel viewModel) => OnProjectLinkEditor(viewModel);
+
+    public bool ShowProjectContentMove(ProjectContentMoveViewModel viewModel) => OnProjectContentMove(viewModel);
+
     public bool Confirm(string title, string message, string confirmText)
     {
         Confirmations.Add((title, message, confirmText));

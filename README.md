@@ -69,7 +69,25 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   its subfolders, and a name clash at the destination is rejected without changing anything.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
 
-Not available yet: delete, Trash, Archive, project folders, links, notes, tags, search, drag-and-drop and manual ordering.
+### Project content (schema v4)
+
+Selecting a Project shows its **Content** below the details: one container at a time (the Project root or one project
+folder) with a breadcrumb. Project folders and links never appear in the main tree and never touch the disk.
+
+- **Project folders** nest inside one Project. Names follow the Workspace rules and are unique among sibling folders.
+- **Links** point to a Folder, File (full local or UNC path) or Web page (http/https). Link names may repeat. Only
+  surrounding spaces are trimmed; the target is otherwise stored exactly as typed. **Open** hands the target to
+  Explorer, the default app or the browser; a link never creates, moves, renames or deletes its target.
+- **Move to…** stays within the Project. If someone else moved the item after the dialog opened, nothing moves and the
+  dialog says so.
+- **Check** / **Check all** are manual (no polling or watchers). *Missing* means the location answered "not found";
+  *Unreachable*, *Inaccessible*, *Timed out*, *Location busy* and *Checker busy* mean it could not be verified. At most
+  four checks run at once (one per drive or server); each ends within 18 seconds. Web links are never contacted
+  (*Not checked (web)*). Results are kept only until WorkHub closes.
+- Keyboard: Enter opens, F2 edits, Backspace or Alt+Up goes up.
+
+Not available yet: delete, Trash, Archive, notes, tags, search, drag-and-drop, manual ordering and moving content between
+projects.
 
 ## Legacy XML import
 

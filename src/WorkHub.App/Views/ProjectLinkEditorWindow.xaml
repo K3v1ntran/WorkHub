@@ -1,0 +1,57 @@
+<Window x:Class="WorkHub.App.Views.ProjectLinkEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:ProjectLinkEditorViewModel}"
+        Title="{Binding Title}"
+        Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=NameBox}">
+    <DockPanel Margin="20,12,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" IsCancel="True" Command="{Binding CancelCommand}" />
+            <Button Content="Save" IsDefault="True" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding SaveCommand}" />
+        </StackPanel>
+
+        <StackPanel>
+            <TextBlock Style="{StaticResource FieldHint}" Margin="0,0,0,4" Text="{Binding LocationText}" TextTrimming="CharacterEllipsis" />
+            <TextBlock Style="{StaticResource FieldError}" FontSize="12" Text="{Binding GeneralError}" AutomationProperties.AutomationId="GeneralError" />
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="140" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Name" />
+                    <TextBox x:Name="NameBox" MaxLength="200" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Name" />
+                    <TextBlock Style="{StaticResource FieldError}" Text="{Binding NameError}" AutomationProperties.AutomationId="NameError" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Type" />
+                    <ComboBox ItemsSource="{Binding LinkTypes}" SelectedItem="{Binding LinkType}" AutomationProperties.Name="Type" />
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Target" />
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Margin="6,0,0,0" Content="Browse…" Command="{Binding BrowseTargetCommand}" AutomationProperties.Name="Browse target" />
+                <TextBox MaxLength="2048" Text="{Binding Target, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Target" />
+            </DockPanel>
+            <TextBlock Style="{StaticResource FieldHint}" Text="{Binding TargetHint}" />
+            <TextBlock Style="{StaticResource FieldError}" Text="{Binding TargetError}" AutomationProperties.AutomationId="TargetError" />
+            <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap"
+                       Text="A link is a reference only: WorkHub never creates, moves, renames or deletes the target." />
+            <TextBlock Style="{StaticResource FieldHint}" Text="Saving… this window stays open until the change is stored."
+                       Visibility="{Binding IsSaving, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="SavingHint" />
+        </StackPanel>
+    </DockPanel>
+</Window>

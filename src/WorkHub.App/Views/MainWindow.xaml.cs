@@ -96,6 +96,37 @@ public partial class MainWindow : Window
         }
     }
 
+    private ProjectContentViewModel? ProjectContent => Main?.Workspace.SelectedContent;
+
+    private void ContentList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        // Only a double-click on a row opens (folder: enter; link: open target).
+        if (ItemsControl.ContainerFromElement(ContentList, (DependencyObject)e.OriginalSource) is ListViewItem)
+            ProjectContent?.OpenCommand.Execute(null);
+    }
+
+    private void ContentList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (ProjectContent is not { } content)
+            return;
+
+        var command = e.Key switch
+        {
+            Key.Enter when Keyboard.Modifiers == ModifierKeys.None => content.OpenCommand,
+            Key.F2 when Keyboard.Modifiers == ModifierKeys.None => content.EditCommand,
+            Key.Back when Keyboard.Modifiers == ModifierKeys.None => content.GoUpCommand,
+            Key.System when e.SystemKey == Key.Up && Keyboard.Modifiers == ModifierKeys.Alt => content.GoUpCommand,
+            _ => (System.Windows.Input.ICommand?)null,
+        };
+        if (command is null)
+            return;
+
+        command.Execute(null);
+        e.Handled = true;
+        if (command == content.GoUpCommand || command == content.OpenCommand)
+            Dispatcher.BeginInvoke(DispatcherPriority.Input, () => ContentList.Focus()); // keep keyboard navigation in the list
+    }
+
     private void OwnerMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(OwnerMoreButton);
 
     private void MoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(MoreButton);

@@ -47,7 +47,7 @@ public partial class App : Application
 
         var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
         var navigation = new RepositoryNavigationViewModel(repository, owner);
-        var workspace = new WorkspaceAreaViewModel(services.Workspace, dialogs, services.Log);
+        var workspace = new WorkspaceAreaViewModel(services.Workspace, dialogs, services.Log, services.ProjectContent, services.LinkChecker);
 
         var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, workspace, services.Log)
         {

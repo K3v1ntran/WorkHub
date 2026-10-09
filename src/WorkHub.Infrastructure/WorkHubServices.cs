@@ -5,6 +5,7 @@ using WorkHub.Core.Repositories;
 using WorkHub.Core.Settings;
 using WorkHub.Core.Startup;
 using WorkHub.Core.Workspace;
+using WorkHub.Core.Workspace.Content;
 using WorkHub.Infrastructure.FileSystem;
 using WorkHub.Infrastructure.Launching;
 using WorkHub.Infrastructure.LegacyImport;
@@ -34,6 +35,8 @@ public sealed class WorkHubServices
         Owners = new OwnerService(new SqliteOwnerStore(Connections), new ProcessOwnerLauncher());
         LegacyImport = new LegacyImportService(new LegacyXmlParser(), new SqliteLegacyImportStore(Connections), Log);
         Workspace = new WorkspaceService(new SqliteWorkspaceStore(Connections));
+        ProjectContent = new ProjectContentService(new SqliteProjectContentStore(Connections), new ProcessProjectLinkLauncher());
+        LinkChecker = new LinkHealthChecker(Log);
     }
 
     public static WorkHubServices Create(WorkHubPaths paths) => new(paths);
@@ -57,4 +60,9 @@ public sealed class WorkHubServices
     public LegacyImportService LegacyImport { get; }
 
     public WorkspaceService Workspace { get; }
+
+    public ProjectContentService ProjectContent { get; }
+
+    /// <summary>The one application-wide manual link checker (bounded; never polls).</summary>
+    public ILinkHealthChecker LinkChecker { get; }
 }

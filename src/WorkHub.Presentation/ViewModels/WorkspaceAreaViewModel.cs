@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using WorkHub.Core.Diagnostics;
 using WorkHub.Core.Workspace;
+using WorkHub.Core.Workspace.Content;
 using WorkHub.Presentation.Mvvm;
 using WorkHub.Presentation.Services;
 
@@ -37,12 +38,22 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     private int _detailsVersion;
     private CancellationTokenSource? _detailsCts;
     private string? _bannerMessage;
+    private readonly ProjectContentService? _content;
+    private readonly ILinkHealthChecker? _checker;
+    private readonly LinkCheckCache _checkCache = new();
+    private ProjectContentViewModel? _selectedContent;
 
-    public WorkspaceAreaViewModel(WorkspaceService workspace, IDialogService dialogs, IAppLog log)
+    /// <param name="content">Project content (ProjectFolders and Links); null leaves the content view out.</param>
+    /// <param name="checker">The application-wide manual link checker.</param>
+    public WorkspaceAreaViewModel(
+        WorkspaceService workspace, IDialogService dialogs, IAppLog log,
+        ProjectContentService? content = null, ILinkHealthChecker? checker = null)
     {
         _workspace = workspace;
         _dialogs = dialogs;
         _log = log;
+        _content = content;
+        _checker = checker;
 
         Action<Exception> onError = ex => ReportError("The Workspace operation failed. Nothing was changed.", ex);
         NewFolderCommand = new AsyncRelayCommand(NewFolderAsync, () => IsActivated, onError);
@@ -139,10 +150,37 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             EditProjectCommand.RaiseCanExecuteChanged();
             MoveCommand.RaiseCanExecuteChanged();
             StartDetailsLoad();
+            UpdateContent();
         }
     }
 
     public bool IsFolderSelected => SelectedNode?.IsFolder == true;
+
+    /// <summary>Content (ProjectFolders and Links) of the selected Project; null for Folders, no selection, or when content is not wired.</summary>
+    public ProjectContentViewModel? SelectedContent
+    {
+        get => _selectedContent;
+        private set => SetProperty(ref _selectedContent, value);
+    }
+
+    /// <summary>Keeps the content view while the same Project stays selected (rename, edit, move); replaces it otherwise.</summary>
+    private void UpdateContent()
+    {
+        var project = SelectedNode is { IsProject: true } node ? node : null;
+        if (project is not null && SelectedContent?.ProjectNodeId == project.Id)
+            return;
+
+        SelectedContent?.Deactivate();
+        if (project is null || _content is null || _checker is null)
+        {
+            SelectedContent = null;
+            return;
+        }
+
+        var content = new ProjectContentViewModel(_content, _checker, _dialogs, _log, _checkCache, project.Id, project.Name);
+        SelectedContent = content;
+        _ = content.ActivateAsync();
+    }
 
     /// <summary>Details of the selected Project, once loaded (null for Folders and while loading).</summary>
     public ProjectDetails? SelectedProject
@@ -434,6 +472,8 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     private void ApplyName(WorkspaceNodeViewModel node, string name)
     {
         node.Name = name;
+        if (SelectedContent?.ProjectNodeId == node.Id)
+            SelectedContent.ProjectName = name;
         var siblings = node.Parent?.Children ?? Roots;
         var oldIndex = siblings.IndexOf(node);
         if (oldIndex < 0)

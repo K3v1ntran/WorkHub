@@ -32,9 +32,9 @@ public sealed class WorkspaceMigrationTests : IDisposable
         var result = _root.CreateInitializer().Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(3, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         using var connection = _root.Open();
-        Assert.Equal(3, Db.ScalarLong(connection, "PRAGMA user_version;"));
+        Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
         Assert.Equal(["Id", "ParentId", "NodeType", "Name", "NameKey", "SortOrder", "CreatedAt", "UpdatedAt"], Columns(connection, "WorkspaceNodes"));
         Assert.Equal(["NodeId", "ProjectId", "Status", "Description", "Owner", "ProjectManager"], Columns(connection, "Projects"));
         Assert.Equal(
@@ -43,7 +43,7 @@ public sealed class WorkspaceMigrationTests : IDisposable
         Assert.Equal(
             ["TR_Projects_Immutable", "TR_Projects_NodeIsProject", "TR_WorkspaceNodes_Immutable",
              "TR_WorkspaceNodes_ParentIsFolder_Insert", "TR_WorkspaceNodes_ParentIsFolder_Update"],
-            Names(connection, "SELECT name FROM sqlite_schema WHERE type = 'trigger' ORDER BY name;"));
+            Names(connection, "SELECT name FROM sqlite_schema WHERE type = 'trigger' AND tbl_name IN ('WorkspaceNodes', 'Projects') ORDER BY name;"));
         Assert.Contains("sqlite_sequence", Names(connection, "SELECT name FROM sqlite_schema WHERE type = 'table';")); // AUTOINCREMENT
         Assert.Equal(0, Db.Count(connection, "WorkspaceNodes"));
         Assert.Equal(0, Db.Count(connection, "Projects"));
@@ -96,10 +96,10 @@ public sealed class WorkspaceMigrationTests : IDisposable
 
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Database.Outcome);
         Assert.Equal(2, result.Database.PreviousSchemaVersion);
-        Assert.Equal(3, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         using (var connection = _root.Open())
         {
-            Assert.Equal(3, Db.ScalarLong(connection, "PRAGMA user_version;"));
+            Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
             Assert.Equal(before, Names(connection, snapshotSql)); // every existing row unchanged
             Assert.Equal(0, Db.Count(connection, "WorkspaceNodes"));
             Assert.Equal("ok", Db.ScalarString(connection, "PRAGMA quick_check(1);"));
@@ -108,7 +108,7 @@ public sealed class WorkspaceMigrationTests : IDisposable
         // The validated pre-migration safety copy is the untouched v2 database.
         Assert.NotNull(result.Database.MigrationBackupFile);
         Assert.StartsWith(_root.Paths.MigrationBackupsDirectory, result.Database.MigrationBackupFile);
-        Assert.Contains("_v2_before_v3_", Path.GetFileName(result.Database.MigrationBackupFile));
+        Assert.Contains($"_v2_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(result.Database.MigrationBackupFile));
         using var backup = new SqliteConnection($"Data Source={result.Database.MigrationBackupFile};Mode=ReadOnly;Pooling=False");
         backup.Open();
         Assert.Equal(2, Db.ScalarLong(backup, "PRAGMA user_version;"));

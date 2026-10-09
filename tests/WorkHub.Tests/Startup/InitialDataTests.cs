@@ -85,7 +85,7 @@ public sealed class InitialDataTests : IDisposable
         var result = StartApp();
 
         Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(3, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         Assert.Equal(75, Scalar("SELECT count(*) FROM Systems;"));
         Assert.Equal(192, Scalar("SELECT count(*) FROM SystemRepositories;"));
         Assert.Equal(192, Scalar("SELECT count(*) FROM SystemRepositories WHERE IsEnabled = 1 AND CustomTarget IS NULL;"));

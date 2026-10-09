@@ -71,6 +71,32 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
+    public bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel)
+    {
+        // Same window as the Workspace name editor: the view model exposes the same binding surface.
+        var window = new WorkspaceNameEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
+        return window.ShowDialog() == true;
+    }
+
+    public bool ShowProjectLinkEditor(ProjectLinkEditorViewModel viewModel)
+    {
+        var window = new ProjectLinkEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, saved) => window.DialogResult = saved;
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
+        return window.ShowDialog() == true;
+    }
+
+    public bool ShowProjectContentMove(ProjectContentMoveViewModel viewModel)
+    {
+        // Same window as the Workspace move dialog: the view model exposes the same binding surface.
+        var window = new WorkspaceMoveWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, moved) => window.DialogResult = moved;
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
+        return window.ShowDialog() == true;
+    }
+
     public bool Confirm(string title, string message, string confirmText) =>
         new ConfirmWindow(title, message, confirmText) { Owner = ActiveWindow() }.ShowDialog() == true;
 

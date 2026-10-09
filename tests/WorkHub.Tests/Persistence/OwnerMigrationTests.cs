@@ -36,14 +36,14 @@ public sealed class OwnerMigrationTests : IDisposable
     }
 
     [Fact]
-    public void FreshDatabase_RunsV001ThroughV003()
+    public void FreshDatabase_RunsAllMigrations()
     {
         var result = _root.CreateInitializer().Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(3, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         using var connection = _root.Open();
-        Assert.Equal(3, Db.ScalarLong(connection, "PRAGMA user_version;"));
+        Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
         Assert.Equal(["Id", "Name", "NameKey", "SortOrder", "CreatedAt", "UpdatedAt"], Columns(connection, "OwnerGroups"));
         Assert.Equal(
             ["Id", "GroupId", "Name", "ActionType", "Target", "Arguments", "WorkingDirectory", "Username", "CredentialId",
@@ -124,10 +124,10 @@ public sealed class OwnerMigrationTests : IDisposable
 
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Database.Outcome);
         Assert.Equal(1, result.Database.PreviousSchemaVersion);
-        Assert.Equal(3, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         using (var connection = _root.Open())
         {
-            Assert.Equal(3, Db.ScalarLong(connection, "PRAGMA user_version;"));
+            Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
             Assert.Equal(1, Db.Count(connection, "Systems"));
             Assert.Equal(2, Db.Count(connection, "SystemRepositories"));
             Assert.Equal(1, Db.ScalarLong(connection, "SELECT count(*) FROM Systems WHERE SystemCode = 'ABC001' AND SystemName = '販売管理システム';"));

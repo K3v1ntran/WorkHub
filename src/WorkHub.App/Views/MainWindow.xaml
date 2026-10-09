@@ -703,8 +703,49 @@
 
                     <GridSplitter Grid.Row="1" Grid.Column="1" Width="1" HorizontalAlignment="Stretch" Background="{StaticResource Brush.Border}" />
 
-                    <!-- Details -->
-                    <ScrollViewer Grid.Row="1" Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                    <!--
+                        Details (top, scrolls on its own) and the selected Project's content (fills the rest). The content
+                        list is not inside a ScrollViewer, so its own VirtualizingStackPanel keeps virtualizing.
+                    -->
+                    <Grid Grid.Row="1" Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <!-- Without Project content (Folder or nothing selected) the details take the whole pane. -->
+                            <RowDefinition>
+                                <RowDefinition.Style>
+                                    <Style TargetType="RowDefinition">
+                                        <Setter Property="Height" Value="Auto" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedContent}" Value="{x:Null}">
+                                                <Setter Property="Height" Value="*" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </RowDefinition.Style>
+                            </RowDefinition>
+                            <RowDefinition>
+                                <RowDefinition.Style>
+                                    <Style TargetType="RowDefinition">
+                                        <Setter Property="Height" Value="*" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding SelectedContent}" Value="{x:Null}">
+                                                <Setter Property="Height" Value="0" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </RowDefinition.Style>
+                            </RowDefinition>
+                        </Grid.RowDefinitions>
+                    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+                        <ScrollViewer.Style>
+                            <Style TargetType="ScrollViewer">
+                                <Setter Property="MaxHeight" Value="300" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedContent}" Value="{x:Null}">
+                                        <Setter Property="MaxHeight" Value="Infinity" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ScrollViewer.Style>
                         <StackPanel Margin="20,14">
                             <TextBlock HorizontalAlignment="Left" Margin="0" Text="Select a folder or project.">
                                 <TextBlock.Style>
@@ -785,6 +826,192 @@
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
+
+                    <!-- Project content: ProjectFolders and Links of one container at a time (never shown in the tree). -->
+                    <DockPanel Grid.Row="1" Margin="20,0,20,12" DataContext="{Binding SelectedContent}">
+                        <DockPanel.Style>
+                            <Style TargetType="DockPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DockPanel.Style>
+
+                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0" Padding="0,10,0,0" Margin="0,4,0,0">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionHeader}" Margin="0" Text="CONTENT" />
+                                <ItemsControl Margin="0,4,0,0" ItemsSource="{Binding Breadcrumb}" AutomationProperties.Name="Content location"
+                                              Focusable="False">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:ContentCrumbViewModel}">
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock x:Name="Separator" Margin="2,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="›" />
+                                                <Button Style="{StaticResource ToolButton}" Padding="4,2" Content="{Binding Name}" Command="{Binding NavigateCommand}"
+                                                        AutomationProperties.Name="{Binding Name}" ToolTip="Go to this folder" />
+                                            </StackPanel>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsRoot}" Value="True">
+                                                    <Setter TargetName="Separator" Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,4,0,4">
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding GoUpCommand}" AutomationProperties.Name="Up one level" ToolTip="Up one level (Backspace)">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE74A;" />
+                            </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewFolderCommand}" AutomationProperties.Name="New content folder" ToolTip="New folder (a WorkHub reference only)">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE8F4;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Folder" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewLinkCommand}" AutomationProperties.Name="New link" ToolTip="New link to a folder, file or web page">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE71B;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Link" />
+                                </StackPanel>
+                            </Button>
+                            <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}" AutomationProperties.Name="Open" ToolTip="Open (Enter)" Content="Open" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding EditCommand}" AutomationProperties.Name="Edit content item" ToolTip="Rename folder / edit link (F2)" Content="Edit…" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move content item" ToolTip="Move within this project" Content="Move to…" />
+                            <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding CheckCommand}" AutomationProperties.Name="Check link" ToolTip="Check whether the selected link's folder or file can be found" Content="Check" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding CheckAllCommand}" AutomationProperties.Name="Check all links" ToolTip="Check every link in this folder" Content="Check all" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding StopCheckingCommand}" AutomationProperties.Name="Stop checking" ToolTip="Stop checking" Content="Stop" />
+                        </WrapPanel>
+
+                        <Border DockPanel.Dock="Top" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
+                            <Border.Style>
+                                <Style TargetType="Border" BasedOn="{StaticResource Banner}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding BannerMessage}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding DismissBannerCommand}"
+                                        AutomationProperties.Name="Dismiss content message" Content="Dismiss" />
+                                <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap"
+                                           Text="{Binding BannerMessage}" AutomationProperties.AutomationId="ContentBanner" />
+                            </DockPanel>
+                        </Border>
+
+                        <Grid>
+                            <ListView x:Name="ContentList" ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}"
+                                      BorderThickness="0" Background="Transparent" AutomationProperties.Name="Project content"
+                                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionMode="Single"
+                                      MouseDoubleClick="ContentList_MouseDoubleClick" PreviewKeyDown="ContentList_PreviewKeyDown">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
+                                        <Setter Property="Padding" Value="8,5" />
+                                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:ProjectContentItemViewModel}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="22" />
+                                                <ColumnDefinition Width="2*" MinWidth="80" />
+                                                <ColumnDefinition Width="3*" />
+                                                <!-- Fixed width keeps the Target column aligned across rows (each row is its own Grid). -->
+                                                <ColumnDefinition Width="170" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                            <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
+                                                       Text="{Binding Target}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}" />
+                                            <TextBlock x:Name="Status" Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding StatusText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding StatusText}"
+                                                       AutomationProperties.AutomationId="LinkStatus" />
+                                        </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding KindText}" Value="Web">
+                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE774;" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding KindText}" Value="File">
+                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE8A5;" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding KindText}" Value="Folder link">
+                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE838;" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsStatusUnverified}" Value="True">
+                                                <Setter TargetName="Status" Property="Foreground" Value="{StaticResource Brush.Warning}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsStatusProblem}" Value="True">
+                                                <Setter TargetName="Status" Property="Foreground" Value="{StaticResource Brush.Error}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                                <ListView.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}" />
+                                        <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}" />
+                                        <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
+                                        <MenuItem Header="Check" Command="{Binding CheckCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}" />
+                                        <MenuItem Header="New Link…" Command="{Binding NewLinkCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Check all" Command="{Binding CheckAllCommand}" />
+                                        <MenuItem Header="Stop checking" Command="{Binding StopCheckingCommand}" />
+                                    </ContextMenu>
+                                </ListView.ContextMenu>
+                            </ListView>
+
+                            <TextBlock Style="{StaticResource EmptyState}" Text="This folder is empty. Add a folder or link."
+                                       Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="ContentEmpty" />
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Loading content…"
+                                       Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="16">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding LoadError}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" TextAlignment="Center" Text="{Binding LoadError}" AutomationProperties.AutomationId="ContentLoadError" />
+                                <Button Margin="0,8,0,0" HorizontalAlignment="Center" Content="Retry" Command="{Binding RetryCommand}" AutomationProperties.Name="Retry loading content" />
+                            </StackPanel>
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="16">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ContainerMessage}" Value="{x:Null}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Foreground="{StaticResource Brush.MutedText}" TextWrapping="Wrap" TextAlignment="Center" Text="{Binding ContainerMessage}" AutomationProperties.AutomationId="ContentContainerMessage" />
+                                <Button Margin="0,8,0,0" HorizontalAlignment="Center" Content="Go to project root" Command="{Binding GoUpCommand}"
+                                        Visibility="{Binding IsFolderMissing, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Go to project root" />
+                            </StackPanel>
+                        </Grid>
+                    </DockPanel>
+                    </Grid>
                 </Grid>
             </TabItem>
         </TabControl>

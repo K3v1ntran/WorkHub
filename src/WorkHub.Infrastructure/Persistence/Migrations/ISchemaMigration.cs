@@ -24,6 +24,7 @@ public static class SchemaMigrations
         new V001_InitialSchema(),
         new V002_OwnerManager(),
         new V003_Workspace(),
+        new V004_ProjectContent(),
     ];
 
     public static int LatestVersion => All[^1].Version;
