@@ -38,7 +38,7 @@ public sealed class JsonSettingsStore(string settingsFile, TimeProvider? time = 
     {
         if (!File.Exists(settingsFile))
         {
-            var defaults = AppSettings.CreateDefault();
+            var defaults = AppSettings.CreateInitial(); // new file only: approved initial configuration
             if (TryWriteNew(defaults))
                 return new SettingsLoadResult(defaults, SettingsLoadStatus.Created);
             // Another process created the file between the check and the write: read theirs.

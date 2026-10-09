@@ -22,6 +22,8 @@ public sealed class RepositorySettingsTests : IDisposable
     {
         var store = new JsonSettingsStore(_root.Paths.SettingsFile);
         var service = new SettingsService(store, path => path == Tortoise);
+        if (!File.Exists(_root.Paths.SettingsFile))
+            store.Save(AppSettings.CreateDefault()); // these tests start from an existing, unconfigured profile (no hosts)
         service.Initialize(store.LoadOrCreate());
         return service;
     }

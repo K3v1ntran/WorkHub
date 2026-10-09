@@ -17,7 +17,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
     public void Dispose() => _root.Dispose();
 
     [Fact]
-    public void MissingFile_IsCreatedWithSafeDefaults()
+    public void MissingFile_IsCreatedWithTheApprovedInitialConfiguration()
     {
         var result = _store.LoadOrCreate();
 
@@ -26,26 +26,64 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
         var repository = result.Settings.Repository;
         Assert.Equal(AppSettings.CurrentSettingsVersion, result.Settings.SettingsVersion);
+        Assert.Equal("http://10.194.105.25/svn/", repository.Svn.Host);
         Assert.Equal("GeSL_doc_", repository.Svn.SystemPrefix);
-        Assert.Equal("GeSL_rel_", repository.Svn.ReleasePrefix);
+        Assert.Equal("GeSL_doc_", repository.Svn.OraclePrefix);
+        Assert.Equal("GeSL_rel_", repository.Svn.ReleasePrefix); // unchanged existing default
+        Assert.Equal("C:/Program Files/TortoiseSVN/bin/TortoiseProc.exe", repository.Svn.TortoiseProcPath);
+        Assert.Equal("http://10.194.105.25:8080/gitbucket/root/", repository.Git.Host);
         Assert.Equal("GeSL_src_", repository.Git.SystemPrefix);
-        Assert.Equal(string.Empty, repository.Svn.OraclePrefix);
-        Assert.Equal(string.Empty, repository.Git.OraclePrefix);
-        Assert.Equal(string.Empty, repository.Svn.Host);
-        Assert.Equal(string.Empty, repository.Git.Host);
-        Assert.Equal(string.Empty, repository.Svn.TortoiseProcPath);
+        Assert.Equal("GeSL_src_", repository.Git.OraclePrefix);
+
+        // The written file holds the same values.
+        var reloaded = new JsonSettingsStore(_root.Paths.SettingsFile).LoadOrCreate();
+        Assert.Equal(SettingsLoadStatus.Loaded, reloaded.Status);
+        Assert.Equal("http://10.194.105.25:8080/gitbucket/root/", reloaded.Settings.Repository.Git.Host);
+        Assert.Equal("C:/Program Files/TortoiseSVN/bin/TortoiseProc.exe", reloaded.Settings.Repository.Svn.TortoiseProcPath);
     }
 
     [Fact]
-    public void DefaultFile_ContainsNoHostsOrSecrets()
+    public void InitialFile_ContainsOnlyTheApprovedHost_AndNoSecrets()
     {
         _store.LoadOrCreate();
         var json = File.ReadAllText(_root.Paths.SettingsFile);
 
-        Assert.DoesNotContain("http", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("password", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("token", json, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotMatch(@"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", json);
+        Assert.DoesNotContain("credential", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(["10.194.105.25"], System.Text.RegularExpressions.Regex.Matches(json, @"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}").Select(m => m.Value).Distinct());
+    }
+
+    [Fact]
+    public void ExistingFile_IsNeverFilledWithTheInitialConfiguration_EvenWhenEmpty()
+    {
+        // A user's existing configuration, deliberately empty, written by WorkHub.
+        var unconfigured = AppSettings.CreateDefault();
+        unconfigured.Repository.Svn.SystemPrefix = string.Empty;
+        _store.Save(unconfigured);
+        var before = File.ReadAllText(_root.Paths.SettingsFile);
+
+        var result = new JsonSettingsStore(_root.Paths.SettingsFile).LoadOrCreate();
+
+        Assert.Equal(SettingsLoadStatus.Loaded, result.Status);
+        Assert.Equal(string.Empty, result.Settings.Repository.Svn.Host);
+        Assert.Equal(string.Empty, result.Settings.Repository.Git.Host);
+        Assert.Equal(string.Empty, result.Settings.Repository.Svn.SystemPrefix);
+        Assert.Equal(string.Empty, result.Settings.Repository.Svn.TortoiseProcPath);
+        Assert.Equal(before, File.ReadAllText(_root.Paths.SettingsFile)); // loading never writes
+    }
+
+    [Fact]
+    public void UnreadableFile_UsesNeutralDefaultsInMemory_NotTheInitialHosts()
+    {
+        Directory.CreateDirectory(_root.Paths.ConfigDirectory);
+        File.WriteAllText(_root.Paths.SettingsFile, "{ not json");
+
+        var result = _store.LoadOrCreate();
+
+        Assert.Equal(SettingsLoadStatus.InvalidFileUsingDefaults, result.Status);
+        Assert.Equal(string.Empty, result.Settings.Repository.Svn.Host);
+        Assert.Equal("{ not json", File.ReadAllText(_root.Paths.SettingsFile));
     }
 
     [Fact]

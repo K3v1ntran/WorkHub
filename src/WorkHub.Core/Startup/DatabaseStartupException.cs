@@ -19,6 +19,11 @@ public enum DatabaseStartupFailure
 
     /// <summary>A schema migration failed and was rolled back.</summary>
     MigrationFailed,
+
+    /// <summary>
+    /// Creating a NEW database (schema plus initial data) failed. Nothing was kept, so the next start creates it again.
+    /// </summary>
+    NewDatabaseFailed,
 }
 
 /// <summary>

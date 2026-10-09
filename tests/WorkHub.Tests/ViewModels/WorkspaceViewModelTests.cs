@@ -129,6 +129,34 @@ public sealed class WorkspaceViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task Depth_FollowsNesting_IncludingPlaceholders_AndUpdatesAfterMove()
+    {
+        var a = await SeedFolder("A");
+        var b = await SeedFolder("B", a);
+        await SeedFolder("C", b);
+        await SeedFolder("Other");
+        var area = await ActivatedArea();
+        var folderA = Node(area.Roots, "A");
+        await Expand(area, folderA);
+        var folderB = Node(folderA.Children, "B");
+
+        Assert.Equal((0, 1), (folderA.Depth, folderB.Depth));
+        Assert.Equal(2, Assert.Single(folderB.Children).Depth); // placeholder row is indented like a real child
+        await Expand(area, folderB);
+        var folderC = Node(folderB.Children, "C");
+        Assert.Equal(2, folderC.Depth);
+
+        var changed = new List<string?>();
+        folderC.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        area.SelectedNode = folderB;
+        MoveDialogChooses("Workspace (top level)");
+        await area.MoveCommand.ExecuteAsync();
+
+        Assert.Equal((0, 1), (folderB.Depth, folderC.Depth)); // the moved subtree re-indents
+        Assert.Contains(nameof(WorkspaceNodeViewModel.Depth), changed);
+    }
+
+    [Fact]
     public async Task EmptyWorkspace_ShowsEmptyState_AndNoTrashNode()
     {
         var area = await ActivatedArea();

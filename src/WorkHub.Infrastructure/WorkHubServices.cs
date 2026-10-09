@@ -27,7 +27,7 @@ public sealed class WorkHubServices
         Connections = new SqliteConnectionFactory(paths.DatabaseFile);
 
         var settingsStore = new JsonSettingsStore(paths.SettingsFile);
-        Initializer = new AppInitializer(paths, new LocalStorage(paths), settingsStore, new DatabaseInitializer(paths, Log), Log);
+        Initializer = new AppInitializer(paths, new LocalStorage(paths), settingsStore, new DatabaseInitializer(paths, Log, InitialSystemsSeed.Apply), Log);
         Settings = new SettingsService(settingsStore);
         Systems = new SystemService(new SqliteSystemStore(Connections));
         RepositoryOpener = new RepositoryOpenService(Settings, new ProcessRepositoryLauncher());

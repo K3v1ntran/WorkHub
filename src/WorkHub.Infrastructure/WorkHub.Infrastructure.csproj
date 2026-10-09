@@ -17,4 +17,9 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Approved initial System master data (SystemCode/SystemName/section only), loaded into a NEW database. -->
+    <EmbeddedResource Include="Seed\InitialSystems.xml" LogicalName="WorkHub.Infrastructure.Seed.InitialSystems.xml" />
+  </ItemGroup>
+
 </Project>

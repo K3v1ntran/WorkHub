@@ -27,54 +27,66 @@ public sealed class SqliteLegacyImportStore(SqliteConnectionFactory connections,
         {
             using var connection = connections.OpenExisting();
             using var transaction = connection.BeginTransaction(deferred: false); // BEGIN IMMEDIATE: state cannot change under the plan
-
-            var existing = LoadSnapshot(connection, transaction, LegacyImportPlanner.CodesToLookUp(entries));
-            var plan = LegacyImportPlanner.Plan(entries, code => existing.GetValueOrDefault(code));
-            var now = _time.GetUtcNow().ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
-
-            using var insertSystem = connection.CreateCommand();
-            insertSystem.Transaction = transaction;
-            insertSystem.CommandText = """
-                INSERT INTO Systems (SystemCode, SystemName, Description, IsActive, CreatedAt, UpdatedAt)
-                VALUES ($code, $name, NULL, 1, $now, $now)
-                RETURNING Id;
-                """;
-            var code = insertSystem.Parameters.Add("$code", SqliteType.Text);
-            var name = insertSystem.Parameters.Add("$name", SqliteType.Text);
-            insertSystem.Parameters.AddWithValue("$now", now);
-
-            using var insertMembership = connection.CreateCommand();
-            insertMembership.Transaction = transaction;
-            insertMembership.CommandText = "INSERT INTO SystemRepositories (SystemId, RepositoryType, IsEnabled, CustomTarget) VALUES ($id, $type, 1, NULL);";
-            var systemId = insertMembership.Parameters.Add("$id", SqliteType.Integer);
-            var type = insertMembership.Parameters.Add("$type", SqliteType.Text);
-
-            foreach (var system in plan.Systems)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                long id;
-                if (system.ExistingId is { } existingId)
-                {
-                    id = existingId;
-                }
-                else
-                {
-                    code.Value = system.SystemCode;
-                    name.Value = system.SystemName;
-                    id = (long)insertSystem.ExecuteScalar()!;
-                }
-
-                foreach (var membership in system.MembershipsToAdd)
-                {
-                    systemId.Value = id;
-                    type.Value = RepositoryCatalog.Get(membership).StorageCode;
-                    insertMembership.ExecuteNonQuery();
-                }
-            }
-
+            var plan = Apply(connection, transaction, entries, _time.GetUtcNow(), cancellationToken);
             transaction.Commit();
             return plan;
         }, cancellationToken);
+
+    /// <summary>
+    /// Re-reads the current state, plans with <see cref="LegacyImportPlanner"/> and inserts new Systems and missing
+    /// memberships inside the CALLER's transaction (the caller commits or rolls back). Existing rows are never updated.
+    /// Shared by the manual import and the initial data of a new database.
+    /// </summary>
+    internal static LegacyImportPlan Apply(
+        SqliteConnection connection, SqliteTransaction transaction, IReadOnlyList<LegacyEntry> entries, DateTimeOffset utcNow,
+        CancellationToken cancellationToken = default)
+    {
+        var existing = LoadSnapshot(connection, transaction, LegacyImportPlanner.CodesToLookUp(entries));
+        var plan = LegacyImportPlanner.Plan(entries, code => existing.GetValueOrDefault(code));
+        var now = utcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
+
+        using var insertSystem = connection.CreateCommand();
+        insertSystem.Transaction = transaction;
+        insertSystem.CommandText = """
+            INSERT INTO Systems (SystemCode, SystemName, Description, IsActive, CreatedAt, UpdatedAt)
+            VALUES ($code, $name, NULL, 1, $now, $now)
+            RETURNING Id;
+            """;
+        var code = insertSystem.Parameters.Add("$code", SqliteType.Text);
+        var name = insertSystem.Parameters.Add("$name", SqliteType.Text);
+        insertSystem.Parameters.AddWithValue("$now", now);
+
+        using var insertMembership = connection.CreateCommand();
+        insertMembership.Transaction = transaction;
+        insertMembership.CommandText = "INSERT INTO SystemRepositories (SystemId, RepositoryType, IsEnabled, CustomTarget) VALUES ($id, $type, 1, NULL);";
+        var systemId = insertMembership.Parameters.Add("$id", SqliteType.Integer);
+        var type = insertMembership.Parameters.Add("$type", SqliteType.Text);
+
+        foreach (var system in plan.Systems)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            long id;
+            if (system.ExistingId is { } existingId)
+            {
+                id = existingId;
+            }
+            else
+            {
+                code.Value = system.SystemCode;
+                name.Value = system.SystemName;
+                id = (long)insertSystem.ExecuteScalar()!;
+            }
+
+            foreach (var membership in system.MembershipsToAdd)
+            {
+                systemId.Value = id;
+                type.Value = RepositoryCatalog.Get(membership).StorageCode;
+                insertMembership.ExecuteNonQuery();
+            }
+        }
+
+        return plan;
+    }
 
     private static Dictionary<string, ExistingSystemSnapshot> LoadSnapshot(SqliteConnection connection, SqliteTransaction? transaction, IReadOnlyList<string> codes)
     {

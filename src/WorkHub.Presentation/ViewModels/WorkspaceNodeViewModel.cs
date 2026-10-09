@@ -16,6 +16,7 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
     private bool _hasChildren;
     private bool _isExpanded;
     private bool _isSelected;
+    private WorkspaceNodeViewModel? _parent;
 
     internal WorkspaceNodeViewModel(WorkspaceAreaViewModel area, WorkspaceNode node, WorkspaceNodeViewModel? parent)
     {
@@ -23,18 +24,19 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
         Id = node.Id;
         Type = node.Type;
         _name = node.Name;
-        Parent = parent;
+        _parent = parent;
         SetHasChildren(node.HasChildren);
     }
 
-    private WorkspaceNodeViewModel()
+    private WorkspaceNodeViewModel(WorkspaceNodeViewModel parent)
     {
+        _parent = parent;
         _name = "Loading…";
         IsPlaceholder = true;
     }
 
     /// <summary>Stand-in child shown under an unloaded Folder so it can be expanded.</summary>
-    internal static WorkspaceNodeViewModel CreatePlaceholder() => new();
+    internal static WorkspaceNodeViewModel CreatePlaceholder(WorkspaceNodeViewModel parent) => new(parent);
 
     public long Id { get; }
 
@@ -53,7 +55,20 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
     }
 
     /// <summary>Loaded parent Folder, or null at the root.</summary>
-    public WorkspaceNodeViewModel? Parent { get; internal set; }
+    public WorkspaceNodeViewModel? Parent
+    {
+        get => _parent;
+        internal set
+        {
+            if (ReferenceEquals(_parent, value))
+                return;
+            _parent = value;
+            OnDepthChanged();
+        }
+    }
+
+    /// <summary>0 at the root. The tree view indents rows by depth inside a full-width row.</summary>
+    public int Depth => _parent is null ? 0 : _parent.Depth + 1;
 
     public ObservableCollection<WorkspaceNodeViewModel> Children { get; } = [];
 
@@ -98,12 +113,20 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
 
         var hasPlaceholder = Children.Count == 1 && Children[0].IsPlaceholder;
         if (hasChildren && !hasPlaceholder)
-            Children.Add(CreatePlaceholder());
+            Children.Add(CreatePlaceholder(this));
         else if (!hasChildren && hasPlaceholder)
             Children.Clear();
     }
 
     internal bool HasChildren => IsChildrenLoaded ? Children.Count > 0 : _hasChildren;
+
+    private void OnDepthChanged()
+    {
+        OnPropertyChanged(nameof(Depth));
+        OnPropertyChanged(nameof(Path));
+        foreach (var child in Children)
+            child.OnDepthChanged();
+    }
 
     internal void CollapseAfterFailedLoad() => SetProperty(ref _isExpanded, false, nameof(IsExpanded));
 

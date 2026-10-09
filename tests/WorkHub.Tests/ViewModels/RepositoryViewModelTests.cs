@@ -29,6 +29,7 @@ public sealed class RepositoryViewModelTests : IDisposable
         _systems = new SystemService(_store);
         var settingsStore = new JsonSettingsStore(_root.Paths.SettingsFile);
         _settings = new SettingsService(settingsStore, _ => true);
+        settingsStore.Save(AppSettings.CreateDefault()); // start from an existing, unconfigured profile (no hosts)
         _settings.Initialize(settingsStore.LoadOrCreate());
     }
 

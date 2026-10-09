@@ -17,12 +17,37 @@ Local-first, low resource use, no background services.
 
 ## Repository settings
 
-Configure in **Settings → Repository** (SVN / Git). Nothing site-specific ships in source:
+Configure in **Settings → Repository** (SVN / Git):
 
 - SVN host, SVN SYSTEM / SVN ORACLE / RELEASE prefixes, path to `TortoiseProc.exe`
 - GitBucket host, GIT SYSTEM / GIT ORACLE prefixes
 
 Generated target = `host` + `/` + `prefix` + `SystemCode`, unless a System's repository membership has a custom target.
+
+A **new** `settings.json` starts with the approved configuration (an existing file is never changed or filled in):
+
+| Setting | Initial value |
+| --- | --- |
+| SVN host | `http://10.194.105.25/svn/` |
+| SVN SYSTEM / SVN ORACLE prefix | `GeSL_doc_` |
+| RELEASE prefix | `GeSL_rel_` (unchanged default, on the SVN host) |
+| TortoiseProc.exe | `C:/Program Files/TortoiseSVN/bin/TortoiseProc.exe` (a starting value; a missing program is still reported) |
+| GitBucket host | `http://10.194.105.25:8080/gitbucket/root/` |
+| GIT SYSTEM / GIT ORACLE prefix | `GeSL_src_` |
+
+For SystemCode `4000000002` this gives `http://10.194.105.25/svn/GeSL_doc_4000000002` (SVN SYSTEM/ORACLE) and
+`http://10.194.105.25:8080/gitbucket/root/GeSL_src_4000000002` (GIT SYSTEM/ORACLE).
+
+## Initial Systems
+
+A **new** environment starts with the approved System master data (75 Systems, 192 repository memberships: 42 SYSTEM
+entries in SVN SYSTEM, GIT SYSTEM and RELEASE; 33 ORACLE entries in SVN ORACLE and GIT ORACLE). The data is embedded in
+`WorkHub.Infrastructure.dll` (`Seed\InitialSystems.xml`) and loaded with the same rules as the legacy XML import.
+
+"New" means there is no database file yet (or only an empty SQLite file). The new database is built completely in
+`Data\workhub.db.new` (schema, then the initial Systems in one transaction) and only then moved into place, so a failed
+or interrupted first start keeps nothing and the next start simply tries again. An existing database is never seeded,
+even if its Systems table is empty, and Systems the user removed are not recreated.
 
 ## Owner Manager
 

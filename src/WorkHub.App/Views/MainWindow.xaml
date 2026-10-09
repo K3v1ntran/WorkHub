@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
         xmlns:repo="clr-namespace:WorkHub.Core.Repositories;assembly=WorkHub.Core"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         Title="WorkHub"
@@ -19,6 +20,96 @@
         <Style x:Key="Banner" TargetType="Border">
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
+        </Style>
+
+        <views:DepthToIndentConverter x:Key="WorkspaceIndent" Indent="18" />
+
+        <!-- Workspace tree chevron (replaces the default triangle). -->
+        <Style x:Key="WorkspaceTreeExpander" TargetType="ToggleButton">
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="Width" Value="20" />
+            <Setter Property="Height" Value="20" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="Transparent">
+                            <TextBlock x:Name="Chevron" Style="{StaticResource Icon}" FontSize="10" HorizontalAlignment="Center"
+                                       Foreground="{StaticResource Brush.MutedText}" Text="&#xE76C;" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chevron" Property="Text" Value="&#xE70D;" />
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chevron" Property="Foreground" Value="{StaticResource Brush.Text}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            Workspace tree row: one full-width Border per node (hover / selected / selected-without-focus, same colors and
+            left accent as the Repository ListRow). The indent is applied INSIDE the row (from the node's Depth), and
+            children are rendered full-width below it, so every row highlights across the whole catalog width.
+            BasedOn keeps the default style's virtualization settings for nested items.
+        -->
+        <Style x:Key="WorkspaceTreeItem" TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+            <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="6,3,8,3" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TreeViewItem">
+                        <StackPanel>
+                            <Border x:Name="Row" Background="Transparent" BorderThickness="2,0,0,0" BorderBrush="Transparent"
+                                    Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                                <Grid Margin="{Binding Depth, Converter={StaticResource WorkspaceIndent}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ToggleButton x:Name="Expander" Style="{StaticResource WorkspaceTreeExpander}" ClickMode="Press"
+                                                  IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}}" />
+                                    <ContentPresenter x:Name="PART_Header" Grid.Column="1" ContentSource="Header"
+                                                      HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" />
+                                </Grid>
+                            </Border>
+                            <ItemsPresenter x:Name="ItemsHost" />
+                        </StackPanel>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter TargetName="ItemsHost" Property="Visibility" Value="Collapsed" />
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="False">
+                                <Setter TargetName="Expander" Property="Visibility" Value="Hidden" />
+                            </Trigger>
+                            <Trigger SourceName="Row" Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Row" Property="Background" Value="{StaticResource Brush.Hover}" />
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="Selector.IsSelectionActive" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Row" Property="Background" Value="{StaticResource Brush.SelectedInactive}" />
+                            </MultiTrigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True" />
+                                    <Condition Property="Selector.IsSelectionActive" Value="True" />
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Row" Property="Background" Value="{StaticResource Brush.Selected}" />
+                                <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
     </Window.Resources>
 
@@ -549,7 +640,7 @@
                         </StackPanel>
 
                         <Grid>
-                            <TreeView x:Name="WorkspaceTree" BorderThickness="0" Background="Transparent" Padding="4"
+                            <TreeView x:Name="WorkspaceTree" BorderThickness="0" Background="Transparent" Padding="0"
                                       ItemsSource="{Binding Roots}" AutomationProperties.Name="Workspace tree"
                                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -558,12 +649,7 @@
                                     <KeyBinding Key="F2" Command="{Binding RenameCommand}" />
                                 </TreeView.InputBindings>
                                 <TreeView.ItemContainerStyle>
-                                    <Style TargetType="TreeViewItem">
-                                        <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
-                                        <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
-                                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
-                                        <Setter Property="Padding" Value="2,2" />
-                                    </Style>
+                                    <StaticResource ResourceKey="WorkspaceTreeItem" />
                                 </TreeView.ItemContainerStyle>
                                 <TreeView.ItemTemplate>
                                     <HierarchicalDataTemplate DataType="{x:Type vm:WorkspaceNodeViewModel}" ItemsSource="{Binding Children}">

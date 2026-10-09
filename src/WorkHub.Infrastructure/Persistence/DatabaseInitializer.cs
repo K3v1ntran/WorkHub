@@ -13,22 +13,32 @@ namespace WorkHub.Infrastructure.Persistence;
 /// <item>Unreadable, corrupt, foreign or newer-schema databases stop startup with <see cref="DatabaseStartupException"/>.</item>
 /// <item>Before migrating an existing schema, a validated copy is written to <c>Backups\Migrations</c>.</item>
 /// <item>Each migration and its version bump commit atomically.</item>
+/// <item>A NEW database (no file, or an empty SQLite file with no objects) is built completely in a staging file
+/// (<c>workhub.db.new</c>): schema, then the optional initial data in one transaction. Only a finished database is
+/// moved into place. If anything fails, the staging file is deleted and no database exists, so the next start is
+/// again a new environment and retries; a staging file left by an interrupted start is discarded. An existing
+/// database is never seeded, even if its tables are empty.</item>
 /// </list>
 /// </summary>
 public sealed class DatabaseInitializer : IDatabaseInitializer
 {
+    /// <summary>Loads initial data into a new database inside the given transaction; returns a log summary.</summary>
+    public delegate string NewDatabaseSeed(SqliteConnection connection, SqliteTransaction transaction, DateTimeOffset utcNow);
+
     private readonly WorkHubPaths _paths;
     private readonly SqliteConnectionFactory _connections;
     private readonly IReadOnlyList<ISchemaMigration> _migrations;
     private readonly TimeProvider _time;
     private readonly IAppLog _log;
+    private readonly NewDatabaseSeed? _seed;
 
-    public DatabaseInitializer(WorkHubPaths paths, IAppLog log)
-        : this(paths, SchemaMigrations.All, TimeProvider.System, log)
+    /// <param name="seed">Initial data for a new database (the application passes <see cref="InitialSystemsSeed.Apply"/>).</param>
+    public DatabaseInitializer(WorkHubPaths paths, IAppLog log, NewDatabaseSeed? seed = null)
+        : this(paths, SchemaMigrations.All, TimeProvider.System, log, seed)
     {
     }
 
-    internal DatabaseInitializer(WorkHubPaths paths, IReadOnlyList<ISchemaMigration> migrations, TimeProvider time, IAppLog log)
+    internal DatabaseInitializer(WorkHubPaths paths, IReadOnlyList<ISchemaMigration> migrations, TimeProvider time, IAppLog log, NewDatabaseSeed? seed = null)
     {
         for (var i = 0; i < migrations.Count; i++)
         {
@@ -41,19 +51,25 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
         _migrations = migrations;
         _time = time;
         _log = log;
+        _seed = seed;
     }
 
     public int LatestVersion => _migrations.Count == 0 ? 0 : _migrations[^1].Version;
 
+    /// <summary>Where a new database is assembled before it is moved to <see cref="WorkHubPaths.DatabaseFile"/>.</summary>
+    internal string StagingFile => _paths.DatabaseFile + ".new";
+
     public DatabaseInitializationResult Initialize()
     {
         Directory.CreateDirectory(_paths.DataDirectory);
-        var existed = File.Exists(_paths.DatabaseFile);
+        if (!File.Exists(_paths.DatabaseFile))
+            return CreateNew(replaceEmptyFile: false);
 
+        DatabaseInitializationResult? result;
         try
         {
-            using var connection = _connections.Open(existed ? SqliteOpenMode.ReadWrite : SqliteOpenMode.ReadWriteCreate);
-            return existed ? InitializeExisting(connection) : InitializeNew(connection);
+            using var connection = _connections.Open(SqliteOpenMode.ReadWrite);
+            result = InitializeExisting(connection);
         }
         catch (SqliteException ex)
         {
@@ -62,15 +78,65 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
                 $"The WorkHub database could not be opened ({ex.SqliteErrorCode}). It was left unchanged.",
                 ex);
         }
+
+        if (result is not null)
+            return result;
+
+        // An empty SQLite file (no objects at version 0) is an aborted creation: build a new database and replace it.
+        _connections.ClearPools();
+        return CreateNew(replaceEmptyFile: true);
     }
 
-    private DatabaseInitializationResult InitializeNew(SqliteConnection connection)
+    private DatabaseInitializationResult CreateNew(bool replaceEmptyFile)
     {
-        ApplyMigrations(connection, fromVersion: 0);
+        DeleteStaging(); // left by an interrupted earlier start
+        try
+        {
+            var staging = new SqliteConnectionFactory(StagingFile);
+            using (var connection = staging.Open(SqliteOpenMode.ReadWriteCreate, pooling: false))
+            {
+                ApplyMigrations(connection, fromVersion: 0);
+                if (_seed is not null)
+                {
+                    using var transaction = connection.BeginTransaction();
+                    var summary = _seed(connection, transaction, _time.GetUtcNow());
+                    transaction.Commit();
+                    _log.Info(summary);
+                }
+            }
+
+            File.Move(StagingFile, _paths.DatabaseFile, overwrite: replaceEmptyFile);
+        }
+        catch (Exception ex)
+        {
+            DeleteStaging();
+            _log.Error("Creating the new database failed; nothing was kept.", ex);
+            throw new DatabaseStartupException(DatabaseStartupFailure.NewDatabaseFailed, NewDatabaseFailedMessage, ex);
+        }
+
         return new DatabaseInitializationResult(DatabaseInitializationOutcome.Created, 0, LatestVersion);
     }
 
-    private DatabaseInitializationResult InitializeExisting(SqliteConnection connection)
+    private const string NewDatabaseFailedMessage =
+        "WorkHub could not create its database and initial data. Nothing was kept; WorkHub will try again the next time it starts.";
+
+    private void DeleteStaging()
+    {
+        foreach (var file in new[] { StagingFile, StagingFile + "-journal" })
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log.Warn($"Could not delete the incomplete database file {Path.GetFileName(file)} ({ex.GetType().Name}).");
+            }
+        }
+    }
+
+    /// <returns>Null when the file is an empty SQLite file that should be (re)created as a new database.</returns>
+    private DatabaseInitializationResult? InitializeExisting(SqliteConnection connection)
     {
         var problem = connection.QuickCheck();
         if (problem is not null)
@@ -100,8 +166,8 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
                     "The file at the WorkHub database location is not a WorkHub database. It was left unchanged.");
             }
 
-            _log.Warn("Existing database file had no schema; initializing it.");
-            return InitializeNew(connection);
+            _log.Warn("Existing database file had no schema; creating a new database in its place.");
+            return null;
         }
 
         if (version == LatestVersion)

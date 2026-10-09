@@ -38,7 +38,20 @@ public sealed class LegacyXmlParser : ILegacyXmlParser
             if (file.Length > MaxFileBytes)
                 return LegacyParseResult.Failed("The file is too large to be a legacy WorkHub XML file.");
 
-            using var reader = XmlReader.Create(file.OpenRead(), ReaderSettings);
+            return Parse(file.OpenRead());
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return LegacyParseResult.Failed($"The file could not be read ({ex.GetType().Name}).");
+        }
+    }
+
+    /// <summary>Parses XML from a stream (for example the embedded initial data) with the same protections. Closes the stream.</summary>
+    public LegacyParseResult Parse(Stream stream)
+    {
+        try
+        {
+            using var reader = XmlReader.Create(stream, ReaderSettings);
             return Read(XDocument.Load(reader, LoadOptions.SetLineInfo));
         }
         catch (XmlException ex) when (ex.Message.Contains("DTD", StringComparison.OrdinalIgnoreCase))

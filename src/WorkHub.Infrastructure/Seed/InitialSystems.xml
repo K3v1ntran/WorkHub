@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<HubData>
+    <SYSTEM>
+        <Item SystemCode="4000000002" SystemName="M-Find" />
+        <Item SystemCode="4000000006" SystemName="HR (Machine History Registration)" />
+        <Item SystemCode="4000000007" SystemName="MMM (Machine Master Maintenance)" />
+        <Item SystemCode="4000000037" SystemName="MST (Zaxis@net 機種グループ変更)" />
+        <Item SystemCode="4000000071" SystemName="EXW" />
+        <Item SystemCode="4000000132" SystemName="MME (Machine Master Entry)" />
+        <Item SystemCode="4000000133" SystemName="RPT" />
+        <Item SystemCode="4000000167" SystemName="MARS (Making and Assist of Reports)" />
+        <Item SystemCode="4000000173" SystemName="MMR" />
+        <Item SystemCode="4000000175" SystemName="M+MIC (MultipleMic)" />
+        <Item SystemCode="4000000209" SystemName="Event Map" />
+        <Item SystemCode="4000000210" SystemName="Graph Service" />
+        <Item SystemCode="4000000211" SystemName="Repor Service" />
+        <Item SystemCode="4000000214" SystemName="JNR" />
+        <Item SystemCode="4000000225" SystemName="HSO" />
+        <Item SystemCode="4000000285" SystemName="ConSite Mail Setting" />
+        <Item SystemCode="4000000305" SystemName="Owner's Site (オーナーズサイト)" />
+        <Item SystemCode="4000000313" SystemName="MPMS" />
+        <Item SystemCode="4000000342" SystemName="ConSite Customized Parts (カスタマイズパーツ配信システム)" />
+        <Item SystemCode="4000000358" SystemName="ConSite Proposal Report (提案レポート)" />
+        <Item SystemCode="4000000359" SystemName="Oil Auto Diagnosis (オイル分析自動診断システム)" />
+        <Item SystemCode="4000000375" SystemName="ConSite API" />
+        <Item SystemCode="4000000414" SystemName="ConSite Manual" />
+        <Item SystemCode="4000000420" SystemName="ConSite OAuth" />
+        <Item SystemCode="4000000430" SystemName="(OTA) S/W構成管理" />
+        <Item SystemCode="4000000433" SystemName="ConSite Remanufacturing（再生品Web管理システム）" />
+        <Item SystemCode="4000000548" SystemName="ConSite News" />
+        <Item SystemCode="4000000549" SystemName="ConSite Service Information" />
+        <Item SystemCode="4000000555" SystemName="アラームマスタ管理システム" />
+        <Item SystemCode="Sub0000001" SystemName="データ連携(ATRAN3)(日本側)" />
+        <Item SystemCode="Sub0000004" SystemName="Corticon" />
+        <Item SystemCode="Sub0000006" SystemName="MPUpload" />
+        <Item SystemCode="Sub0000007" SystemName="ConSite定期レポート" />
+        <Item SystemCode="Sub0000008" SystemName="ConSiteレポートサービス" />
+        <Item SystemCode="Sub0000009" SystemName="OP統" />
+        <Item SystemCode="Sub0000010" SystemName="MM共通" />
+        <Item SystemCode="Sub0000015" SystemName="データ連携(ATRAN3)(中国側)" />
+        <Item SystemCode="Sub0000024" SystemName="Azure" />
+        <Item SystemCode="Sub0000031" SystemName="ConSiteアラームレポートメール" />
+        <Item SystemCode="Sub0000032" SystemName="ConSite提案レポートメール" />
+		<Item SystemCode="Sub9999999" SystemName="GeS共通ライブラリ" />
+		<Item SystemCode="Sub0000038" SystemName="S3FileAccess" />
+    </SYSTEM>
+    <ORACLE>
+        <Item SystemCode="Oracle" SystemName="Oracle全般" />
+        <Item SystemCode="Oracle_APL" SystemName="APL" />
+        <Item SystemCode="Oracle_AS4" SystemName="AS4" />
+        <Item SystemCode="Oracle_CMOB" SystemName="CMOB" />
+        <Item SystemCode="Oracle_COM" SystemName="COM" />
+        <Item SystemCode="Oracle_CONSITE" SystemName="CONSITE" />
+        <Item SystemCode="Oracle_DPM" SystemName="DPM" />
+        <Item SystemCode="Oracle_ECAB" SystemName="ECAB" />
+        <Item SystemCode="Oracle_FIR2" SystemName="FIR2" />
+        <Item SystemCode="Oracle_GEP" SystemName="GEP" />
+        <Item SystemCode="Oracle_GIS" SystemName="GIS" />
+        <Item SystemCode="Oracle_HDA" SystemName="HDA" />
+        <Item SystemCode="Oracle_HDS" SystemName="HDS" />
+        <Item SystemCode="Oracle_HOP" SystemName="HOP" />
+        <Item SystemCode="Oracle_HQA" SystemName="HQA" />
+        <Item SystemCode="Oracle_KB" SystemName="KB" />
+        <Item SystemCode="Oracle_KDO" SystemName="KDO" />
+        <Item SystemCode="Oracle_LC" SystemName="LC" />
+        <Item SystemCode="Oracle_LOG" SystemName="LOG" />
+        <Item SystemCode="Oracle_MAP" SystemName="MAP" />
+        <Item SystemCode="Oracle_MF" SystemName="MF" />
+        <Item SystemCode="Oracle_MF2" SystemName="MF2" />
+        <Item SystemCode="Oracle_MM" SystemName="MM" />
+        <Item SystemCode="Oracle_IFGES" SystemName="IFGES" />
+        <Item SystemCode="Oracle_MSC" SystemName="MSC" />
+        <Item SystemCode="Oracle_NIN" SystemName="NIN" />
+        <Item SystemCode="Oracle_OTA" SystemName="OTA" />
+        <Item SystemCode="Oracle_PSPL" SystemName="PSPL" />
+        <Item SystemCode="Oracle_RSS" SystemName="RSS" />
+        <Item SystemCode="Oracle_SB" SystemName="SB" />
+        <Item SystemCode="Oracle_SIV" SystemName="SIV" />
+        <Item SystemCode="Oracle_WCS" SystemName="WCS" />
+        <Item SystemCode="Oracle_CN" SystemName="中国GeS" />
+    </ORACLE>
+</HubData>

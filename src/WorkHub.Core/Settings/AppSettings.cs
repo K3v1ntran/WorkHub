@@ -3,9 +3,13 @@ using WorkHub.Core.Repositories;
 namespace WorkHub.Core.Settings;
 
 /// <summary>
-/// Application configuration persisted in <c>Config\settings.json</c>.
-/// Defaults must stay safe: no company hosts, credentials or guessed values.
+/// Application configuration persisted in <c>Config\settings.json</c>. No credentials are ever stored here.
 /// Domain data (systems, owner items, workspace) belongs in SQLite, not here.
+/// <para>
+/// Two kinds of defaults: <see cref="CreateInitial"/> holds the approved repository configuration and is used only
+/// when a NEW settings file is created; the property initializers stay neutral (no hosts) and apply only to values
+/// missing from an existing file, so an existing configuration is never filled in or overwritten behind the user's back.
+/// </para>
 /// </summary>
 public sealed class AppSettings
 {
@@ -21,6 +25,20 @@ public sealed class AppSettings
     public UiSettings Ui { get; set; } = new();
 
     public static AppSettings CreateDefault() => new();
+
+    /// <summary>Approved initial SVN / GitBucket configuration for a new environment (new settings file only).</summary>
+    public static AppSettings CreateInitial()
+    {
+        var settings = new AppSettings();
+        settings.Repository.Svn.Host = InitialRepository.SvnHost;
+        settings.Repository.Svn.SystemPrefix = InitialRepository.SvnSystemPrefix;
+        settings.Repository.Svn.OraclePrefix = InitialRepository.SvnOraclePrefix;
+        settings.Repository.Svn.TortoiseProcPath = InitialRepository.TortoiseProcPath;
+        settings.Repository.Git.Host = InitialRepository.GitHost;
+        settings.Repository.Git.SystemPrefix = InitialRepository.GitSystemPrefix;
+        settings.Repository.Git.OraclePrefix = InitialRepository.GitOraclePrefix;
+        return settings; // RELEASE keeps its existing default prefix (GeSL_rel_) on the shared SVN host
+    }
 
     /// <summary>Replaces sections and strings that were explicitly null in the file.</summary>
     public AppSettings Normalize()
@@ -52,6 +70,21 @@ public sealed class AppSettings
             },
         },
     };
+}
+
+/// <summary>
+/// Initial repository configuration approved by the Product Owner. The TortoiseProc path is a starting value, not proof
+/// that TortoiseSVN is installed; a missing executable is still reported when saving settings or opening a repository.
+/// </summary>
+public static class InitialRepository
+{
+    public const string SvnHost = "http://10.194.105.25/svn/";
+    public const string SvnSystemPrefix = "GeSL_doc_";
+    public const string SvnOraclePrefix = "GeSL_doc_";
+    public const string GitHost = "http://10.194.105.25:8080/gitbucket/root/";
+    public const string GitSystemPrefix = "GeSL_src_";
+    public const string GitOraclePrefix = "GeSL_src_";
+    public const string TortoiseProcPath = "C:/Program Files/TortoiseSVN/bin/TortoiseProc.exe";
 }
 
 public sealed class RepositorySettings
