@@ -27,6 +27,124 @@ public partial class MainWindow : Window
             ShowAndFocusSearch();
             e.Handled = true;
         }
+        else if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control && PrimaryTabs.SelectedItem == WorkspaceTab && PrimaryTabs.IsEnabled
+                 && WorkspaceSearch is not null)
+        {
+            WorkspaceSearchBox.Focus();
+            WorkspaceSearchBox.SelectAll();
+            e.Handled = true;
+        }
+    }
+
+    // ---- Workspace search (view glue only; behavior lives in WorkspaceSearchViewModel) --------------------------------
+
+    private WorkspaceSearchViewModel? WorkspaceSearch => Main?.Workspace.Search;
+
+    private void WorkspaceSearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (WorkspaceSearch is not { } search)
+            return;
+        switch (e.Key)
+        {
+            case Key.Escape:
+                if (search.IsActive)
+                {
+                    search.ClearCommand.Execute(null);
+                    Dispatcher.BeginInvoke(DispatcherPriority.Loaded, BringSelectedTreeNodeIntoView);
+                }
+                else
+                {
+                    FocusWorkspaceTree();
+                }
+
+                e.Handled = true;
+                break;
+            case Key.Down:
+            case Key.Enter:
+                if (search.Results.Count > 0)
+                {
+                    search.SelectedResult ??= search.Results[0];
+                    FocusSearchResult();
+                }
+
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void WorkspaceSearchResults_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (WorkspaceSearch is not { } search)
+            return;
+        switch (e.Key)
+        {
+            case Key.Enter:
+                search.ActivateSelectedCommand.Execute(null);
+                e.Handled = true;
+                break;
+            case Key.Up when WorkspaceSearchResults.SelectedIndex <= 0:
+            case Key.Escape:
+                WorkspaceSearchBox.Focus();
+                e.Handled = true;
+                break;
+        }
+    }
+
+    private void WorkspaceSearchResults_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemsControl.ContainerFromElement(WorkspaceSearchResults, (DependencyObject)e.OriginalSource) is ListBoxItem)
+            WorkspaceSearch?.ActivateSelectedCommand.Execute(null);
+    }
+
+    private void FocusSearchResult()
+    {
+        var list = WorkspaceSearchResults;
+        list.ScrollIntoView(list.SelectedItem);
+        list.UpdateLayout();
+        if (list.ItemContainerGenerator.ContainerFromItem(list.SelectedItem) is ListBoxItem item)
+            item.Focus();
+        else
+            list.Focus();
+    }
+
+    private void FocusWorkspaceTree()
+    {
+        if (FindTreeItem(WorkspaceTree, Main?.Workspace.SelectedNode) is { } item)
+            item.Focus();
+        else
+            WorkspaceTree.Focus();
+    }
+
+    /// <summary>A revealed (or otherwise selected) node scrolls into view once its container exists.</summary>
+    private void WorkspaceTree_ItemSelected(object sender, RoutedEventArgs e) => (e.OriginalSource as TreeViewItem)?.BringIntoView();
+
+    private void BringSelectedTreeNodeIntoView() => FindTreeItem(WorkspaceTree, Main?.Workspace.SelectedNode)?.BringIntoView();
+
+    /// <summary>The realized container of <paramref name="node"/>, following its (expanded) ancestors; null when not realized.</summary>
+    private static TreeViewItem? FindTreeItem(ItemsControl root, WorkspaceNodeViewModel? node)
+    {
+        if (node is null)
+            return null;
+        var chain = new Stack<WorkspaceNodeViewModel>();
+        for (var n = node; n is not null; n = n.Parent)
+            chain.Push(n);
+
+        ItemsControl? container = root;
+        TreeViewItem? item = null;
+        while (chain.Count > 0 && container is not null)
+        {
+            item = container.ItemContainerGenerator.ContainerFromItem(chain.Pop()) as TreeViewItem;
+            container = item;
+        }
+
+        return chain.Count == 0 ? item : null;
+    }
+
+    private void ContentList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // A row selected by a search reveal (or code) scrolls into view.
+        if (ContentList.SelectedItem is { } selected)
+            ContentList.ScrollIntoView(selected);
     }
 
     private void SearchButton_Click(object sender, RoutedEventArgs e) => ShowAndFocusSearch();

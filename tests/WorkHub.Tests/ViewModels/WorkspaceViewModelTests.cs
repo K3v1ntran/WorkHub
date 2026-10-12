@@ -171,7 +171,7 @@ public sealed class WorkspaceViewModelTests : IDisposable
         var members = typeof(WorkspaceAreaViewModel).GetProperties().Select(p => p.Name).ToList();
 
         Assert.DoesNotContain(members, m => m.Contains("Delete") || m.Contains("Trash") || m.Contains("Archive")
-                                            || m.Contains("Search") || m.Contains("Tag") || m.Contains("Link") || m.Contains("Note"));
+                                            || m.Contains("Tag") || m.Contains("Link") || m.Contains("Note"));
         Assert.DoesNotContain(ProjectEditorViewModel.ForCreate(_workspace, null, null).Statuses, s => s.Status == ProjectStatus.Archived);
     }
 

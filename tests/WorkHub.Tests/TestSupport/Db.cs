@@ -29,6 +29,15 @@ internal static class Db
         return (long)command.ExecuteScalar()!;
     }
 
+    public static long ScalarLongWith(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+        return (long)command.ExecuteScalar()!;
+    }
+
     public static string? ScalarString(SqliteConnection connection, string sql, params (string Name, object? Value)[] parameters)
     {
         using var command = connection.CreateCommand();

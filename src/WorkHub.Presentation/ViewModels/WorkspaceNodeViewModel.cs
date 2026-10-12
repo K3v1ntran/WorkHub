@@ -25,6 +25,7 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
         Type = node.Type;
         _name = node.Name;
         _parent = parent;
+        Children.CollectionChanged += (_, _) => BranchStamp++;
         SetHasChildren(node.HasChildren);
     }
 
@@ -73,6 +74,15 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
     public ObservableCollection<WorkspaceNodeViewModel> Children { get; } = [];
 
     internal bool IsChildrenLoaded { get; set; }
+
+    /// <summary>Incremented by every change to <see cref="Children"/> (lazy loads, local writes, reconciliation).</summary>
+    internal int BranchStamp { get; private set; }
+
+    /// <summary>
+    /// Incremented when a reveal reconciled <see cref="Children"/> to a fresh snapshot. A lazy load that started before
+    /// such a reconciliation discards its (older) result.
+    /// </summary>
+    internal int ReconcileStamp { get; set; }
 
     /// <summary>The child load in flight, if any (reused by every caller until it finishes).</summary>
     internal Task<bool>? ChildrenLoad { get; set; }

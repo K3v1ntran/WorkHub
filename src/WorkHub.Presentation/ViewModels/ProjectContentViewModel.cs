@@ -363,6 +363,34 @@ public sealed class ProjectContentViewModel : ObservableObject
         OnPropertyChanged(nameof(IsEmpty));
     }
 
+    /// <summary>
+    /// Search reveal (Phase 6 proposal §4.6): opens <paramref name="containerFolderId"/> with the normal navigation (which
+    /// supersedes any earlier load and follows the usual check-cancellation rules), then selects the row of EXACTLY this
+    /// kind and Id — Folder, Link and Note Ids are independent, so the Id alone never identifies a row. Selecting a Note
+    /// starts its read-only preview; nothing opens the editor or a link.
+    /// </summary>
+    internal async Task<ContentRevealOutcome> RevealAsync(long? containerFolderId, ProjectContentItemKind kind, long id)
+    {
+        if (_isDeactivated)
+            return ContentRevealOutcome.Superseded;
+
+        var load = NavigateAsync(containerFolderId);
+        var version = _loadVersion;
+        await load;
+        if (version != _loadVersion || _isDeactivated)
+            return ContentRevealOutcome.Superseded;
+        if (ContainerMessage is not null)
+            return ContentRevealOutcome.ContainerMissing;
+        if (LoadError is not null)
+            return ContentRevealOutcome.LoadFailed;
+
+        var row = Items.SingleOrDefault(i => i.Kind == kind && i.Id == id);
+        if (row is null)
+            return ContentRevealOutcome.MovedMeanwhile; // the container is still shown
+        SelectedItem = row;
+        return ContentRevealOutcome.Selected;
+    }
+
     private Task GoUpAsync() =>
         NavigateAsync(!IsFolderMissing && Breadcrumb.Count >= 2 ? Breadcrumb[^2].FolderId : null);
 

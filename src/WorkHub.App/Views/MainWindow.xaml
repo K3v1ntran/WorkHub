@@ -24,6 +24,8 @@
 
         <views:DepthToIndentConverter x:Key="WorkspaceIndent" Indent="18" />
         <views:FractionConverter x:Key="PreviewMaxHeight" Fraction="0.4" />
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+        <views:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibility" />
 
         <!-- Workspace tree chevron (replaces the default triangle). -->
         <Style x:Key="WorkspaceTreeExpander" TargetType="ToggleButton">
@@ -640,12 +642,92 @@
                             </Button>
                         </StackPanel>
 
+                        <!-- Search (Ctrl+F): the results replace the tree while the query is non-empty; Esc clears it. -->
+                        <StackPanel DockPanel.Dock="Top" Margin="8,0,8,4" DataContext="{Binding Search}"
+                                    Visibility="{Binding Converter={StaticResource NullToCollapsed}}">
+                            <Grid>
+                                <TextBox x:Name="WorkspaceSearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="22,3,24,3"
+                                         AutomationProperties.Name="Search workspace" PreviewKeyDown="WorkspaceSearchBox_PreviewKeyDown" />
+                                <TextBlock Style="{StaticResource Icon}" Margin="7,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False"
+                                           Foreground="{StaticResource Brush.MutedText}" Text="&#xE721;" />
+                                <TextBlock Margin="24,0,0,0" IsHitTestVisible="False" VerticalAlignment="Center"
+                                           Foreground="{StaticResource Brush.MutedText}" Text="Search workspace (Ctrl+F)">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Text, ElementName=WorkspaceSearchBox}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <Button HorizontalAlignment="Right" Style="{StaticResource ToolButton}" Padding="4,0" Command="{Binding ClearCommand}"
+                                        Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}"
+                                        AutomationProperties.Name="Clear search" ToolTip="Clear search (Esc)">
+                                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
+                                </Button>
+                            </Grid>
+                            <TextBlock Margin="2,4,2,0" Foreground="{StaticResource Brush.MutedText}" TextWrapping="Wrap" Text="{Binding StatusText}"
+                                       AutomationProperties.AutomationId="WorkspaceSearchStatus"
+                                       Visibility="{Binding StatusText, Converter={StaticResource NullToCollapsed}}" />
+                            <DockPanel Margin="2,4,2,0" Visibility="{Binding ErrorText, Converter={StaticResource NullToCollapsed}}">
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Content="Retry" Command="{Binding RetryCommand}" AutomationProperties.Name="Retry search" />
+                                <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorText}"
+                                           AutomationProperties.AutomationId="WorkspaceSearchError" />
+                            </DockPanel>
+                            <TextBlock Margin="2,4,2,0" Foreground="{StaticResource Brush.Warning}" TextWrapping="Wrap" Text="{Binding NoticeText}"
+                                       AutomationProperties.AutomationId="WorkspaceSearchNotice"
+                                       Visibility="{Binding NoticeText, Converter={StaticResource NullToCollapsed}}" />
+                        </StackPanel>
+
                         <Grid>
+                            <ListBox x:Name="WorkspaceSearchResults" DataContext="{Binding Search}" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
+                                     BorderThickness="0" Background="Transparent" AutomationProperties.Name="Search results"
+                                     VirtualizingPanel.IsVirtualizing="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     PreviewKeyDown="WorkspaceSearchResults_PreviewKeyDown" MouseDoubleClick="WorkspaceSearchResults_MouseDoubleClick">
+                                <ListBox.Style>
+                                    <Style TargetType="ListBox">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ListBox.Style>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Padding" Value="6,4" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:WorkspaceSearchHitViewModel}">
+                                        <DockPanel ToolTip="{Binding Location}">
+                                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Icon}" VerticalAlignment="Top" Margin="0,2,8,0"
+                                                       Foreground="{StaticResource Brush.Accent}" Text="{Binding Glyph}" />
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Foreground="{StaticResource Brush.MutedText}" FontSize="11" TextTrimming="CharacterEllipsis">
+                                                    <Run Text="{Binding KindText, Mode=OneWay}" /><Run Text=" · " /><Run Text="{Binding Location, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock Foreground="{StaticResource Brush.MutedText}" FontSize="11" TextTrimming="CharacterEllipsis" Text="{Binding MatchText}" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+
                             <TreeView x:Name="WorkspaceTree" BorderThickness="0" Background="Transparent" Padding="0"
                                       ItemsSource="{Binding Roots}" AutomationProperties.Name="Workspace tree"
                                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                      PreviewMouseRightButtonDown="WorkspaceTree_PreviewMouseRightButtonDown">
+                                      PreviewMouseRightButtonDown="WorkspaceTree_PreviewMouseRightButtonDown"
+                                      TreeViewItem.Selected="WorkspaceTree_ItemSelected"
+                                      Visibility="{Binding Search.IsActive, Converter={StaticResource InverseBoolToVisibility}, FallbackValue=Visible}">
                                 <TreeView.InputBindings>
                                     <KeyBinding Key="F2" Command="{Binding RenameCommand}" />
                                 </TreeView.InputBindings>
@@ -929,7 +1011,8 @@
                                       BorderThickness="0" Background="Transparent" AutomationProperties.Name="Project content"
                                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionMode="Single"
-                                      MouseDoubleClick="ContentList_MouseDoubleClick" PreviewKeyDown="ContentList_PreviewKeyDown">
+                                      MouseDoubleClick="ContentList_MouseDoubleClick" PreviewKeyDown="ContentList_PreviewKeyDown"
+                                      SelectionChanged="ContentList_SelectionChanged">
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
                                         <Setter Property="Padding" Value="8,5" />

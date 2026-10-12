@@ -94,8 +94,29 @@ folder) with a breadcrumb. Project folders, links and notes never appear in the 
   (or where the note last was), never anywhere else. After the editor closes, the list re-reads the notes it touched.
 - Keyboard: Enter opens, F2 edits, Backspace or Alt+Up goes up.
 
-Not available yet: delete, Trash, Archive, tags, search, rich text, drag-and-drop, manual ordering, autosave and moving
+Not available yet: delete, Trash, Archive, tags, rich text, drag-and-drop, manual ordering, autosave and moving
 content between projects.
+
+### Workspace search
+
+**Ctrl+F** on the Workspace tab (or the box above the tree) searches the whole local Workspace: folder and project names,
+a project's Owner, Project manager and Description, project-folder names, link names and targets, and note titles and
+content. Systems and Owner Manager items are not included (the Repository tab keeps its own search and Ctrl+F).
+
+- Words are separated by spaces (including the full-width space); every word must appear, each in any of an item's
+  fields. Matching ignores case and width the same way Workspace names do (NFKC + upper case), so `abc` finds `ＡＢＣ` and
+  `ｶﾀｶﾅ` is found by `カタカナ`; hiragana and katakana stay distinct. At most 8 words and 200 characters are used.
+- While the box has text, the results replace the tree (at most 200, names first); Esc clears the box and shows the tree
+  again. Each result shows where the item is and what matched, with a line of text for descriptions, targets and notes.
+- Enter or double-click **reveals** the item: the tree selects its folder or project, the content pane opens the folder
+  the item is in now and selects it (a note shows its preview). Nothing is opened or launched; press Enter again on the
+  revealed row for that.
+- Results are a snapshot. Revealing always re-reads where the item is now: if it was moved, the reveal goes there; if it
+  no longer exists, the result is removed. A reveal updates only the folders on the item's path (including ones another
+  window changed); other folders the tree already loaded are not re-read, and re-expanding a loaded folder does not
+  refresh it either.
+- Search only reads. While another program or window holds the database for writing, the search retries for up to 30
+  seconds and says "Waiting for the database…"; typing again or clearing cancels it within about a second.
 
 ## Legacy XML import
 
