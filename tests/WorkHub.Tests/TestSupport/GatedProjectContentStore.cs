@@ -7,7 +7,7 @@ namespace WorkHub.Tests.TestSupport;
 /// <summary>
 /// Wraps a real <see cref="IProjectContentStore"/> and can hold the next call for a key until the test releases or fails it.
 /// A held listing reads the database when CALLED and delivers that snapshot only when released (a slow query).
-/// Keys: "list:root", "list:{folderId}", "createFolder", "renameFolder", "createLink", "updateLink", "moveFolder", "moveLink".
+/// Keys: "list:root", "list:{folderId}", "createFolder", "renameFolder", "createLink", "updateLink", "moveFolder", "moveLink", "containerPath", and the note keys below.
 /// </summary>
 internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IProjectContentStore
 {
@@ -35,6 +35,10 @@ internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IPr
     public Task<ProjectLink?> GetLinkAsync(long linkId, CancellationToken cancellationToken = default) =>
         inner.GetLinkAsync(linkId, cancellationToken);
 
+    /// <summary>Key "containerPath": the note editor's location lookup.</summary>
+    public Task<ProjectContainerPath?> GetContainerPathAsync(long projectNodeId, long? folderId, CancellationToken cancellationToken = default) =>
+        Gated("containerPath", () => inner.GetContainerPathAsync(projectNodeId, folderId, CancellationToken.None));
+
     public Task<IReadOnlyList<WorkspaceFolderPath>> ListFolderMoveTargetsAsync(long projectNodeId, long? movingFolderId, CancellationToken cancellationToken = default) =>
         inner.ListFolderMoveTargetsAsync(projectNodeId, movingFolderId, cancellationToken);
 
@@ -43,6 +47,27 @@ internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IPr
 
     public Task<ContentMoveOutcome> MoveLinkAsync(long linkId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
         Gated("moveLink", () => inner.MoveLinkAsync(linkId, expectedFolderId, targetFolderId, cancellationToken), readFirst: false);
+
+    public static string Note(long noteId) => $"getNote:{noteId}";
+
+    public Task<ProjectNote?> GetNoteAsync(long noteId, CancellationToken cancellationToken = default) =>
+        Gated(Note(noteId), () => inner.GetNoteAsync(noteId, CancellationToken.None));
+
+    /// <summary>Key "getNotes": the reconciliation read (snapshot taken when called, delivered on release).</summary>
+    public Task<IReadOnlyList<ProjectNote>> GetNotesAsync(IReadOnlyCollection<long> noteIds, CancellationToken cancellationToken = default) =>
+        Gated("getNotes", () => inner.GetNotesAsync(noteIds, CancellationToken.None));
+
+    public Task<ProjectNote> CreateNoteAsync(long projectNodeId, long? folderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
+        Gated("createNote", () => inner.CreateNoteAsync(projectNodeId, folderId, draft, cancellationToken), readFirst: false);
+
+    public Task<NoteStoreSaveResult> SaveNoteAsync(long noteId, long expectedRevision, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
+        Gated("saveNote", () => inner.SaveNoteAsync(noteId, expectedRevision, draft, cancellationToken), readFirst: false);
+
+    public Task<ProjectNote> SaveNoteAsNewAsync(long originalNoteId, long projectNodeId, long? lastKnownFolderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
+        Gated("saveNoteAsNew", () => inner.SaveNoteAsNewAsync(originalNoteId, projectNodeId, lastKnownFolderId, draft, cancellationToken), readFirst: false);
+
+    public Task<ContentMoveOutcome> MoveNoteAsync(long noteId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
+        Gated("moveNote", () => inner.MoveNoteAsync(noteId, expectedFolderId, targetFolderId, cancellationToken), readFirst: false);
 
     private async Task<T> Gated<T>(string key, Func<Task<T>> call, bool readFirst = true)
     {

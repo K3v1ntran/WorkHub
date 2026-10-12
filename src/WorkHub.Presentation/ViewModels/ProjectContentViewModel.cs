@@ -77,6 +77,12 @@ public sealed class ProjectContentViewModel : ObservableObject
     private int _generation;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource _checksCts = new();
+    private bool _isDeactivated;
+    private ProjectNote? _previewNote;
+    private bool _isPreviewLoading;
+    private string? _previewMessage;
+    private int _previewVersion;
+    private CancellationTokenSource? _previewCts;
 
     public ProjectContentViewModel(
         ProjectContentService content,
@@ -100,6 +106,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         Action<Exception> onError = ex => ReportError("The operation failed. Nothing was changed.", ex);
         NewFolderCommand = new AsyncRelayCommand(NewFolderAsync, () => IsReady, onError);
         NewLinkCommand = new AsyncRelayCommand(NewLinkAsync, () => IsReady, onError);
+        NewNoteCommand = new AsyncRelayCommand(NewNoteAsync, () => IsReady, onError);
         OpenCommand = new AsyncRelayCommand(OpenAsync, HasSelection, onError);
         EditCommand = new AsyncRelayCommand(EditAsync, HasSelection, onError);
         MoveCommand = new AsyncRelayCommand(MoveAsync, HasSelection, onError);
@@ -156,8 +163,37 @@ public sealed class ProjectContentViewModel : ObservableObject
             EditCommand.RaiseCanExecuteChanged();
             MoveCommand.RaiseCanExecuteChanged();
             CheckCommand.RaiseCanExecuteChanged();
+            OnPropertyChanged(nameof(IsPreviewVisible));
+            StartPreviewLoad();
         }
     }
+
+    /// <summary>The preview area is shown only while a Note row is selected.</summary>
+    public bool IsPreviewVisible => SelectedItem is { IsNote: true };
+
+    /// <summary>Read-only preview of the selected Note (null while loading, on error, or for other rows).</summary>
+    public ProjectNote? PreviewNote
+    {
+        get => _previewNote;
+        private set
+        {
+            if (SetProperty(ref _previewNote, value))
+                OnPropertyChanged(nameof(PreviewUpdatedText));
+        }
+    }
+
+    public string? PreviewUpdatedText => PreviewNote is { } note ? $"Updated {note.UpdatedAt.LocalDateTime:yyyy-MM-dd HH:mm}" : null;
+
+    public bool IsPreviewLoading { get => _isPreviewLoading; private set => SetProperty(ref _isPreviewLoading, value); }
+
+    /// <summary>"This note no longer exists." / load failure, for the CURRENT selection only.</summary>
+    public string? PreviewMessage { get => _previewMessage; private set => SetProperty(ref _previewMessage, value); }
+
+    /// <summary>The most recent preview load; lets tests await it.</summary>
+    internal Task CurrentPreviewLoad { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The most recent post-editor reconciliation; lets tests await it.</summary>
+    internal Task CurrentReconciliation { get; private set; } = Task.CompletedTask;
 
     public bool IsLoading
     {
@@ -214,10 +250,12 @@ public sealed class ProjectContentViewModel : ObservableObject
 
     public AsyncRelayCommand NewLinkCommand { get; }
 
-    /// <summary>Folder: enter it. Link: open its target.</summary>
+    public AsyncRelayCommand NewNoteCommand { get; }
+
+    /// <summary>Folder: enter it. Link: open its target. Note: open the editor.</summary>
     public AsyncRelayCommand OpenCommand { get; }
 
-    /// <summary>Folder: rename. Link: edit.</summary>
+    /// <summary>Folder: rename. Link: edit. Note: open the editor.</summary>
     public AsyncRelayCommand EditCommand { get; }
 
     public AsyncRelayCommand MoveCommand { get; }
@@ -248,10 +286,12 @@ public sealed class ProjectContentViewModel : ObservableObject
     /// <summary>Called when another Project (or nothing) is selected: drops pending loads and cancels checks.</summary>
     public void Deactivate()
     {
+        _isDeactivated = true;
         _loadVersion++;
         _loadCts?.Cancel();
         _loadCts = null;
         CancelChecks();
+        InvalidatePreview();
     }
 
     // ---- Loading and navigation -------------------------------------------------------------------------------------
@@ -315,6 +355,8 @@ public sealed class ProjectContentViewModel : ObservableObject
             Items.Add(new ProjectContentItemViewModel(folder));
         foreach (var link in listing.Links)
             Items.Add(CreateLinkRow(link));
+        foreach (var note in listing.Notes)
+            Items.Add(new ProjectContentItemViewModel(note));
 
         _isLoaded = true;
         IsLoading = false;
@@ -355,6 +397,12 @@ public sealed class ProjectContentViewModel : ObservableObject
             return;
         }
 
+        if (item.IsNote)
+        {
+            await OpenNoteEditorAsync(item);
+            return;
+        }
+
         var result = await _content.OpenLinkAsync(item.Id);
         BannerMessage = result.Succeeded ? null : result.Message ?? "The target could not be opened.";
     }
@@ -362,6 +410,9 @@ public sealed class ProjectContentViewModel : ObservableObject
     private Task EditAsync()
     {
         var item = SelectedItem!;
+        if (item.IsNote)
+            return OpenNoteEditorAsync(item);
+
         var version = _loadVersion;
         if (item.Folder is { } folder)
         {
@@ -419,7 +470,7 @@ public sealed class ProjectContentViewModel : ObservableObject
             return; // the view changed while destinations were loading
 
         // The observed source container is the one this row was listed in; the dialog sends it unchanged.
-        var editor = new ProjectContentMoveViewModel(_content, item.IsFolder, item.Id, item.Name, item.ContainerId, ProjectName, targets);
+        var editor = new ProjectContentMoveViewModel(_content, item.Kind, item.Id, item.Name, item.ContainerId, ProjectName, targets);
         var confirmed = _dialogs.ShowProjectContentMove(editor);
         if (version != _loadVersion)
             return;
@@ -435,6 +486,165 @@ public sealed class ProjectContentViewModel : ObservableObject
             Items.Remove(item);
             SelectedItem = null;
         }
+    }
+
+    // ---- Notes: editor, preview, reconciliation ---------------------------------------------------------------------
+
+    private async Task NewNoteAsync()
+    {
+        var editor = NoteEditorViewModel.ForCreate(_content, _dialogs, ProjectNodeId, CurrentFolderId, LocationPath, _time);
+        _dialogs.ShowNoteEditor(editor);
+        await ReconcileAfterEditorAsync(editor);
+    }
+
+    /// <summary>Reads the note fresh (not the preview copy) and opens the modal editor on it.</summary>
+    private async Task OpenNoteEditorAsync(ProjectContentItemViewModel item)
+    {
+        var version = _loadVersion;
+        var note = await _content.GetNoteAsync(item.Id);
+        if (!ReferenceEquals(SelectedItem, item) || version != _loadVersion || _isDeactivated)
+            return; // the view changed while the note was loading
+
+        if (note is null)
+        {
+            RemoveMovedAway(item);
+            BannerMessage = "This note no longer exists.";
+            return;
+        }
+
+        // The location comes from the fresh row's container: the note may have been moved since this listing was loaded.
+        var location = await NoteEditorViewModel.TryReadLocationAsync(_content, note);
+        if (!ReferenceEquals(SelectedItem, item) || version != _loadVersion || _isDeactivated)
+            return;
+
+        var editor = NoteEditorViewModel.ForEdit(_content, _dialogs, note, location, _time);
+        _dialogs.ShowNoteEditor(editor); // the result says only whether something was saved; it never gates reconciliation
+        await ReconcileAfterEditorAsync(editor);
+    }
+
+    /// <summary>
+    /// Fresh-read reconciliation after EVERY note editor close (Phase 5B proposal §5.3): the editor's saved rows are never
+    /// treated as current. Reads the latest state of every note the editor opened or created, then applies it in place if
+    /// the same Project/container/load version is still shown and the view is active. No reload, no write, link checks
+    /// untouched. A read failure changes nothing and shows a refresh banner.
+    /// </summary>
+    private Task ReconcileAfterEditorAsync(NoteEditorViewModel editor) =>
+        CurrentReconciliation = ReconcileNotesAsync(editor.TouchedNoteIds.ToList(), editor.CreatedNoteIds.ToHashSet());
+
+    private async Task ReconcileNotesAsync(IReadOnlyList<long> ids, IReadOnlySet<long> created)
+    {
+        if (ids.Count == 0)
+            return; // a new-note editor closed without a successful save
+
+        var folder = CurrentFolderId;
+        var version = _loadVersion;
+        bool StillCurrent() => !_isDeactivated && version == _loadVersion && folder == CurrentFolderId;
+
+        IReadOnlyList<ProjectNote> fresh;
+        try
+        {
+            fresh = await _content.GetNotesAsync(ids);
+        }
+        catch (Exception ex)
+        {
+            if (!StillCurrent())
+                return; // stale failures never show against a newer view
+            _log.Error("Notes could not be refreshed after editing.", ex); // no note content is logged
+            BannerMessage = "The list could not be refreshed after editing. It may be out of date; open the folder again to refresh.";
+            return; // rows, selection and preview stay as they are; nothing is treated as missing
+        }
+
+        if (!StillCurrent())
+            return;
+
+        var byId = fresh.ToDictionary(n => n.Id);
+        ProjectContentItemViewModel? select = null;
+        foreach (var id in ids)
+        {
+            var row = Items.FirstOrDefault(i => i.IsNote && i.Id == id);
+            if (byId.TryGetValue(id, out var note) && note.ProjectNodeId == ProjectNodeId && note.FolderId == CurrentFolderId)
+            {
+                if (row is null)
+                    row = InsertSorted(new ProjectContentItemViewModel(note.Summary));
+                else
+                {
+                    row.ApplyNote(note.Summary);
+                    Resort(row);
+                }
+
+                if (created.Contains(id))
+                    select = row; // the last created note that landed here
+            }
+            else if (row is not null)
+            {
+                RemoveMovedAway(row); // moved elsewhere or no longer exists; clears selection and preview if selected
+            }
+        }
+
+        if (select is not null)
+            SelectedItem = select;
+        if (SelectedItem is { IsNote: true } selected && byId.TryGetValue(selected.Id, out var current) && Items.Contains(selected))
+            ShowPreview(current);
+    }
+
+    /// <summary>Starts a versioned preview load for the selected Note; anything else clears the preview.</summary>
+    private void StartPreviewLoad()
+    {
+        InvalidatePreview();
+        if (SelectedItem is not { IsNote: true } item)
+        {
+            CurrentPreviewLoad = Task.CompletedTask;
+            return;
+        }
+
+        IsPreviewLoading = true;
+        var cts = _previewCts = new CancellationTokenSource();
+        CurrentPreviewLoad = LoadPreviewAsync(item, _previewVersion, cts.Token);
+    }
+
+    private async Task LoadPreviewAsync(ProjectContentItemViewModel item, int version, CancellationToken token)
+    {
+        try
+        {
+            var note = await _content.GetNoteAsync(item.Id, token);
+            if (version != _previewVersion || !ReferenceEquals(SelectedItem, item))
+                return; // a newer selection or a refreshed preview owns the pane
+            if (note is null)
+                PreviewMessage = "This note no longer exists.";
+            else
+                PreviewNote = note;
+        }
+        catch (Exception ex)
+        {
+            if (version != _previewVersion || !ReferenceEquals(SelectedItem, item))
+                return; // stale failures are dropped too
+            if (ex is not OperationCanceledException)
+                _log.Error("A note preview could not be loaded.", ex);
+            PreviewMessage = "The note could not be loaded.";
+        }
+        finally
+        {
+            if (version == _previewVersion)
+                IsPreviewLoading = false;
+        }
+    }
+
+    /// <summary>Shows a freshly read note; any older preview request is invalidated FIRST so it cannot overwrite this.</summary>
+    private void ShowPreview(ProjectNote note)
+    {
+        InvalidatePreview();
+        PreviewNote = note;
+        CurrentPreviewLoad = Task.CompletedTask;
+    }
+
+    private void InvalidatePreview()
+    {
+        _previewVersion++;
+        _previewCts?.Cancel();
+        _previewCts = null;
+        PreviewNote = null;
+        PreviewMessage = null;
+        IsPreviewLoading = false;
     }
 
     // ---- Link checks -------------------------------------------------------------------------------------------------
@@ -521,7 +731,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         return row;
     }
 
-    // ---- Row ordering (folders first, then links; each by name) -----------------------------------------------------
+    // ---- Row ordering (folders, then links, then notes; each by name) -----------------------------------------------
 
     private ProjectContentItemViewModel InsertSorted(ProjectContentItemViewModel item)
     {
@@ -543,12 +753,13 @@ public sealed class ProjectContentViewModel : ObservableObject
     }
 
     private static bool Precedes(ProjectContentItemViewModel a, ProjectContentItemViewModel b) =>
-        a.IsFolder != b.IsFolder ? a.IsFolder : WorkspaceNodeOrder.Instance.Compare(a.SortKey, b.SortKey) < 0;
+        a.KindRank != b.KindRank ? a.KindRank < b.KindRank : WorkspaceNodeOrder.Instance.Compare(a.SortKey, b.SortKey) < 0;
 
     private void RaiseCommands()
     {
         NewFolderCommand.RaiseCanExecuteChanged();
         NewLinkCommand.RaiseCanExecuteChanged();
+        NewNoteCommand.RaiseCanExecuteChanged();
         OpenCommand.RaiseCanExecuteChanged();
         EditCommand.RaiseCanExecuteChanged();
         MoveCommand.RaiseCanExecuteChanged();

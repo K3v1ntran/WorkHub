@@ -4,11 +4,15 @@ using WorkHub.Presentation.Mvvm;
 
 namespace WorkHub.Presentation.ViewModels;
 
-/// <summary>One row of the Project content list: a ProjectFolder or a Link. Rows are replaced/updated only after successful writes.</summary>
+/// <summary>
+/// One row of the Project content list: a ProjectFolder, a Link or a Note (summary only). Rows are replaced/updated only
+/// from persisted state.
+/// </summary>
 public sealed class ProjectContentItemViewModel : ObservableObject
 {
     private ProjectFolder? _folder;
     private ProjectLink? _link;
+    private ProjectNoteSummary? _note;
     private LinkHealthStatus _status = LinkHealthStatus.NotChecked;
     private LinkHealthStatus _statusBeforeCheck = LinkHealthStatus.NotChecked;
     private DateTimeOffset? _checkedAt;
@@ -17,26 +21,37 @@ public sealed class ProjectContentItemViewModel : ObservableObject
 
     internal ProjectContentItemViewModel(ProjectLink link) => _link = link;
 
+    internal ProjectContentItemViewModel(ProjectNoteSummary note) => _note = note;
+
     public bool IsFolder => _folder is not null;
 
     public bool IsLink => _link is not null;
 
-    public long Id => _folder?.Id ?? _link!.Id;
+    public bool IsNote => _note is not null;
 
-    public string Name => _folder?.Name ?? _link!.Name;
+    public ProjectContentItemKind Kind => IsFolder ? ProjectContentItemKind.Folder : IsLink ? ProjectContentItemKind.Link : ProjectContentItemKind.Note;
+
+    public long Id => _folder?.Id ?? _link?.Id ?? _note!.Id;
+
+    public string Name => _folder?.Name ?? _link?.Name ?? _note!.Title;
 
     /// <summary>The container this row was listed in (null = Project root): the "observed" source for Move.</summary>
-    public long? ContainerId => _folder is not null ? _folder.ParentFolderId : _link!.FolderId;
+    public long? ContainerId => _folder is not null ? _folder.ParentFolderId : _link is not null ? _link.FolderId : _note!.FolderId;
 
     public ProjectFolder? Folder => _folder;
 
     public ProjectLink? Link => _link;
 
+    public ProjectNoteSummary? Note => _note;
+
     public ProjectLinkType? LinkType => _link?.Type;
 
     public string? Target => _link?.Target;
 
-    public string KindText => _link?.Type switch
+    /// <summary>Second column: a link's target, or a note's last update time.</summary>
+    public string? DetailText => _note is { } note ? $"Updated {note.UpdatedAt.LocalDateTime:yyyy-MM-dd HH:mm}" : _link?.Target;
+
+    public string KindText => _note is not null ? "Note" : _link?.Type switch
     {
         ProjectLinkType.Web => "Web",
         ProjectLinkType.File => "File",
@@ -80,7 +95,7 @@ public sealed class ProjectContentItemViewModel : ObservableObject
     {
         get
         {
-            if (IsFolder)
+            if (!IsLink)
                 return string.Empty;
             var text = LinkHealthStatuses.DisplayName(Status);
             return CheckedAt is { } at && Status is not (LinkHealthStatus.Checking or LinkHealthStatus.NotChecked)
@@ -91,10 +106,22 @@ public sealed class ProjectContentItemViewModel : ObservableObject
 
     internal (WorkspaceNodeType, string, long) SortKey => (WorkspaceNodeType.Folder, Name, Id);
 
+    /// <summary>Display order of kinds: folders, then links, then notes.</summary>
+    internal int KindRank => (int)Kind;
+
     internal void ApplyFolder(ProjectFolder folder)
     {
         _folder = folder;
         OnPropertyChanged(nameof(Name));
+    }
+
+    /// <summary>Applies a freshly read note summary (title, revision, updated time).</summary>
+    internal void ApplyNote(ProjectNoteSummary note)
+    {
+        _note = note;
+        OnPropertyChanged(nameof(Name));
+        OnPropertyChanged(nameof(Note));
+        OnPropertyChanged(nameof(DetailText));
     }
 
     /// <summary>Applies a stored link. A Type or Target change invalidates the previous check status; a name-only edit keeps it.</summary>
@@ -105,6 +132,7 @@ public sealed class ProjectContentItemViewModel : ObservableObject
         OnPropertyChanged(nameof(Name));
         OnPropertyChanged(nameof(LinkType));
         OnPropertyChanged(nameof(Target));
+        OnPropertyChanged(nameof(DetailText));
         OnPropertyChanged(nameof(KindText));
         if (targetChanged)
             SetStatus(LinkHealthStatus.NotChecked, null);
@@ -130,4 +158,12 @@ public sealed class ProjectContentItemViewModel : ObservableObject
     }
 
     public override string ToString() => Name;
+}
+
+/// <summary>Row kinds in display order.</summary>
+public enum ProjectContentItemKind
+{
+    Folder,
+    Link,
+    Note,
 }

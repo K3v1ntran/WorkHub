@@ -69,10 +69,10 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   its subfolders, and a name clash at the destination is rejected without changing anything.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
 
-### Project content (schema v4)
+### Project content (schema v4–v5)
 
 Selecting a Project shows its **Content** below the details: one container at a time (the Project root or one project
-folder) with a breadcrumb. Project folders and links never appear in the main tree and never touch the disk.
+folder) with a breadcrumb. Project folders, links and notes never appear in the main tree and never touch the disk.
 
 - **Project folders** nest inside one Project. Names follow the Workspace rules and are unique among sibling folders.
 - **Links** point to a Folder, File (full local or UNC path) or Web page (http/https). Link names may repeat. Only
@@ -84,10 +84,18 @@ folder) with a breadcrumb. Project folders and links never appear in the main tr
   *Unreachable*, *Inaccessible*, *Timed out*, *Location busy* and *Checker busy* mean it could not be verified. At most
   four checks run at once (one per drive or server); each ends within 18 seconds. Web links are never contacted
   (*Not checked (web)*). Results are kept only until WorkHub closes.
+- **Notes** (schema v5) are plain text at the Project root or in a project folder, listed after folders and links.
+  Selecting a note shows a read-only preview below the list; Enter, double-click, Open or F2 opens the editor. Titles
+  follow the Workspace name rules (they may repeat); content may be empty, up to 100,000 characters, and is stored
+  exactly as typed (spaces, tabs and line breaks kept).
+- The note editor saves only on **Save** or **Ctrl+S** (no autosave) and stays open. Closing with unsaved changes asks
+  Save / Don't save / Cancel; a failed save never loses the text. If the note was changed or removed elsewhere, nothing
+  is overwritten: **Copy draft** puts the text on the clipboard and **Save as new note** saves it next to the original
+  (or where the note last was), never anywhere else. After the editor closes, the list re-reads the notes it touched.
 - Keyboard: Enter opens, F2 edits, Backspace or Alt+Up goes up.
 
-Not available yet: delete, Trash, Archive, notes, tags, search, drag-and-drop, manual ordering and moving content between
-projects.
+Not available yet: delete, Trash, Archive, tags, search, rich text, drag-and-drop, manual ordering, autosave and moving
+content between projects.
 
 ## Legacy XML import
 

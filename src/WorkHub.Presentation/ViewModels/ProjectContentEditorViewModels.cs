@@ -259,14 +259,14 @@ public sealed class ProjectLinkEditorViewModel : ObservableObject
 }
 
 /// <summary>
-/// "Move to…" for a ProjectFolder or Link, bound to the shared Workspace move window. The source container observed when
+/// "Move to…" for a ProjectFolder, Link or Note, bound to the shared Workspace move window. The source container observed when
 /// the dialog opened is captured once and sent unchanged with every submit (revision 3 §8.1). After a
 /// "moved meanwhile" refusal the dialog's observation is stale, so Move stays disabled.
 /// </summary>
 public sealed class ProjectContentMoveViewModel : ObservableObject
 {
     private readonly ProjectContentService _content;
-    private readonly bool _isFolder;
+    private readonly ProjectContentItemKind _kind;
     private readonly long _itemId;
     private readonly long? _observedContainerId;
     private WorkspaceMoveDestination? _selectedDestination;
@@ -275,11 +275,11 @@ public sealed class ProjectContentMoveViewModel : ObservableObject
     private bool _isStale;
 
     public ProjectContentMoveViewModel(
-        ProjectContentService content, bool isFolder, long itemId, string itemName, long? observedContainerId,
+        ProjectContentService content, ProjectContentItemKind kind, long itemId, string itemName, long? observedContainerId,
         string projectName, IEnumerable<WorkspaceFolderPath> folders)
     {
         _content = content;
-        _isFolder = isFolder;
+        _kind = kind;
         _itemId = itemId;
         _observedContainerId = observedContainerId;
         NodeName = itemName;
@@ -360,9 +360,12 @@ public sealed class ProjectContentMoveViewModel : ObservableObject
         ContentMoveResult result;
         try
         {
-            result = _isFolder
-                ? await _content.MoveFolderAsync(_itemId, _observedContainerId, destination.FolderId)
-                : await _content.MoveLinkAsync(_itemId, _observedContainerId, destination.FolderId);
+            result = _kind switch
+            {
+                ProjectContentItemKind.Folder => await _content.MoveFolderAsync(_itemId, _observedContainerId, destination.FolderId),
+                ProjectContentItemKind.Link => await _content.MoveLinkAsync(_itemId, _observedContainerId, destination.FolderId),
+                _ => await _content.MoveNoteAsync(_itemId, _observedContainerId, destination.FolderId),
+            };
         }
         catch (Exception ex)
         {

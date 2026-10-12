@@ -6,7 +6,7 @@ using WorkHub.Core.Workspace.Content;
 namespace WorkHub.Infrastructure.Persistence;
 
 /// <summary>
-/// SQLite implementation of <see cref="IProjectContentStore"/> (schema v4). Same conventions as
+/// SQLite implementation of <see cref="IProjectContentStore"/> (schema v4 folders/links, v5 notes). Same conventions as
 /// <see cref="SqliteWorkspaceStore"/>: one pooled connection per call on a worker thread, parameterized SQL, and
 /// <c>BEGIN IMMEDIATE</c> for writes whose validity depends on other rows, so the checked state is the written state.
 /// The schema's composite foreign keys, unique indexes and triggers back every rule up.
@@ -81,8 +81,31 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
                     links.Add(ReadLink(reader));
             }
 
+            var notes = new List<ProjectNoteSummary>();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = """
+                    SELECT Id, ProjectNodeId, FolderId, Title, Revision, UpdatedAt FROM ProjectNotes
+                    WHERE ProjectNodeId = $project AND FolderId IS $folder
+                    LIMIT $limit;
+                    """;
+                AddContainer(command, projectNodeId, folderId);
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    notes.Add(new ProjectNoteSummary(
+                        reader.GetInt64(0),
+                        reader.GetInt64(1),
+                        reader.IsDBNull(2) ? null : reader.GetInt64(2),
+                        reader.GetString(3),
+                        reader.GetInt64(4),
+                        ParseTime(reader.GetString(5))));
+                }
+            }
+
             transaction.Commit();
-            return ProjectContentListResult.Ok(new ProjectContentListing(projectNodeId, folderId, breadcrumb, folders, links));
+            return ProjectContentListResult.Ok(new ProjectContentListing(projectNodeId, folderId, breadcrumb, folders, links, notes));
         }, cancellationToken);
 
     public Task<ProjectFolder> CreateFolderAsync(long projectNodeId, long? parentFolderId, string name, CancellationToken cancellationToken = default) =>
@@ -198,6 +221,177 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
 
     public Task<ContentMoveOutcome> MoveLinkAsync(long linkId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
         Move("ProjectLinks", "FolderId", isFolder: false, linkId, expectedFolderId, targetFolderId, cancellationToken);
+
+    public Task<ProjectContainerPath?> GetContainerPathAsync(long projectNodeId, long? folderId, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            // One read transaction: the container check, Project name and breadcrumb come from the same snapshot.
+            using var transaction = connection.BeginTransaction(deferred: true);
+            if ((ProjectProblem(connection, transaction, projectNodeId) ?? FolderProblem(connection, transaction, projectNodeId, folderId)) is not null)
+                return null;
+
+            string projectName;
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "SELECT Name FROM WorkspaceNodes WHERE Id = $project;";
+                command.Parameters.AddWithValue("$project", projectNodeId);
+                projectName = (string)command.ExecuteScalar()!;
+            }
+
+            var breadcrumb = folderId is { } id ? ReadBreadcrumb(connection, transaction, id) : [];
+            transaction.Commit();
+            return (ProjectContainerPath?)new ProjectContainerPath(projectName, breadcrumb);
+        }, cancellationToken);
+
+    // ---- Notes ---------------------------------------------------------------------------------------------------------
+
+    public Task<ProjectNote?> GetNoteAsync(long noteId, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT {NoteColumns} FROM ProjectNotes WHERE Id = $id;";
+            command.Parameters.AddWithValue("$id", noteId);
+            return ReadSingle(command, ReadNote);
+        }, cancellationToken);
+
+    public Task<IReadOnlyList<ProjectNote>> GetNotesAsync(IReadOnlyCollection<long> noteIds, CancellationToken cancellationToken = default) =>
+        Run<IReadOnlyList<ProjectNote>>(connection =>
+        {
+            // One read transaction: every note comes from the same snapshot.
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var notes = new List<ProjectNote>();
+            foreach (var id in noteIds.Distinct())
+            {
+                using var command = connection.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = $"SELECT {NoteColumns} FROM ProjectNotes WHERE Id = $id;";
+                command.Parameters.AddWithValue("$id", id);
+                if (ReadSingle(command, ReadNote) is { } note)
+                    notes.Add(note);
+            }
+
+            transaction.Commit();
+            return notes;
+        }, cancellationToken);
+
+    public Task<ProjectNote> CreateNoteAsync(long projectNodeId, long? folderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+            RequireContainer(connection, transaction, projectNodeId, folderId);
+            var note = InsertNote(connection, transaction, projectNodeId, folderId, draft);
+            transaction.Commit();
+            return note;
+        }, cancellationToken);
+
+    public Task<NoteStoreSaveResult> SaveNoteAsync(long noteId, long expectedRevision, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+
+            // Only Title, Content, Revision and UpdatedAt: the container is never written by a save.
+            using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = $"""
+                    UPDATE ProjectNotes SET Title = $title, Content = $content, Revision = Revision + 1, UpdatedAt = $now
+                    WHERE Id = $id AND Revision = $expected
+                    RETURNING {NoteColumns};
+                    """;
+                update.Parameters.AddWithValue("$title", draft.Title!);
+                update.Parameters.AddWithValue("$content", draft.Content ?? string.Empty);
+                update.Parameters.AddWithValue("$now", Now());
+                update.Parameters.AddWithValue("$id", noteId);
+                update.Parameters.AddWithValue("$expected", expectedRevision);
+                if (ReadSingle(update, ReadNote) is { } saved)
+                {
+                    transaction.Commit();
+                    return NoteStoreSaveResult.Saved(saved);
+                }
+            }
+
+            // Nothing updated: classify inside the same write transaction (nothing can change in between).
+            using var current = connection.CreateCommand();
+            current.Transaction = transaction;
+            current.CommandText = "SELECT Revision FROM ProjectNotes WHERE Id = $id;";
+            current.Parameters.AddWithValue("$id", noteId);
+            return current.ExecuteScalar() is long revision
+                ? NoteStoreSaveResult.Conflict(revision)
+                : NoteStoreSaveResult.NotFound; // Dispose rolls back (nothing was written)
+        }, cancellationToken);
+
+    public Task<ProjectNote> SaveNoteAsNewAsync(long originalNoteId, long projectNodeId, long? lastKnownFolderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+
+            long targetProject;
+            long? targetFolder;
+            using (var original = connection.CreateCommand())
+            {
+                original.Transaction = transaction;
+                original.CommandText = "SELECT ProjectNodeId, FolderId FROM ProjectNotes WHERE Id = $id;";
+                original.Parameters.AddWithValue("$id", originalNoteId);
+                using var reader = original.ExecuteReader();
+                if (reader.Read())
+                {
+                    // 1. The original still exists: next to it, wherever it is now.
+                    targetProject = reader.GetInt64(0);
+                    targetFolder = reader.IsDBNull(1) ? null : reader.GetInt64(1);
+                }
+                else
+                {
+                    // 2. The original is gone: the editor's last-known container, only if it still exists (no root fallback).
+                    targetProject = projectNodeId;
+                    targetFolder = lastKnownFolderId;
+                }
+            }
+
+            RequireContainer(connection, transaction, targetProject, targetFolder); // 3. otherwise refuse
+            var note = InsertNote(connection, transaction, targetProject, targetFolder, draft);
+            transaction.Commit();
+            return note;
+        }, cancellationToken);
+
+    public Task<ContentMoveOutcome> MoveNoteAsync(long noteId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
+        Move("ProjectNotes", "FolderId", isFolder: false, noteId, expectedFolderId, targetFolderId, cancellationToken);
+
+    private ProjectNote InsertNote(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId, long? folderId, ProjectNoteDraft draft)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            INSERT INTO ProjectNotes (ProjectNodeId, FolderId, Title, Content, Revision, CreatedAt, UpdatedAt)
+            VALUES ($project, $folder, $title, $content, 1, $now, $now)
+            RETURNING {NoteColumns};
+            """;
+        command.Parameters.AddWithValue("$project", projectNodeId);
+        command.Parameters.AddWithValue("$folder", (object?)folderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$title", draft.Title!);
+        command.Parameters.AddWithValue("$content", draft.Content ?? string.Empty);
+        command.Parameters.AddWithValue("$now", Now());
+        try
+        {
+            return ReadSingle(command, ReadNote)!;
+        }
+        catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteConstraintForeignKey)
+        {
+            throw new ContentContainerException(ContentContainerProblem.FolderNotFound, ex); // defense in depth
+        }
+    }
+
+    private const string NoteColumns = "Id, ProjectNodeId, FolderId, Title, Content, Revision, CreatedAt, UpdatedAt";
+
+    private static ProjectNote ReadNote(SqliteDataReader reader) => new(
+        reader.GetInt64(0),
+        reader.GetInt64(1),
+        reader.IsDBNull(2) ? null : reader.GetInt64(2),
+        reader.GetString(3),
+        reader.GetString(4),
+        reader.GetInt64(5),
+        ParseTime(reader.GetString(6)),
+        ParseTime(reader.GetString(7)));
 
     /// <summary>
     /// Revision 3 §8.1, in ONE <c>BEGIN IMMEDIATE</c> transaction (the write lock is taken first, so the validated state

@@ -56,6 +56,26 @@ internal sealed class FakeDialogs : IDialogService
 
     public bool ShowProjectContentMove(ProjectContentMoveViewModel viewModel) => OnProjectContentMove(viewModel);
 
+    /// <summary>Plays the note editor. The default closes it through the normal gate (RequestClose).</summary>
+    public Func<NoteEditorViewModel, bool> OnNoteEditor { get; set; } = editor =>
+    {
+        editor.RequestClose();
+        return editor.SavedAny;
+    };
+
+    public bool ShowNoteEditor(NoteEditorViewModel viewModel) => OnNoteEditor(viewModel);
+
+    /// <summary>What the unsaved-changes prompt answers (default: Cancel, as when the prompt window is closed).</summary>
+    public Func<string, UnsavedChangesChoice> OnUnsavedChanges { get; set; } = _ => UnsavedChangesChoice.Cancel;
+
+    public int UnsavedChangesPrompts { get; private set; }
+
+    public UnsavedChangesChoice AskUnsavedChanges(string title, string message)
+    {
+        UnsavedChangesPrompts++;
+        return OnUnsavedChanges(message);
+    }
+
     public bool Confirm(string title, string message, string confirmText)
     {
         Confirmations.Add((title, message, confirmText));

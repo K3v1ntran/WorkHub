@@ -23,6 +23,7 @@
         </Style>
 
         <views:DepthToIndentConverter x:Key="WorkspaceIndent" Indent="18" />
+        <views:FractionConverter x:Key="PreviewMaxHeight" Fraction="0.4" />
 
         <!-- Workspace tree chevron (replaces the default triangle). -->
         <Style x:Key="WorkspaceTreeExpander" TargetType="ToggleButton">
@@ -883,9 +884,15 @@
                                     <TextBlock Margin="6,0,0,0" Text="Link" />
                                 </StackPanel>
                             </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewNoteCommand}" AutomationProperties.Name="New note" ToolTip="New plain-text note">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE70B;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Note" />
+                                </StackPanel>
+                            </Button>
                             <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}" AutomationProperties.Name="Open" ToolTip="Open (Enter)" Content="Open" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding EditCommand}" AutomationProperties.Name="Edit content item" ToolTip="Rename folder / edit link (F2)" Content="Edit…" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding EditCommand}" AutomationProperties.Name="Edit content item" ToolTip="Rename folder / edit link / edit note (F2)" Content="Edit…" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move content item" ToolTip="Move within this project" Content="Move to…" />
                             <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding CheckCommand}" AutomationProperties.Name="Check link" ToolTip="Check whether the selected link's folder or file can be found" Content="Check" />
@@ -911,6 +918,12 @@
                             </DockPanel>
                         </Border>
 
+                        <!-- List (fills) above the read-only Note preview (only for a selected Note, at most 40 % of this area). -->
+                        <Grid x:Name="ContentArea">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
                         <Grid>
                             <ListView x:Name="ContentList" ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}"
                                       BorderThickness="0" Background="Transparent" AutomationProperties.Name="Project content"
@@ -936,7 +949,7 @@
                                             <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" VerticalAlignment="Center" />
                                             <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
-                                                       Text="{Binding Target}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Target}" />
+                                                       Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DetailText}" />
                                             <TextBlock x:Name="Status" Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding StatusText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding StatusText}"
                                                        AutomationProperties.AutomationId="LinkStatus" />
                                         </Grid>
@@ -952,6 +965,10 @@
                                             <DataTrigger Binding="{Binding KindText}" Value="Folder link">
                                                 <Setter TargetName="Glyph" Property="Text" Value="&#xE838;" />
                                                 <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding KindText}" Value="Note">
+                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE70B;" />
+                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.MutedText}" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsStatusUnverified}" Value="True">
                                                 <Setter TargetName="Status" Property="Foreground" Value="{StaticResource Brush.Warning}" />
@@ -971,6 +988,7 @@
                                         <Separator />
                                         <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}" />
                                         <MenuItem Header="New Link…" Command="{Binding NewLinkCommand}" />
+                                        <MenuItem Header="New Note…" Command="{Binding NewNoteCommand}" />
                                         <Separator />
                                         <MenuItem Header="Check all" Command="{Binding CheckAllCommand}" />
                                         <MenuItem Header="Stop checking" Command="{Binding StopCheckingCommand}" />
@@ -978,7 +996,7 @@
                                 </ListView.ContextMenu>
                             </ListView>
 
-                            <TextBlock Style="{StaticResource EmptyState}" Text="This folder is empty. Add a folder or link."
+                            <TextBlock Style="{StaticResource EmptyState}" Text="This folder is empty. Add a folder, link or note."
                                        Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="ContentEmpty" />
                             <TextBlock Style="{StaticResource EmptyState}" Text="Loading content…"
                                        Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
@@ -1009,6 +1027,29 @@
                                 <Button Margin="0,8,0,0" HorizontalAlignment="Center" Content="Go to project root" Command="{Binding GoUpCommand}"
                                         Visibility="{Binding IsFolderMissing, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Go to project root" />
                             </StackPanel>
+                        </Grid>
+
+                        <Border Grid.Row="1" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0" Padding="0,8,0,0"
+                                MaxHeight="{Binding ActualHeight, ElementName=ContentArea, Converter={StaticResource PreviewMaxHeight}}"
+                                Visibility="{Binding IsPreviewVisible, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Note preview">
+                            <DockPanel>
+                                <DockPanel DockPanel.Dock="Top">
+                                    <Button DockPanel.Dock="Right" Content="Edit…" Command="{Binding EditCommand}" AutomationProperties.Name="Edit note" />
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="{Binding PreviewNote.Title}" AutomationProperties.AutomationId="PreviewTitle" />
+                                        <TextBlock Style="{StaticResource FieldHint}" Text="{Binding PreviewUpdatedText}" AutomationProperties.AutomationId="PreviewUpdated" />
+                                    </StackPanel>
+                                </DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Text="Loading note…"
+                                           Visibility="{Binding IsPreviewLoading, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock DockPanel.Dock="Top" Foreground="{StaticResource Brush.MutedText}" TextWrapping="Wrap" Text="{Binding PreviewMessage}"
+                                           AutomationProperties.AutomationId="PreviewMessage" />
+                                <TextBox Margin="0,6,0,0" IsReadOnly="True" BorderThickness="0" Background="Transparent" Padding="0"
+                                         Text="{Binding PreviewNote.Content, Mode=OneWay}" TextWrapping="Wrap" AcceptsReturn="True"
+                                         VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" IsTabStop="False"
+                                         AutomationProperties.Name="Note preview text" />
+                            </DockPanel>
+                        </Border>
                         </Grid>
                     </DockPanel>
                     </Grid>

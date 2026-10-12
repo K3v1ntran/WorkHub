@@ -56,13 +56,21 @@ public sealed record ProjectLinkDraft(string? Name, ProjectLinkType Type, string
 /// <summary>One step of the path from the Project root to a ProjectFolder (root first).</summary>
 public sealed record ProjectFolderCrumb(long Id, string Name);
 
-/// <summary>The direct contents of one container (Project root or one ProjectFolder).</summary>
+/// <summary>Where a container is: the Project's name and the folder path below it (root first; empty = Project root).</summary>
+public sealed record ProjectContainerPath(string ProjectName, IReadOnlyList<ProjectFolderCrumb> Folders)
+{
+    /// <summary>"Alpha Portal › Specs", the same form as the Content breadcrumb.</summary>
+    public string Display => string.Join(" › ", Folders.Select(f => f.Name).Prepend(ProjectName));
+}
+
+/// <summary>The direct contents of one container (Project root or one ProjectFolder): folders, links and note summaries.</summary>
 public sealed record ProjectContentListing(
     long ProjectNodeId,
     long? FolderId,
     IReadOnlyList<ProjectFolderCrumb> Breadcrumb,
     IReadOnlyList<ProjectFolder> Folders,
-    IReadOnlyList<ProjectLink> Links);
+    IReadOnlyList<ProjectLink> Links,
+    IReadOnlyList<ProjectNoteSummary> Notes);
 
 public enum ContentContainerProblem
 {

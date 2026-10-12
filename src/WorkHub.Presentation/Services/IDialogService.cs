@@ -41,6 +41,17 @@ public interface IDialogService
     /// <returns>True when the move was confirmed (see <see cref="ProjectContentMoveViewModel.Moved"/>).</returns>
     bool ShowProjectContentMove(ProjectContentMoveViewModel viewModel);
 
+    /// <summary>
+    /// Shows the modal Note editor. Every close path (Close, Esc, title-bar X, Alt+F4, system menu, owner close) must go
+    /// through <see cref="NoteEditorViewModel.RequestClose"/>; the window closes only once the view model approves.
+    /// </summary>
+    /// <returns>True when something was persisted during this editor session. Callers must NOT use it to decide whether to
+    /// reconcile (see <see cref="NoteEditorViewModel.TouchedNoteIds"/>).</returns>
+    bool ShowNoteEditor(NoteEditorViewModel viewModel);
+
+    /// <summary>Save / Don't save / Cancel prompt. Closing the prompt window means <see cref="UnsavedChangesChoice.Cancel"/>.</summary>
+    UnsavedChangesChoice AskUnsavedChanges(string title, string message);
+
     /// <summary>Confirmation with an explicit action button (e.g. "Delete"). Cancel is the default button.</summary>
     bool Confirm(string title, string message, string confirmText);
 
@@ -53,4 +64,11 @@ public interface IDialogService
     string? PickFolder(string title, string? initialPath);
 
     void CopyToClipboard(string text);
+}
+
+public enum UnsavedChangesChoice
+{
+    Save,
+    Discard,
+    Cancel,
 }

@@ -20,6 +20,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         {
             Folders = listing.Folders.OrderBy(f => (WorkspaceNodeType.Folder, f.Name, f.Id), WorkspaceNodeOrder.Instance).ToList(),
             Links = listing.Links.OrderBy(l => (WorkspaceNodeType.Folder, l.Name, l.Id), WorkspaceNodeOrder.Instance).ToList(),
+            Notes = listing.Notes.OrderBy(n => (WorkspaceNodeType.Folder, n.Title, n.Id), WorkspaceNodeOrder.Instance).ToList(),
         });
     }
 
@@ -86,6 +87,10 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
             : WorkspaceResult<ProjectLink>.Failed(LinkNoLongerExists);
     }
 
+    /// <summary>The logical location of a container ("Project › Folder › …"); null when it no longer exists.</summary>
+    public Task<ProjectContainerPath?> GetContainerPathAsync(long projectNodeId, long? folderId, CancellationToken cancellationToken = default) =>
+        store.GetContainerPathAsync(projectNodeId, folderId, cancellationToken);
+
     /// <summary>Folders a folder (or a link, when <paramref name="movingFolderId"/> is null) may move into, sorted by path.</summary>
     public async Task<IReadOnlyList<WorkspaceFolderPath>> ListFolderMoveTargetsAsync(long projectNodeId, long? movingFolderId, CancellationToken cancellationToken = default)
     {
@@ -100,6 +105,76 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
     /// <param name="expectedFolderId">The link's container as observed when the Move dialog opened (null = Project root).</param>
     public async Task<ContentMoveResult> MoveLinkAsync(long linkId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
         Describe(await store.MoveLinkAsync(linkId, expectedFolderId, targetFolderId, cancellationToken).ConfigureAwait(false));
+
+    // ---- Notes ---------------------------------------------------------------------------------------------------------
+
+    public Task<ProjectNote?> GetNoteAsync(long noteId, CancellationToken cancellationToken = default) =>
+        store.GetNoteAsync(noteId, cancellationToken);
+
+    /// <summary>Latest persisted state of the given notes from one read snapshot; absent notes no longer exist.</summary>
+    public Task<IReadOnlyList<ProjectNote>> GetNotesAsync(IReadOnlyCollection<long> noteIds, CancellationToken cancellationToken = default) =>
+        noteIds.Count == 0 ? Task.FromResult<IReadOnlyList<ProjectNote>>([]) : store.GetNotesAsync(noteIds, cancellationToken);
+
+    public async Task<NoteWriteResult> CreateNoteAsync(long projectNodeId, long? folderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default)
+    {
+        if (Invalid(draft, out var normalized) is { } invalid)
+            return invalid;
+
+        try
+        {
+            return NoteWriteResult.Ok(await store.CreateNoteAsync(projectNodeId, folderId, normalized!, cancellationToken).ConfigureAwait(false));
+        }
+        catch (ContentContainerException ex)
+        {
+            return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, ex.Problem == ContentContainerProblem.ProjectNotFound
+                ? "This project no longer exists. Your text is unchanged here."
+                : "The folder for this note no longer exists. Your text is unchanged here.");
+        }
+    }
+
+    /// <summary>Saves Title/Content for the revision the editor holds. Never writes the note's container.</summary>
+    public async Task<NoteWriteResult> SaveNoteAsync(long noteId, long expectedRevision, ProjectNoteDraft draft, CancellationToken cancellationToken = default)
+    {
+        if (Invalid(draft, out var normalized) is { } invalid)
+            return invalid;
+
+        var result = await store.SaveNoteAsync(noteId, expectedRevision, normalized!, cancellationToken).ConfigureAwait(false);
+        return result.Status switch
+        {
+            NoteSaveStatus.Saved => NoteWriteResult.Ok(result.Note!),
+            NoteSaveStatus.Conflict => NoteWriteResult.Failed(NoteWriteStatus.Conflict,
+                $"This note was changed elsewhere since you opened it (now revision {result.CurrentRevision}). Your text is unchanged here.",
+                currentRevision: result.CurrentRevision),
+            _ => NoteWriteResult.Failed(NoteWriteStatus.NotFound, "This note no longer exists. Your text is unchanged here."),
+        };
+    }
+
+    /// <summary>Recovery after Conflict/NotFound: inserts the draft as a new note (Phase 5B proposal §6.2 destination rules).</summary>
+    public async Task<NoteWriteResult> SaveNoteAsNewAsync(long originalNoteId, long projectNodeId, long? lastKnownFolderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default)
+    {
+        if (Invalid(draft, out var normalized) is { } invalid)
+            return invalid;
+
+        try
+        {
+            return NoteWriteResult.Ok(await store.SaveNoteAsNewAsync(originalNoteId, projectNodeId, lastKnownFolderId, normalized!, cancellationToken).ConfigureAwait(false));
+        }
+        catch (ContentContainerException)
+        {
+            return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, "The note's location no longer exists. Copy your text instead.");
+        }
+    }
+
+    /// <param name="expectedFolderId">The note's container as observed when the Move dialog opened (null = Project root).</param>
+    public async Task<ContentMoveResult> MoveNoteAsync(long noteId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
+        Describe(await store.MoveNoteAsync(noteId, expectedFolderId, targetFolderId, cancellationToken).ConfigureAwait(false));
+
+    private static NoteWriteResult? Invalid(ProjectNoteDraft draft, out ProjectNoteDraft? normalized)
+    {
+        var (valid, field, error) = ProjectNoteValidator.Validate(draft);
+        normalized = valid;
+        return valid is null ? NoteWriteResult.Failed(NoteWriteStatus.Invalid, error!, field) : null;
+    }
 
     /// <summary>Re-reads the link and opens its stored target off the caller's thread. Never modifies the target.</summary>
     public async Task<ProjectLinkOpenResult> OpenLinkAsync(long linkId, CancellationToken cancellationToken = default)

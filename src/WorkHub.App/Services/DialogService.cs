@@ -97,6 +97,22 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
+    public bool ShowNoteEditor(NoteEditorViewModel viewModel)
+    {
+        // The window cancels every close until the view model approves (see NoteEditorWindow.OnClosing).
+        var window = new NoteEditorWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, savedAny) => window.DialogResult = savedAny;
+        window.ShowDialog();
+        return viewModel.SavedAny;
+    }
+
+    public UnsavedChangesChoice AskUnsavedChanges(string title, string message)
+    {
+        var window = new UnsavedChangesWindow(title, message) { Owner = ActiveWindow() };
+        window.ShowDialog();
+        return window.Choice; // closed with X / Esc / Cancel: Cancel
+    }
+
     public bool Confirm(string title, string message, string confirmText) =>
         new ConfirmWindow(title, message, confirmText) { Owner = ActiveWindow() }.ShowDialog() == true;
 

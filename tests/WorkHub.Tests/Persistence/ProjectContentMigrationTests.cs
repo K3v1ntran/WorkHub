@@ -80,9 +80,9 @@ public sealed class ProjectContentMigrationTests : IDisposable
         var result = _root.CreateInitializer().Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(4, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         using var connection = _root.Open();
-        Assert.Equal(4, Db.ScalarLong(connection, "PRAGMA user_version;"));
+        Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
         Assert.Equal(
             ["Id", "ProjectNodeId", "ParentFolderId", "Name", "NameKey", "CreatedAt", "UpdatedAt"],
             Names(connection, "SELECT name FROM pragma_table_info('ProjectFolders') ORDER BY cid;"));
@@ -121,7 +121,7 @@ public sealed class ProjectContentMigrationTests : IDisposable
         Assert.Contains("CONSTRAINT FK_ProjectLinks_Folder", V004_ProjectContent.Sql);
         Assert.DoesNotContain("ProjectNotes", V004_ProjectContent.Sql);
         Assert.DoesNotContain("CASCADE", V004_ProjectContent.Sql);
-        Assert.Equal([1, 2, 3, 4], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5], SchemaMigrations.All.Select(m => m.Version));
     }
 
     [Fact]
@@ -142,10 +142,10 @@ public sealed class ProjectContentMigrationTests : IDisposable
 
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Database.Outcome);
         Assert.Equal(3, result.Database.PreviousSchemaVersion);
-        Assert.Equal(4, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         using (var connection = _root.Open())
         {
-            Assert.Equal(4, Db.ScalarLong(connection, "PRAGMA user_version;"));
+            Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
             Assert.Equal(beforeData, DataSnapshot(connection)); // every pre-existing row unchanged; no seed into an existing database
             var afterSchema = SchemaSnapshot(connection);
             Assert.All(beforeSchema, entry => Assert.Contains(entry, afterSchema)); // every v3 object unchanged
@@ -155,7 +155,7 @@ public sealed class ProjectContentMigrationTests : IDisposable
         // The validated pre-migration copy is the untouched v3 database.
         var backupFile = result.Database.MigrationBackupFile!;
         Assert.StartsWith(_root.Paths.MigrationBackupsDirectory, backupFile);
-        Assert.Contains("_v3_before_v4_", Path.GetFileName(backupFile));
+        Assert.Contains($"_v3_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(backupFile));
         using var backup = new SqliteConnection($"Data Source={backupFile};Mode=ReadOnly;Pooling=False");
         backup.Open();
         Assert.Equal(3, Db.ScalarLong(backup, "PRAGMA user_version;"));
@@ -237,7 +237,7 @@ public sealed class ProjectContentMigrationTests : IDisposable
 
     private List<string> AssertValidatedBackups(List<string> beforeData, List<string> beforeSchema, int expectedCount)
     {
-        var backups = Directory.GetFiles(_root.Paths.MigrationBackupsDirectory, "workhub_v3_before_v4_*.db").Order().ToList();
+        var backups = Directory.GetFiles(_root.Paths.MigrationBackupsDirectory, $"workhub_v3_before_v{SchemaMigrations.LatestVersion}_*.db").Order().ToList();
         Assert.Equal(expectedCount, backups.Count);
         foreach (var file in backups)
         {
