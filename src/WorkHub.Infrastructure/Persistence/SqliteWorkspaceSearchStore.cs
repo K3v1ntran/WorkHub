@@ -148,7 +148,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
             using (var command = connection.CreateCommand())
             {
                 command.Transaction = transaction;
-                command.CommandText = "SELECT Id, ProjectNodeId, FolderId, Name, Target FROM ProjectLinks;";
+                command.CommandText = "SELECT Id, ProjectNodeId, FolderId, Name, Target FROM ProjectLinks WHERE TrashEntryId IS NULL;";
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
@@ -171,7 +171,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                 command.CommandText = """
                     SELECT Id, ProjectNodeId, FolderId, Title, TitleMask,
                            CASE WHEN TitleMask = $all THEN 0 ELSE wh_mask(Content) END
-                    FROM (SELECT Id, ProjectNodeId, FolderId, Title, Content, wh_mask(Title) AS TitleMask FROM ProjectNotes);
+                    FROM (SELECT Id, ProjectNodeId, FolderId, Title, Content, wh_mask(Title) AS TitleMask FROM ProjectNotes WHERE TrashEntryId IS NULL);
                     """;
                 command.Parameters.AddWithValue("$all", all);
                 using var reader = command.ExecuteReader();
@@ -295,7 +295,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT Id, ProjectNodeId, ParentFolderId, Name, NameKey FROM ProjectFolders;";
+        // Active folders only: trashed folders are never candidates, and an active item never has a trashed ancestor.
+        command.CommandText = "SELECT Id, ProjectNodeId, ParentFolderId, Name, NameKey FROM ProjectFolders WHERE TrashEntryId IS NULL;";
         using var reader = command.ExecuteReader();
         var folders = new Dictionary<long, FolderRow>();
         while (reader.Read())
@@ -348,9 +349,9 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     // ONLY the table of the item's kind: Folder, Link and Note Ids are independent.
                     var sql = item.Kind switch
                     {
-                        SearchResultKind.ProjectFolder => "SELECT ProjectNodeId, ParentFolderId FROM ProjectFolders WHERE Id = $id;",
-                        SearchResultKind.Link => "SELECT ProjectNodeId, FolderId FROM ProjectLinks WHERE Id = $id;",
-                        SearchResultKind.Note => "SELECT ProjectNodeId, FolderId FROM ProjectNotes WHERE Id = $id;",
+                        SearchResultKind.ProjectFolder => "SELECT ProjectNodeId, ParentFolderId, TrashEntryId IS NOT NULL FROM ProjectFolders WHERE Id = $id;",
+                        SearchResultKind.Link => "SELECT ProjectNodeId, FolderId, TrashEntryId IS NOT NULL FROM ProjectLinks WHERE Id = $id;",
+                        SearchResultKind.Note => "SELECT ProjectNodeId, FolderId, TrashEntryId IS NOT NULL FROM ProjectNotes WHERE Id = $id;",
                         _ => throw new ArgumentOutOfRangeException(nameof(item), item.Kind, null),
                     };
                     using var command = connection.CreateCommand();
@@ -360,6 +361,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     using var reader = command.ExecuteReader();
                     if (!reader.Read())
                         return RevealResolution.NotFound;
+                    if (reader.GetInt64(2) == 1)
+                        return RevealResolution.Trashed; // never revealed; the hit is removed by (Kind, Id)
                     workspaceNodeId = reader.GetInt64(0);
                     content = new ContentRevealTarget(workspaceNodeId, NullableInt64(reader, 1), item.Kind, item.Id);
                     break;

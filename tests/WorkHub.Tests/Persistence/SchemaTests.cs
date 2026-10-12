@@ -25,14 +25,14 @@ public sealed class SchemaTests : IDisposable
     [Fact]
     public void SchemaVersion_IsStoredInUserVersion()
     {
-        Assert.Equal(5, SchemaMigrations.LatestVersion);
+        Assert.Equal(6, SchemaMigrations.LatestVersion);
         Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(_connection, "PRAGMA user_version;"));
     }
 
     [Fact]
     public void Schema_HasExactlyTheExpectedTables()
     {
-        Assert.Equal(["OwnerGroups", "OwnerItems", "ProjectFolders", "ProjectLinks", "ProjectNotes", "Projects", "SystemRepositories", "Systems", "WorkspaceNodes"], Db.UserTables(_connection));
+        Assert.Equal(["OwnerGroups", "OwnerItems", "ProjectFolders", "ProjectLinks", "ProjectNotes", "ProjectTrashEntries", "Projects", "SystemRepositories", "Systems", "WorkspaceNodes"], Db.UserTables(_connection));
     }
 
     [Fact]

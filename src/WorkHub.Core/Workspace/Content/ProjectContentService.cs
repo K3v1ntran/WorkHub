@@ -1,7 +1,7 @@
 namespace WorkHub.Core.Workspace.Content;
 
 /// <summary>
-/// Project content use cases (ProjectFolders and Links). The UI calls only this; it never touches SQL.
+/// Project content use cases (ProjectFolders, Links, Notes and their Trash). The UI calls only this; it never touches SQL.
 /// Content is WorkHub metadata: creating, renaming, editing or moving a ProjectFolder or Link never creates, moves,
 /// renames or deletes anything on disk, and opening a Link only hands its target to Windows.
 /// </summary>
@@ -58,6 +58,10 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         {
             return WorkspaceResult<ProjectFolder>.Failed(DuplicateFolderName(normalized), NameField);
         }
+        catch (ContentTrashedException)
+        {
+            return WorkspaceResult<ProjectFolder>.Failed(ItemInTrash);
+        }
     }
 
     public async Task<WorkspaceResult<ProjectLink>> CreateLinkAsync(long projectNodeId, long? folderId, ProjectLinkDraft draft, CancellationToken cancellationToken = default)
@@ -82,9 +86,16 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         if (normalized is null)
             return WorkspaceResult<ProjectLink>.Failed(error!, field);
 
-        return await store.UpdateLinkAsync(linkId, normalized, cancellationToken).ConfigureAwait(false) is { } saved
-            ? WorkspaceResult<ProjectLink>.Ok(saved)
-            : WorkspaceResult<ProjectLink>.Failed(LinkNoLongerExists);
+        try
+        {
+            return await store.UpdateLinkAsync(linkId, normalized, cancellationToken).ConfigureAwait(false) is { } saved
+                ? WorkspaceResult<ProjectLink>.Ok(saved)
+                : WorkspaceResult<ProjectLink>.Failed(LinkNoLongerExists);
+        }
+        catch (ContentTrashedException)
+        {
+            return WorkspaceResult<ProjectLink>.Failed(ItemInTrash);
+        }
     }
 
     /// <summary>The logical location of a container ("Project › Folder › …"); null when it no longer exists.</summary>
@@ -126,9 +137,12 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         }
         catch (ContentContainerException ex)
         {
-            return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, ex.Problem == ContentContainerProblem.ProjectNotFound
-                ? "This project no longer exists. Your text is unchanged here."
-                : "The folder for this note no longer exists. Your text is unchanged here.");
+            return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, ex.Problem switch
+            {
+                ContentContainerProblem.ProjectNotFound => "This project no longer exists. Your text is unchanged here.",
+                ContentContainerProblem.FolderTrashed => "The folder for this note is in the Trash. Your text is unchanged here.",
+                _ => "The folder for this note no longer exists. Your text is unchanged here.",
+            });
         }
     }
 
@@ -145,6 +159,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
             NoteSaveStatus.Conflict => NoteWriteResult.Failed(NoteWriteStatus.Conflict,
                 $"This note was changed elsewhere since you opened it (now revision {result.CurrentRevision}). Your text is unchanged here.",
                 currentRevision: result.CurrentRevision),
+            NoteSaveStatus.Trashed => NoteWriteResult.Failed(NoteWriteStatus.Trashed, "This note is in the Trash. Your text is unchanged here."),
             _ => NoteWriteResult.Failed(NoteWriteStatus.NotFound, "This note no longer exists. Your text is unchanged here."),
         };
     }
@@ -159,9 +174,11 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         {
             return NoteWriteResult.Ok(await store.SaveNoteAsNewAsync(originalNoteId, projectNodeId, lastKnownFolderId, normalized!, cancellationToken).ConfigureAwait(false));
         }
-        catch (ContentContainerException)
+        catch (ContentContainerException ex)
         {
-            return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, "The note's location no longer exists. Copy your text instead.");
+            return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, ex.Problem == ContentContainerProblem.FolderTrashed
+                ? "The note's location is in the Trash. Copy your text instead."
+                : "The note's location no longer exists. Copy your text instead.");
         }
     }
 
@@ -176,17 +193,84 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         return valid is null ? NoteWriteResult.Failed(NoteWriteStatus.Invalid, error!, field) : null;
     }
 
+    /// <summary>The link, active or trashed (<see cref="ProjectLink.IsTrashed"/>); null when it no longer exists.</summary>
+    public Task<ProjectLink?> GetLinkAsync(long linkId, CancellationToken cancellationToken = default) =>
+        store.GetLinkAsync(linkId, cancellationToken);
+
     /// <summary>Re-reads the link and opens its stored target off the caller's thread. Never modifies the target.</summary>
     public async Task<ProjectLinkOpenResult> OpenLinkAsync(long linkId, CancellationToken cancellationToken = default)
     {
         var link = await store.GetLinkAsync(linkId, cancellationToken).ConfigureAwait(false);
         if (link is null)
             return new ProjectLinkOpenResult(ProjectLinkOpenProblem.LinkNotFound, LinkNoLongerExists);
+        if (link.IsTrashed)
+            return new ProjectLinkOpenResult(ProjectLinkOpenProblem.LinkTrashed, LinkInTrash);
         return await Task.Run(() => launcher.Launch(link), cancellationToken).ConfigureAwait(false);
     }
 
+    // ---- Trash (schema v6) ---------------------------------------------------------------------------------------------
+
+    /// <summary>Snapshot for the confirmation text only; the Trash itself acts on the item as it is when it writes (T11).</summary>
+    /// <summary>Where the item is now and whether it is in the Trash (null = it no longer exists).</summary>
+    public Task<ContentState?> GetContentStateAsync(ContentRef item, CancellationToken cancellationToken = default) =>
+        store.GetContentStateAsync(item, cancellationToken);
+
+    public Task<TrashCount> CountTrashSetAsync(ContentRef item, CancellationToken cancellationToken = default) =>
+        store.CountTrashSetAsync(item, cancellationToken);
+
+    /// <summary>
+    /// Moves the item (a folder with its current active subtree) to the Trash. Only WorkHub metadata changes: nothing on disk
+    /// is moved, renamed or deleted. The result's entry carries the ACTUAL item count.
+    /// </summary>
+    public async Task<TrashResult> TrashAsync(ContentRef item, CancellationToken cancellationToken = default)
+    {
+        var result = await store.TrashAsync(item, cancellationToken).ConfigureAwait(false);
+        return result with
+        {
+            Error = result.Outcome switch
+            {
+                TrashOutcome.Trashed => null,
+                TrashOutcome.NotFound => "This item no longer exists.",
+                TrashOutcome.AlreadyTrashed => "This item is already in the Trash.",
+                _ => TrashFailed,
+            },
+        };
+    }
+
+    /// <summary>The Project's Trash, newest first.</summary>
+    public Task<IReadOnlyList<TrashEntry>> ListTrashAsync(long projectNodeId, CancellationToken cancellationToken = default) =>
+        store.ListTrashAsync(projectNodeId, cancellationToken);
+
+    /// <summary>Restores one entry to the container it came from (by Id, wherever it is now); refusals change nothing.</summary>
+    public async Task<RestoreResult> RestoreAsync(long entryId, CancellationToken cancellationToken = default)
+    {
+        var result = await store.RestoreAsync(entryId, cancellationToken).ConfigureAwait(false);
+        return result with
+        {
+            Error = result.Outcome switch
+            {
+                RestoreOutcome.Restored => null,
+                RestoreOutcome.EntryNotFound => "This item is no longer in the Trash (it may have been restored in another window).",
+                RestoreOutcome.ContainerTrashed => result.BlockingName is { Length: > 0 } blocker
+                    ? $"The folder it came from is in the Trash. Restore “{blocker}” first."
+                    : "The folder it came from is in the Trash. Restore that folder first.",
+                RestoreOutcome.ContainerMissing => "The folder it came from no longer exists. The item is still in the Trash.",
+                RestoreOutcome.NameConflict => "A folder with the same name already exists where it came from. Nothing was renamed; the item is still in the Trash.",
+                _ => RestoreFailed,
+            },
+        };
+    }
+
+    /// <summary>Unexpected Trash failure (database busy, I/O): nothing was written.</summary>
+    public const string TrashFailed = "Could not move to the Trash. Nothing was changed.";
+
+    /// <summary>Unexpected Restore failure: the entry and its items are exactly as before.</summary>
+    public const string RestoreFailed = "Could not restore. The item is still in the Trash.";
+
     private const string FolderNoLongerExists = "This folder no longer exists.";
     private const string LinkNoLongerExists = "This link no longer exists.";
+    private const string LinkInTrash = "This link is in the Trash.";
+    private const string ItemInTrash = "This item is in the Trash.";
 
     private static string DuplicateFolderName(string name) =>
         $"A folder named '{name}' already exists here (names are compared ignoring case and width).";
@@ -195,6 +279,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
     {
         ContentContainerProblem.ProjectNotFound => "This project no longer exists.",
         ContentContainerProblem.WrongProject => "The destination folder belongs to another project.",
+        ContentContainerProblem.FolderTrashed => "The destination folder is in the Trash.",
         _ => "The destination folder no longer exists.",
     };
 
@@ -202,6 +287,8 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
     {
         ContentMoveOutcome.Moved or ContentMoveOutcome.AlreadyThere => null,
         ContentMoveOutcome.NotFound => "This item no longer exists.",
+        ContentMoveOutcome.ItemTrashed => ItemInTrash,
+        ContentMoveOutcome.DestinationTrashed => "The destination folder is in the Trash.",
         ContentMoveOutcome.MovedMeanwhile => "This item was moved meanwhile. Nothing was moved; close this window to see where it is now.",
         ContentMoveOutcome.DestinationNotFound => "The destination folder no longer exists.",
         ContentMoveOutcome.WrongProject => "The destination folder belongs to another project.",

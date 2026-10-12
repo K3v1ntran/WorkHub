@@ -547,7 +547,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// <item>takes a reveal version and the branch stamps of every cached collection;</item>
     /// <item>resolves through the bounded runner (one running + newest pending) — one read snapshot of the ancestor chain
     /// and every branch on it;</item>
-    /// <item>gives up silently if the version moved on; NotFound is reported;</item>
+    /// <item>gives up silently if the version moved on; NotFound and Trashed are reported;</item>
     /// <item>if a branch on the path changed locally during the read, or a lazy load of one is still in flight, retries
     /// once; a second time reports <see cref="WorkspaceRevealOutcome.WorkspaceChanged"/> and changes nothing;</item>
     /// <item>applies the snapshot synchronously (no await) to the path branches only, expands the ancestors and selects the
@@ -583,6 +583,8 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
             if (outcome.Value!.Status == RevealResolveStatus.NotFound)
                 return WorkspaceRevealOutcome.NotFound;
+            if (outcome.Value.Status == RevealResolveStatus.Trashed)
+                return WorkspaceRevealOutcome.Trashed;
 
             var candidate = outcome.Value.Target!;
             var pendingLoads = PathNodes(candidate).Select(n => n.ChildrenLoad).OfType<Task<bool>>().ToList();

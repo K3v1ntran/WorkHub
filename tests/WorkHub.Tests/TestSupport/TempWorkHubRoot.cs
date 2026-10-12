@@ -36,7 +36,18 @@ public sealed class TempWorkHubRoot : IDisposable
         new SqliteConnectionFactory(Paths.DatabaseFile).ClearPools();
         new SqliteConnectionFactory(Paths.DatabaseFile, SqliteWorkspaceSearchStore.BusyTimeoutSeconds).ClearPools(); // search/resolve pool
         var testDirectory = Directory.GetParent(Paths.Root)!.FullName;
-        if (Directory.Exists(testDirectory))
-            Directory.Delete(testDirectory, recursive: true);
+        for (var attempt = 1; Directory.Exists(testDirectory); attempt++)
+        {
+            try
+            {
+                Directory.Delete(testDirectory, recursive: true);
+            }
+            catch (IOException) when (attempt < 50)
+            {
+                // A read a view model superseded (cancelled, never awaited) may still hold its pooled connection briefly.
+                Thread.Sleep(20);
+                new SqliteConnectionFactory(Paths.DatabaseFile).ClearPools();
+            }
+        }
     }
 }

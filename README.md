@@ -69,7 +69,7 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   its subfolders, and a name clash at the destination is rejected without changing anything.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
 
-### Project content (schema v4–v5)
+### Project content (schema v4–v6)
 
 Selecting a Project shows its **Content** below the details: one container at a time (the Project root or one project
 folder) with a breadcrumb. Project folders, links and notes never appear in the main tree and never touch the disk.
@@ -92,9 +92,29 @@ folder) with a breadcrumb. Project folders, links and notes never appear in the 
   Save / Don't save / Cancel; a failed save never loses the text. If the note was changed or removed elsewhere, nothing
   is overwritten: **Copy draft** puts the text on the clipboard and **Save as new note** saves it next to the original
   (or where the note last was), never anywhere else. After the editor closes, the list re-reads the notes it touched.
-- Keyboard: Enter opens, F2 edits, Backspace or Alt+Up goes up.
+- Keyboard: Enter opens, F2 edits, Del moves to the Trash, Backspace or Alt+Up goes up.
 
-Not available yet: delete, Trash, Archive, tags, rich text, drag-and-drop, manual ordering, autosave and moving
+### Trash (schema v6)
+
+**Move to Trash** (toolbar, context menu or **Del**, always confirmed) removes a project folder, link or note from the
+listing. A folder goes to the Trash together with everything still in it, as one entry. Only WorkHub's own records
+change: files, folders and web pages a link points to are never moved, renamed or deleted.
+
+- The confirmation shows how many items the folder contains at that moment. If another window changes the folder before
+  the move happens, whatever it contains then goes with it; the message afterwards says exactly how many items moved.
+- **Undo** in that message restores it at once. Undo is offered only while the same folder view is still shown.
+- **Trash (n)** opens the project's Trash: each entry with the folder it came from, its item count and time.
+  **Restore** puts it back into that folder, wherever the folder is now. Restore never creates, restores or renames
+  anything else: if the folder is itself in the Trash ("Restore “Drafts” first"), no longer exists, or already has a
+  folder with the same name, nothing changes and the entry stays in the Trash.
+- An item put in the Trash separately keeps its own entry; restoring its parent folder does not restore it.
+- Items in the Trash keep their names, content and note revision, and are read-only. They are hidden from listings,
+  Move destinations and search; a folder in the Trash reserves no names. Acting on an item another window moved to the
+  Trash says "This item is in the Trash." A note editor keeps your text when its note was moved to the Trash: Copy draft
+  works, and Save as new note saves next to the original only if that folder is not in the Trash.
+- There is no permanent delete, Empty Trash or automatic cleanup: the Trash keeps everything until it is restored.
+
+Not available yet: permanent delete, Archive, tags, rich text, drag-and-drop, manual ordering, autosave and moving
 content between projects.
 
 ### Workspace search
@@ -112,9 +132,10 @@ content. Systems and Owner Manager items are not included (the Repository tab ke
   the item is in now and selects it (a note shows its preview). Nothing is opened or launched; press Enter again on the
   revealed row for that.
 - Results are a snapshot. Revealing always re-reads where the item is now: if it was moved, the reveal goes there; if it
-  no longer exists, the result is removed. A reveal updates only the folders on the item's path (including ones another
-  window changed); other folders the tree already loaded are not re-read, and re-expanding a loaded folder does not
-  refresh it either.
+  no longer exists, the result is removed. Items in the Trash are never found; revealing one found earlier says "This
+  item is in the Trash." and removes that result. A reveal updates only the folders on the item's path (including ones
+  another window changed); other folders the tree already loaded are not re-read, and re-expanding a loaded folder does
+  not refresh it either.
 - Search only reads. While another program or window holds the database for writing, the search retries for up to 30
   seconds and says "Waiting for the database…"; typing again or clearing cancels it within about a second.
 

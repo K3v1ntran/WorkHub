@@ -48,7 +48,11 @@ public sealed record ProjectLink(
     string Name,
     string Target,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>The link is in the Trash (schema v6). Only single-item reads return trashed links; listings never do.</summary>
+    public bool IsTrashed { get; init; }
+}
 
 /// <summary>User-editable Link fields (validated by <see cref="ProjectLinkValidator"/>).</summary>
 public sealed record ProjectLinkDraft(string? Name, ProjectLinkType Type, string? Target);
@@ -70,7 +74,11 @@ public sealed record ProjectContentListing(
     IReadOnlyList<ProjectFolderCrumb> Breadcrumb,
     IReadOnlyList<ProjectFolder> Folders,
     IReadOnlyList<ProjectLink> Links,
-    IReadOnlyList<ProjectNoteSummary> Notes);
+    IReadOnlyList<ProjectNoteSummary> Notes)
+{
+    /// <summary>How many entries the Project's Trash holds, from the same read snapshot (schema v6).</summary>
+    public int TrashCount { get; init; }
+}
 
 public enum ContentContainerProblem
 {
@@ -79,6 +87,9 @@ public enum ContentContainerProblem
 
     /// <summary>The folder exists but belongs to another Project.</summary>
     WrongProject,
+
+    /// <summary>The folder exists but is in the Trash (schema v6): nothing can be listed in, created in or moved into it.</summary>
+    FolderTrashed,
 }
 
 /// <summary>A listing, or why the container could not be listed.</summary>
@@ -91,8 +102,8 @@ public sealed record ProjectContentListResult(ProjectContentListing? Listing, Co
 
 /// <summary>
 /// Store-level outcome of a content move (revision 3 §8.1). Evaluated in this order inside one write transaction:
-/// NotFound → MovedMeanwhile → DestinationNotFound / WrongProject → Cycle / AncestryUnverified → AlreadyThere →
-/// Duplicate / Moved.
+/// NotFound → ItemTrashed → MovedMeanwhile → DestinationNotFound / WrongProject → DestinationTrashed → Cycle /
+/// AncestryUnverified → AlreadyThere → Duplicate / Moved.
 /// </summary>
 public enum ContentMoveOutcome
 {
@@ -102,6 +113,12 @@ public enum ContentMoveOutcome
     AlreadyThere,
 
     NotFound,
+
+    /// <summary>The item is in the Trash (schema v6); trashed rows are read-only.</summary>
+    ItemTrashed,
+
+    /// <summary>The destination folder is in the Trash.</summary>
+    DestinationTrashed,
 
     /// <summary>The item's current container is not the one the caller observed. Takes precedence over AlreadyThere.</summary>
     MovedMeanwhile,

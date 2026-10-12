@@ -60,18 +60,18 @@ public sealed class FirstRunInitializationTests : IDisposable
     }
 
     [Fact]
-    public void FreshRun_HasOnlyTheWorkspaceFoundationAndProjectContent_NoDeferredOrCredentialTablesYet()
+    public void FreshRun_HasOnlyTheWorkspaceFoundationProjectContentAndItsTrash_NoDeferredOrCredentialTablesYet()
     {
         _root.CreateInitializer().Initialize();
 
         using var connection = _root.Open();
         var tables = Db.UserTables(connection);
-        Assert.Equal(["ProjectFolders", "ProjectLinks", "ProjectNotes", "Projects", "WorkspaceNodes"], tables.Where(name =>
+        Assert.Equal(["ProjectFolders", "ProjectLinks", "ProjectNotes", "ProjectTrashEntries", "Projects", "WorkspaceNodes"], tables.Where(name =>
             name.StartsWith("Workspace", StringComparison.Ordinal) || name.StartsWith("Project", StringComparison.Ordinal)));
         Assert.DoesNotContain(tables,
             name => name.Contains("Tag", StringComparison.Ordinal)
                     || name.Contains("Credential", StringComparison.Ordinal)
-                    || name.Contains("Trash", StringComparison.Ordinal)
+                    || (name.Contains("Trash", StringComparison.Ordinal) && name != "ProjectTrashEntries") // schema v6: content Trash only
                     || (name.Contains("Link", StringComparison.Ordinal) && name != "ProjectLinks")
                     || (name.Contains("Note", StringComparison.Ordinal) && name != "ProjectNotes")
                     || name.Contains("Alias", StringComparison.Ordinal));

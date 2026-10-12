@@ -47,6 +47,50 @@ public sealed class WorkspaceSearchStoreTests : IDisposable
 
     private static WorkspaceSearchHit Single(WorkspaceSearchResult result) => Assert.Single(result.Hits);
 
+    // ---- Trash (schema v6) ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task TrashedContent_IsNeverACandidate_AndRestoredContentIsFoundAgain()
+    {
+        var alpha = await Project("Alpha");
+        var specs = await ContentFolder(alpha, "Trashy specs");
+        await Link(alpha, "Trashy link", "https://trashy.test/", specs);
+        await Note(alpha, "Inside", "trashy body", specs);
+        var lone = await Note(alpha, "Trashy lone note", "");
+        await ContentFolder(alpha, "Trashy kept");
+        Assert.Equal(5, (await Search("trashy")).Hits.Count);
+
+        var folderEntry = (await _content.TrashAsync(new ContentRef(ContentKind.Folder, specs))).Entry!;
+        await _content.TrashAsync(new ContentRef(ContentKind.Note, lone));
+
+        Assert.Equal([new SearchItemRef(SearchResultKind.ProjectFolder, (await _content.ListAsync(alpha, null)).Listing!.Folders.Single().Id)],
+            (await Search("trashy")).Hits.Select(h => h.Item));
+        await _content.RestoreAsync(folderEntry.Id);
+        Assert.Equal(4, (await Search("trashy")).Hits.Count);
+    }
+
+    [Fact]
+    public async Task ResolvingATrashedItem_ReportsTrashed_PerKind_WithoutTouchingTheOtherKinds()
+    {
+        var alpha = await Project("Alpha");
+        using (var c = _root.Open())
+        {
+            Db.Exec(c, "INSERT INTO ProjectFolders (Id, ProjectNodeId, ParentFolderId, Name, NameKey, CreatedAt, UpdatedAt) VALUES (700, $p, NULL, 'F', 'F', $n, $n);", ("$p", alpha), ("$n", Db.Now));
+            Db.Exec(c, "INSERT INTO ProjectLinks (Id, ProjectNodeId, FolderId, LinkType, Name, Target, CreatedAt, UpdatedAt) VALUES (700, $p, NULL, 'Web', 'L', 'https://l.test/', $n, $n);", ("$p", alpha), ("$n", Db.Now));
+            Db.Exec(c, "INSERT INTO ProjectNotes (Id, ProjectNodeId, FolderId, Title, Content, CreatedAt, UpdatedAt) VALUES (700, $p, NULL, 'N', '', $n, $n);", ("$p", alpha), ("$n", Db.Now));
+        }
+
+        foreach (var (kind, searchKind) in new[] { (ContentKind.Folder, SearchResultKind.ProjectFolder), (ContentKind.Link, SearchResultKind.Link), (ContentKind.Note, SearchResultKind.Note) })
+        {
+            await _content.TrashAsync(new ContentRef(kind, 700));
+            var resolution = await _search.ResolveAsync(new SearchItemRef(searchKind, 700));
+            Assert.Equal(RevealResolveStatus.Trashed, resolution.Status);
+            Assert.Null(resolution.Target);
+        }
+
+        Assert.Equal(RevealResolveStatus.NotFound, (await _search.ResolveAsync(new SearchItemRef(SearchResultKind.Link, 701))).Status);
+    }
+
     // ---- Kinds, fields, terms ----------------------------------------------------------------------------------------
 
     [Fact]

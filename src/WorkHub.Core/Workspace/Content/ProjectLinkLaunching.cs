@@ -13,6 +13,9 @@ public enum ProjectLinkOpenProblem
 
     /// <summary>The link no longer exists.</summary>
     LinkNotFound,
+
+    /// <summary>The link is in the Trash (schema v6).</summary>
+    LinkTrashed,
 }
 
 public sealed record ProjectLinkOpenResult(ProjectLinkOpenProblem? Problem, string? Message)

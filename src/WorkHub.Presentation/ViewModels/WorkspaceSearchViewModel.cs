@@ -10,6 +10,10 @@ public enum WorkspaceRevealOutcome
 {
     Selected,
     NotFound,
+
+    /// <summary>The content item is in the Trash; it is not revealed.</summary>
+    Trashed,
+
     MovedMeanwhile,
     ContainerMissing,
     WorkspaceChanged,
@@ -313,6 +317,12 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
                 if (Results.FirstOrDefault(r => r.Item == hit.Item) is { } gone)
                     Results.Remove(gone);
                 NoticeText = "This item no longer exists.";
+                break;
+            case WorkspaceRevealOutcome.Trashed:
+                // Same rule: exactly this (Kind, Id) leaves the results.
+                if (Results.FirstOrDefault(r => r.Item == hit.Item) is { } trashed)
+                    Results.Remove(trashed);
+                NoticeText = "This item is in the Trash.";
                 break;
             case WorkspaceRevealOutcome.MovedMeanwhile:
                 NoticeText = "The item was moved meanwhile. Search again.";

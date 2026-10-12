@@ -52,6 +52,10 @@ public sealed class ContentCrumbViewModel : ObservableObject
 /// <item>Link checks are manual. Each result carries a token (Project, container, generation, Link Id, type, target) and is
 /// applied only if all still match; navigation, reload, Stop and deactivation start a new generation and cancel queued
 /// requests. Accepted results are kept for the session only.</item>
+/// <item>Move to Trash, Restore and Undo share ONE pending-write slot (no duplicate store calls) while navigation stays
+/// allowed. Each write remembers the visit it started in (Project, container, load version); its result changes rows,
+/// selection, messages or the Undo banner only while that visit is still shown (proposal §7). Trashed rows are hidden;
+/// acting on a row trashed elsewhere removes it with a message.</item>
 /// </list>
 /// Nothing here creates, moves, renames or deletes files or folders on disk.
 /// </summary>
@@ -83,6 +87,10 @@ public sealed class ProjectContentViewModel : ObservableObject
     private string? _previewMessage;
     private int _previewVersion;
     private CancellationTokenSource? _previewCts;
+    private bool _isWriteBusy;
+    private int _operationSequence;
+    private UndoOffer? _undo;
+    private int _trashCount;
 
     public ProjectContentViewModel(
         ProjectContentService content,
@@ -116,6 +124,12 @@ public sealed class ProjectContentViewModel : ObservableObject
         GoUpCommand = new AsyncRelayCommand(GoUpAsync, () => CurrentFolderId is not null, onError);
         RetryCommand = new AsyncRelayCommand(() => NavigateAsync(CurrentFolderId), () => LoadError is not null && !IsLoading, onError);
         DismissBannerCommand = new RelayCommand(() => BannerMessage = null);
+        Trash = new ProjectTrashViewModel(this);
+        MoveToTrashCommand = new AsyncRelayCommand(MoveToTrashAsync, () => HasSelection() && !IsWriteBusy, onError);
+        UndoCommand = new AsyncRelayCommand(UndoAsync, () => _undo is not null && !IsWriteBusy, onError);
+        DismissUndoCommand = new RelayCommand(ClearUndo);
+        OpenTrashCommand = new AsyncRelayCommand(OpenTrashAsync, () => !_isDeactivated && !Trash.IsOpen, onError);
+        CloseTrashCommand = new AsyncRelayCommand(() => NavigateAsync(CurrentFolderId), () => Trash.IsOpen, onError);
         Items.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(IsEmpty));
@@ -162,6 +176,7 @@ public sealed class ProjectContentViewModel : ObservableObject
             OpenCommand.RaiseCanExecuteChanged();
             EditCommand.RaiseCanExecuteChanged();
             MoveCommand.RaiseCanExecuteChanged();
+            MoveToTrashCommand.RaiseCanExecuteChanged();
             CheckCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(IsPreviewVisible));
             StartPreviewLoad();
@@ -272,6 +287,74 @@ public sealed class ProjectContentViewModel : ObservableObject
 
     public RelayCommand DismissBannerCommand { get; }
 
+    // ---- Trash (proposal §3, §7) --------------------------------------------------------------------------------------
+
+    /// <summary>The Project's Trash; while it is open the content pane shows it instead of the listing.</summary>
+    public ProjectTrashViewModel Trash { get; }
+
+    public bool IsTrashOpen => Trash.IsOpen;
+
+    /// <summary>"Trash (3)": entries in the Project's Trash, from the latest listing (adjusted by this view's own writes).</summary>
+    public string TrashButtonText => _trashCount > 0 ? $"Trash ({_trashCount})" : "Trash";
+
+    internal int TrashCount
+    {
+        get => _trashCount;
+        private set
+        {
+            if (_trashCount == value)
+                return;
+            _trashCount = value;
+            OnPropertyChanged(nameof(TrashButtonText));
+        }
+    }
+
+    /// <summary>
+    /// The single pending-write slot of this Project view: while a Move to Trash (including its count read and
+    /// confirmation), Restore or Undo is pending, none of them can start. Navigation stays allowed.
+    /// </summary>
+    public bool IsWriteBusy
+    {
+        get => _isWriteBusy;
+        private set
+        {
+            if (_isWriteBusy == value)
+                return;
+            _isWriteBusy = value;
+            OnPropertyChanged();
+            MoveToTrashCommand.RaiseCanExecuteChanged();
+            UndoCommand.RaiseCanExecuteChanged();
+            Trash.RaiseCommands();
+        }
+    }
+
+    /// <summary>"Moved “Drafts” and 4 items inside it to the Trash." with Undo; null when no Undo is offered.</summary>
+    public string? UndoMessage => _undo?.Message;
+
+    public bool HasUndo => _undo is not null;
+
+    /// <summary>Move the selected row (a folder with its contents) to the Trash, after a confirmation (toolbar, menu, Del).</summary>
+    public AsyncRelayCommand MoveToTrashCommand { get; }
+
+    /// <summary>Restores the entry of the Undo banner with the normal Restore rules.</summary>
+    public AsyncRelayCommand UndoCommand { get; }
+
+    public RelayCommand DismissUndoCommand { get; }
+
+    public AsyncRelayCommand OpenTrashCommand { get; }
+
+    /// <summary>Back from the Trash to the container that was shown (a navigation: fresh load).</summary>
+    public AsyncRelayCommand CloseTrashCommand { get; }
+
+    internal bool IsDeactivated => _isDeactivated;
+
+    internal ProjectContentService Content => _content;
+
+    internal IAppLog Log => _log;
+
+    /// <summary>The most recent Move to Trash or Undo; lets tests await it.</summary>
+    internal Task CurrentTrashOperation { get; private set; } = Task.CompletedTask;
+
     /// <summary>The most recent listing load; lets tests await it.</summary>
     internal Task CurrentLoad { get; private set; } = Task.CompletedTask;
 
@@ -292,6 +375,9 @@ public sealed class ProjectContentViewModel : ObservableObject
         _loadCts = null;
         CancelChecks();
         InvalidatePreview();
+        ClearUndo();
+        CloseTrash();
+        OpenTrashCommand.RaiseCanExecuteChanged();
     }
 
     // ---- Loading and navigation -------------------------------------------------------------------------------------
@@ -302,6 +388,8 @@ public sealed class ProjectContentViewModel : ObservableObject
         _loadCts?.Cancel();
         var cts = _loadCts = new CancellationTokenSource();
         CancelChecks();
+        ClearUndo(); // an Undo is offered only in the visit that produced it
+        CloseTrash();
 
         CurrentFolderId = folderId;
         SelectedItem = null;
@@ -337,9 +425,12 @@ public sealed class ProjectContentViewModel : ObservableObject
 
         if (result.Listing is not { } listing)
         {
-            ContainerMessage = result.Problem == ContentContainerProblem.ProjectNotFound
-                ? "This project no longer exists."
-                : "This folder no longer exists.";
+            ContainerMessage = result.Problem switch
+            {
+                ContentContainerProblem.ProjectNotFound => "This project no longer exists.",
+                ContentContainerProblem.FolderTrashed => "This folder is in the Trash.",
+                _ => "This folder no longer exists.",
+            };
             OnPropertyChanged(nameof(IsFolderMissing));
             IsLoading = false;
             return;
@@ -358,6 +449,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         foreach (var note in listing.Notes)
             Items.Add(new ProjectContentItemViewModel(note));
 
+        TrashCount = listing.TrashCount;
         _isLoaded = true;
         IsLoading = false;
         OnPropertyChanged(nameof(IsEmpty));
@@ -432,6 +524,8 @@ public sealed class ProjectContentViewModel : ObservableObject
         }
 
         var result = await _content.OpenLinkAsync(item.Id);
+        if (result.Problem == ProjectLinkOpenProblem.LinkTrashed)
+            RemoveRow(item.Ref); // a stale row (trashed in another window) leaves this listing
         BannerMessage = result.Succeeded ? null : result.Message ?? "The target could not be opened.";
     }
 
@@ -441,12 +535,15 @@ public sealed class ProjectContentViewModel : ObservableObject
         if (item.IsNote)
             return OpenNoteEditorAsync(item);
 
+        var token = CaptureToken();
         var version = _loadVersion;
         if (item.Folder is { } folder)
         {
             var editor = ProjectFolderNameEditorViewModel.ForRename(_content, folder, LocationPath);
-            if (_dialogs.ShowProjectFolderNameEditor(editor) && editor.SavedFolder is { } saved && version == _loadVersion)
+            if (_dialogs.ShowProjectFolderNameEditor(editor) && editor.SavedFolder is { } saved)
             {
+                if (version != _loadVersion)
+                    return Task.CompletedTask;
                 if (saved.ParentFolderId != CurrentFolderId)
                     RemoveMovedAway(item);
                 else
@@ -455,12 +552,16 @@ public sealed class ProjectContentViewModel : ObservableObject
                     Resort(item);
                 }
             }
+            else if (editor.SaveRefused)
+                return ReconcileSourceAsync(item.Ref, token);
         }
         else
         {
             var editor = ProjectLinkEditorViewModel.ForEdit(_content, _dialogs, item.Link!, LocationPath);
-            if (_dialogs.ShowProjectLinkEditor(editor) && editor.SavedLink is { } saved && version == _loadVersion)
+            if (_dialogs.ShowProjectLinkEditor(editor) && editor.SavedLink is { } saved)
             {
+                if (version != _loadVersion)
+                    return Task.CompletedTask;
                 if (saved.FolderId != CurrentFolderId)
                     RemoveMovedAway(item);
                 else
@@ -472,9 +573,47 @@ public sealed class ProjectContentViewModel : ObservableObject
                 StopCheckingCommand.RaiseCanExecuteChanged();
                 CheckCommand.RaiseCanExecuteChanged();
             }
+            else if (editor.SaveRefused)
+                return ReconcileSourceAsync(item.Ref, token);
         }
 
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// After a Rename / Edit / Move dialog closed with a refused write (proposal revision 2 §8): the row may be stale (for
+    /// example trashed by another window). Re-reads the item by (Kind, Id) and applies its CURRENT state, never the refusal:
+    /// in the Trash or gone → the row leaves with a message; active elsewhere → the row leaves; active here → nothing changes.
+    /// Applied only while the originating visit is still shown; other rows and their link checks are untouched.
+    /// </summary>
+    private Task ReconcileSourceAsync(ContentRef target, ContentViewToken token) =>
+        CurrentReconciliation = ReconcileSourceCoreAsync(target, token);
+
+    private async Task ReconcileSourceCoreAsync(ContentRef target, ContentViewToken token)
+    {
+        if (!IsEligible(token))
+            return;
+
+        ContentState? state;
+        try
+        {
+            state = await _content.GetContentStateAsync(target);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("The item could not be re-read after a refused change.", ex); // the dialog already showed the refusal
+            return;
+        }
+
+        if (!IsEligible(token) || Items.FirstOrDefault(i => i.Ref == target) is not { } row)
+            return;
+        if (state is { Trashed: false } && state.ProjectNodeId == ProjectNodeId && state.ContainerFolderId == CurrentFolderId)
+            return; // still active here (for example restored meanwhile): the row is valid
+
+        RemoveMovedAway(row);
+        BannerMessage = state is null ? "This item no longer exists."
+            : state.Trashed ? "This item is in the Trash."
+            : BannerMessage; // active in another container: the row leaves this listing, as after a move elsewhere
     }
 
     /// <summary>
@@ -492,6 +631,7 @@ public sealed class ProjectContentViewModel : ObservableObject
     private async Task MoveAsync()
     {
         var item = SelectedItem!;
+        var token = CaptureToken();
         var version = _loadVersion;
         var targets = await _content.ListFolderMoveTargetsAsync(ProjectNodeId, item.IsFolder ? item.Id : null);
         if (!ReferenceEquals(SelectedItem, item) || version != _loadVersion)
@@ -514,7 +654,277 @@ public sealed class ProjectContentViewModel : ObservableObject
             Items.Remove(item);
             SelectedItem = null;
         }
+        else if (!confirmed && editor.MoveRefused)
+            await ReconcileSourceAsync(item.Ref, token);
     }
+
+    // ---- Move to Trash, Undo and the Trash view (proposal §7) ----------------------------------------------------------
+
+    /// <summary>
+    /// The visit an operation started in. Eligible ⇔ this view is still active and still shows that load (the load version
+    /// changes on every navigation — including revisiting the same container —, on opening the Trash and on deactivation).
+    /// </summary>
+    private ContentViewToken CaptureToken() => new(ProjectNodeId, CurrentFolderId, _loadVersion);
+
+    private bool IsEligible(ContentViewToken token) =>
+        !_isDeactivated && !Trash.IsOpen && token.LoadVersion == _loadVersion && token.ContainerFolderId == CurrentFolderId;
+
+    /// <summary>Takes the pending-write slot. Starting a write also withdraws the current Undo (it is never offered after a newer write began).</summary>
+    internal int BeginWrite()
+    {
+        ClearUndo();
+        IsWriteBusy = true;
+        return ++_operationSequence;
+    }
+
+    internal void EndWrite() => IsWriteBusy = false;
+
+    private Task MoveToTrashAsync() => CurrentTrashOperation = MoveToTrashCoreAsync();
+
+    /// <summary>
+    /// Count snapshot → confirmation → Trash (§7.3–7.4). The slot is held from the count read to the write's completion, so a
+    /// repeated click, Del or Enter issues no second store call. A result is applied only while the originating visit is
+    /// still shown; otherwise the database change stands and the next fresh load shows it.
+    /// </summary>
+    private async Task MoveToTrashCoreAsync()
+    {
+        if (IsWriteBusy || !HasSelection() || SelectedItem is not { } item)
+            return; // direct invocations while busy are ignored
+
+        var token = CaptureToken();
+        var target = item.Ref;
+        var name = item.Name;
+        IsWriteBusy = true; // the current Undo stays visible (disabled) until the write itself starts
+        try
+        {
+            TrashCount count;
+            try
+            {
+                count = await _content.CountTrashSetAsync(target);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("The Trash count could not be read.", ex);
+                if (IsEligible(token))
+                    BannerMessage = ProjectContentService.TrashFailed;
+                return;
+            }
+
+            // No dialog for a visit that is no longer shown or a selection that changed meanwhile.
+            if (!IsEligible(token) || SelectedItem?.Ref != target)
+                return;
+            if (!count.Exists || count.Trashed)
+            {
+                RemoveRow(target);
+                BannerMessage = count.Exists ? "This item is in the Trash." : "This item no longer exists.";
+                return;
+            }
+
+            if (!_dialogs.Confirm("Move to Trash", ConfirmationText(target.Kind, name, count.ActiveItems), "Move to Trash"))
+                return;
+
+            ClearUndo(); // the write starts now: an older Undo is never offered after it
+            var sequence = ++_operationSequence;
+            TrashResult result;
+            try
+            {
+                result = await _content.TrashAsync(target);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Move to Trash failed.", ex); // operation only; no names or content
+                if (IsEligible(token))
+                    BannerMessage = ProjectContentService.TrashFailed;
+                return;
+            }
+
+            if (!IsEligible(token))
+                return; // committed or not, nothing changes in another container, Project or visit
+
+            switch (result.Outcome)
+            {
+                case TrashOutcome.Trashed:
+                    RemoveRow(target); // only this (Kind, Id); other rows and their link checks are untouched
+                    TrashCount++;
+                    BannerMessage = null;
+                    if (sequence == _operationSequence)
+                        OfferUndo(new UndoOffer(result.Entry!.Id, sequence, token, TrashedText(target.Kind, result.Entry.RootName, result.Entry.ItemCount)));
+                    break;
+                case TrashOutcome.AlreadyTrashed or TrashOutcome.NotFound:
+                    RemoveRow(target);
+                    BannerMessage = result.Error;
+                    break;
+                default:
+                    BannerMessage = result.Error; // nothing written; the row stays
+                    break;
+            }
+        }
+        finally
+        {
+            IsWriteBusy = false;
+        }
+    }
+
+    private Task UndoAsync() => CurrentTrashOperation = UndoCoreAsync();
+
+    /// <summary>
+    /// Restore of the banner's entry (§7.6). The restored row is inserted only when it belongs in the container still shown
+    /// by the visit that produced the banner and is not already listed; it is built from the row the Restore committed.
+    /// </summary>
+    private async Task UndoCoreAsync()
+    {
+        if (IsWriteBusy || _undo is not { } undo || !IsEligible(undo.Token))
+            return;
+
+        BeginWrite();
+        try
+        {
+            RestoreResult result;
+            try
+            {
+                result = await _content.RestoreAsync(undo.EntryId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Undo (restore from the Trash) failed.", ex);
+                if (IsEligible(undo.Token))
+                    BannerMessage = ProjectContentService.RestoreFailed;
+                return;
+            }
+
+            if (!IsEligible(undo.Token))
+                return;
+
+            if (result.Outcome != RestoreOutcome.Restored)
+            {
+                BannerMessage = result.Error; // no Undo is offered again
+                return;
+            }
+
+            TrashCount = Math.Max(0, TrashCount - 1);
+            var restored = result.Restored!;
+            if (restored.ProjectNodeId != ProjectNodeId || restored.ContainerFolderId != CurrentFolderId)
+            {
+                BannerMessage = $"Restored to {restored.ContainerPath}.";
+                return;
+            }
+
+            BannerMessage = null;
+            if (!Items.Any(i => i.Ref == restored.Root) && RowFor(restored) is { } row)
+                SelectedItem = InsertSorted(row);
+        }
+        finally
+        {
+            EndWrite();
+        }
+    }
+
+    private Task OpenTrashAsync()
+    {
+        if (_isDeactivated || Trash.IsOpen)
+            return Task.CompletedTask;
+
+        // Opening the Trash is a navigation: the listing's load, checks, preview and Undo belong to the visit that ends here.
+        _loadVersion++;
+        _loadCts?.Cancel();
+        _loadCts = null;
+        CancelChecks();
+        ClearUndo();
+        SelectedItem = null;
+        Items.Clear();
+        _isLoaded = false;
+        LoadError = null;
+        IsLoading = false;
+        RaiseCommands();
+        var load = Trash.Open();
+        OnTrashOpenChanged();
+        return load;
+    }
+
+    private void CloseTrash()
+    {
+        if (!Trash.IsOpen)
+            return;
+        Trash.Close();
+        OnTrashOpenChanged();
+    }
+
+    private void OnTrashOpenChanged()
+    {
+        OnPropertyChanged(nameof(IsTrashOpen));
+        OpenTrashCommand.RaiseCanExecuteChanged();
+        CloseTrashCommand.RaiseCanExecuteChanged();
+    }
+
+    private void OfferUndo(UndoOffer offer)
+    {
+        _undo = offer;
+        OnUndoChanged();
+    }
+
+    private void ClearUndo()
+    {
+        if (_undo is null)
+            return;
+        _undo = null;
+        OnUndoChanged();
+    }
+
+    private void OnUndoChanged()
+    {
+        OnPropertyChanged(nameof(UndoMessage));
+        OnPropertyChanged(nameof(HasUndo));
+        UndoCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Removes the row of exactly this (Kind, Id), if listed; a selected row also clears the selection and preview.</summary>
+    private void RemoveRow(ContentRef target)
+    {
+        if (Items.FirstOrDefault(i => i.Ref == target) is { } row)
+            RemoveMovedAway(row);
+    }
+
+    private ProjectContentItemViewModel? RowFor(RestoredRoot restored) =>
+        restored.Folder is { } folder ? new ProjectContentItemViewModel(folder)
+        : restored.Link is { } link ? CreateLinkRow(link)
+        : restored.Note is { } note ? new ProjectContentItemViewModel(note)
+        : null;
+
+    /// <summary>The confirmation names the item; the count is a snapshot and is not promised (T7, T11).</summary>
+    internal static string ConfirmationText(ContentKind kind, string name, int activeItems)
+    {
+        switch (kind)
+        {
+            case ContentKind.Folder:
+                var inside = activeItems - 1;
+                var contains = inside switch
+                {
+                    0 => "It is currently empty",
+                    1 => "It currently contains 1 item",
+                    _ => $"It currently contains {inside} items",
+                };
+                return $"Move folder “{name}” and its contents to the Trash? {contains}; whatever it contains when the move happens goes with it. Files on disk are not touched.";
+            case ContentKind.Link:
+                return $"Move link “{name}” to the Trash? Its target is not touched.";
+            default:
+                return $"Move note “{name}” to the Trash?";
+        }
+    }
+
+    /// <summary>The banner states the ACTUAL number moved, from the transaction.</summary>
+    internal static string TrashedText(ContentKind kind, string name, int itemCount)
+    {
+        var inside = itemCount - 1;
+        if (kind != ContentKind.Folder || inside == 0)
+            return $"Moved “{name}” to the Trash.";
+        return inside == 1
+            ? $"Moved “{name}” and 1 item inside it to the Trash."
+            : $"Moved “{name}” and {inside} items inside it to the Trash.";
+    }
+
+    private readonly record struct ContentViewToken(long ProjectNodeId, long? ContainerFolderId, int LoadVersion);
+
+    private sealed record UndoOffer(long EntryId, int Sequence, ContentViewToken Token, string Message);
 
     // ---- Notes: editor, preview, reconciliation ---------------------------------------------------------------------
 
@@ -533,10 +943,10 @@ public sealed class ProjectContentViewModel : ObservableObject
         if (!ReferenceEquals(SelectedItem, item) || version != _loadVersion || _isDeactivated)
             return; // the view changed while the note was loading
 
-        if (note is null)
+        if (note is null || note.IsTrashed)
         {
             RemoveMovedAway(item);
-            BannerMessage = "This note no longer exists.";
+            BannerMessage = note is null ? "This note no longer exists." : "This note is in the Trash.";
             return;
         }
 
@@ -590,7 +1000,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         foreach (var id in ids)
         {
             var row = Items.FirstOrDefault(i => i.IsNote && i.Id == id);
-            if (byId.TryGetValue(id, out var note) && note.ProjectNodeId == ProjectNodeId && note.FolderId == CurrentFolderId)
+            if (byId.TryGetValue(id, out var note) && !note.IsTrashed && note.ProjectNodeId == ProjectNodeId && note.FolderId == CurrentFolderId)
             {
                 if (row is null)
                     row = InsertSorted(new ProjectContentItemViewModel(note.Summary));
@@ -605,13 +1015,13 @@ public sealed class ProjectContentViewModel : ObservableObject
             }
             else if (row is not null)
             {
-                RemoveMovedAway(row); // moved elsewhere or no longer exists; clears selection and preview if selected
+                RemoveMovedAway(row); // moved elsewhere, in the Trash or no longer exists; clears selection and preview if selected
             }
         }
 
         if (select is not null)
             SelectedItem = select;
-        if (SelectedItem is { IsNote: true } selected && byId.TryGetValue(selected.Id, out var current) && Items.Contains(selected))
+        if (SelectedItem is { IsNote: true } selected && byId.TryGetValue(selected.Id, out var current) && !current.IsTrashed && Items.Contains(selected))
             ShowPreview(current);
     }
 
@@ -639,6 +1049,8 @@ public sealed class ProjectContentViewModel : ObservableObject
                 return; // a newer selection or a refreshed preview owns the pane
             if (note is null)
                 PreviewMessage = "This note no longer exists.";
+            else if (note.IsTrashed)
+                PreviewMessage = "This note is in the Trash.";
             else
                 PreviewNote = note;
         }
@@ -703,6 +1115,38 @@ public sealed class ProjectContentViewModel : ObservableObject
         var check = new CheckToken(ProjectNodeId, CurrentFolderId, _generation, link.Id, link.Type, link.Target);
         row.BeginCheck();
         RaiseCheckCommands();
+
+        // The row is a snapshot: a link trashed or removed in another window is not checked, and its row leaves this
+        // listing (proposal §4.5). A failed re-read never blocks the check.
+        ProjectLink? stored;
+        try
+        {
+            stored = await _content.GetLinkAsync(link.Id, token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("A link could not be re-read before its check.", ex);
+            stored = link;
+        }
+
+        if (token.IsCancellationRequested)
+            return; // Stop, navigation or deactivation while re-reading
+        if (stored is null || stored.IsTrashed)
+        {
+            if (AcceptingRow(check) is { } stale)
+            {
+                stale.RevertCheck();
+                RemoveMovedAway(stale);
+                BannerMessage = stored is null ? "This link no longer exists." : "This link is in the Trash.";
+                RaiseCheckCommands();
+            }
+
+            return;
+        }
 
         LinkHealthStatus status;
         try
@@ -791,6 +1235,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         OpenCommand.RaiseCanExecuteChanged();
         EditCommand.RaiseCanExecuteChanged();
         MoveCommand.RaiseCanExecuteChanged();
+        MoveToTrashCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
         RaiseCheckCommands();
     }

@@ -7,7 +7,7 @@ namespace WorkHub.Tests.TestSupport;
 /// <summary>
 /// Wraps a real <see cref="IProjectContentStore"/> and can hold the next call for a key until the test releases or fails it.
 /// A held listing reads the database when CALLED and delivers that snapshot only when released (a slow query).
-/// Keys: "list:root", "list:{folderId}", "createFolder", "renameFolder", "createLink", "updateLink", "moveFolder", "moveLink", "containerPath", and the note keys below.
+/// Keys: "list:root", "list:{folderId}", "createFolder", "renameFolder", "createLink", "updateLink", "moveFolder", "moveLink", "containerPath", the note keys and the Trash keys below.
 /// </summary>
 internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IProjectContentStore
 {
@@ -68,6 +68,40 @@ internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IPr
 
     public Task<ContentMoveOutcome> MoveNoteAsync(long noteId, long? expectedFolderId, long? targetFolderId, CancellationToken cancellationToken = default) =>
         Gated("moveNote", () => inner.MoveNoteAsync(noteId, expectedFolderId, targetFolderId, cancellationToken), readFirst: false);
+
+    /// <summary>Key "contentState": the fresh read after a refused Rename / Edit / Move (snapshot taken when called, delivered on release).</summary>
+    public Task<ContentState?> GetContentStateAsync(ContentRef item, CancellationToken cancellationToken = default) =>
+        Gated("contentState", () => inner.GetContentStateAsync(item, CancellationToken.None));
+
+    /// <summary>Key "countTrash": the confirmation count (snapshot taken when called, delivered on release).</summary>
+    public Task<TrashCount> CountTrashSetAsync(ContentRef item, CancellationToken cancellationToken = default) =>
+        Gated("countTrash", () => inner.CountTrashSetAsync(item, CancellationToken.None));
+
+    /// <summary>Key "trash": the write runs only when released (a held write, as with the other write keys).</summary>
+    public Task<TrashResult> TrashAsync(ContentRef item, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _trashCalls);
+        return Gated("trash", () => inner.TrashAsync(item, cancellationToken), readFirst: false);
+    }
+
+    /// <summary>Key "listTrash".</summary>
+    public Task<IReadOnlyList<TrashEntry>> ListTrashAsync(long projectNodeId, CancellationToken cancellationToken = default) =>
+        Gated("listTrash", () => inner.ListTrashAsync(projectNodeId, CancellationToken.None));
+
+    /// <summary>Key "restore": Restore from the Trash view and Undo.</summary>
+    public Task<RestoreResult> RestoreAsync(long entryId, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _restoreCalls);
+        return Gated("restore", () => inner.RestoreAsync(entryId, cancellationToken), readFirst: false);
+    }
+
+    private int _trashCalls;
+    private int _restoreCalls;
+
+    /// <summary>Store calls of Trash / Restore so far (duplicate-prevention checks).</summary>
+    public int TrashCalls => Volatile.Read(ref _trashCalls);
+
+    public int RestoreCalls => Volatile.Read(ref _restoreCalls);
 
     private async Task<T> Gated<T>(string key, Func<Task<T>> call, bool readFirst = true)
     {

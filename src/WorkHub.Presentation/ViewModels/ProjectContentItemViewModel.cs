@@ -33,6 +33,14 @@ public sealed class ProjectContentItemViewModel : ObservableObject
 
     public long Id => _folder?.Id ?? _link?.Id ?? _note!.Id;
 
+    /// <summary>Typed identity (Kind, Id): Folder, Link and Note Ids are independent.</summary>
+    public ContentRef Ref => new(Kind switch
+    {
+        ProjectContentItemKind.Folder => ContentKind.Folder,
+        ProjectContentItemKind.Link => ContentKind.Link,
+        _ => ContentKind.Note,
+    }, Id);
+
     public string Name => _folder?.Name ?? _link?.Name ?? _note!.Title;
 
     /// <summary>The container this row was listed in (null = Project root): the "observed" source for Move.</summary>

@@ -16,6 +16,9 @@ public sealed class NotesMigrationTests : IDisposable
     private static readonly ISchemaMigration[] ThroughV004 =
         [new V001_InitialSchema(), new V002_OwnerManager(), new V003_Workspace(), new V004_ProjectContent()];
 
+    /// <summary>Exactly V001–V005: V006 (Trash) extends ProjectNotes and is covered by its own migration tests.</summary>
+    private static readonly ISchemaMigration[] ThroughV005 = [.. ThroughV004, new V005_ProjectNotes()];
+
     /// <summary>A v4 database with Repository edge cases, Owner data, Workspace nodes, Project details, folders and links.</summary>
     private void CreatePopulatedV4Database()
     {
@@ -37,10 +40,10 @@ public sealed class NotesMigrationTests : IDisposable
     [Fact]
     public void FreshDatabase_HasTheReviewedV005Schema()
     {
-        var result = _root.CreateInitializer().Initialize();
+        var result = _root.CreateDatabaseInitializer(ThroughV005).Initialize();
 
-        Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(5, result.Database.SchemaVersion);
+        Assert.Equal(DatabaseInitializationOutcome.Created, result.Outcome);
+        Assert.Equal(5, result.SchemaVersion);
         using var connection = _root.Open();
         Assert.Equal(5, Db.ScalarLong(connection, "PRAGMA user_version;"));
         Assert.Equal(
@@ -60,7 +63,7 @@ public sealed class NotesMigrationTests : IDisposable
     [Fact]
     public void V005_IsRegistered_AndOnlyAddsNotes()
     {
-        Assert.Equal([1, 2, 3, 4, 5], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6], SchemaMigrations.All.Select(m => m.Version));
         Assert.Contains("CREATE TABLE ProjectNotes", V005_ProjectNotes.Sql);
         Assert.DoesNotContain("CASCADE", V005_ProjectNotes.Sql);
         Assert.DoesNotContain("ALTER TABLE", V005_ProjectNotes.Sql);
@@ -81,11 +84,11 @@ public sealed class NotesMigrationTests : IDisposable
         Assert.Contains(beforeData, r => r.StartsWith("ProjectLinks|", StringComparison.Ordinal));
         Assert.Contains(beforeData, r => r.Contains("IsEnabled=0", StringComparison.Ordinal));
 
-        var result = _root.CreateInitializer().Initialize();
+        var result = _root.CreateDatabaseInitializer(ThroughV005).Initialize();
 
-        Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Database.Outcome);
-        Assert.Equal(4, result.Database.PreviousSchemaVersion);
-        Assert.Equal(5, result.Database.SchemaVersion);
+        Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Outcome);
+        Assert.Equal(4, result.PreviousSchemaVersion);
+        Assert.Equal(5, result.SchemaVersion);
         using (var connection = _root.Open())
         {
             Assert.Equal(beforeData, DataSnapshot(connection));
@@ -95,7 +98,7 @@ public sealed class NotesMigrationTests : IDisposable
             Assert.Equal("ok", Db.ScalarString(connection, "PRAGMA quick_check(1);"));
         }
 
-        var backupFile = result.Database.MigrationBackupFile!;
+        var backupFile = result.MigrationBackupFile!;
         Assert.Contains("_v4_before_v5_", Path.GetFileName(backupFile));
         using var backup = new SqliteConnection($"Data Source={backupFile};Mode=ReadOnly;Pooling=False");
         backup.Open();
@@ -106,16 +109,16 @@ public sealed class NotesMigrationTests : IDisposable
     }
 
     [Fact]
-    public void V3Database_GetsV004AndV005InOneStart_WithOneBackup()
+    public void V3Database_GetsEveryLaterMigrationInOneStart_WithOneBackup()
     {
         _root.CreateDatabaseInitializer(new V001_InitialSchema(), new V002_OwnerManager(), new V003_Workspace()).Initialize();
 
         var result = _root.CreateInitializer().Initialize();
 
         Assert.Equal(3, result.Database.PreviousSchemaVersion);
-        Assert.Equal(5, result.Database.SchemaVersion);
+        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
         Assert.Single(Directory.GetFiles(_root.Paths.MigrationBackupsDirectory));
-        Assert.Contains("_v3_before_v5_", Path.GetFileName(result.Database.MigrationBackupFile));
+        Assert.Contains($"_v3_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(result.Database.MigrationBackupFile));
     }
 
     [Fact]
@@ -131,13 +134,13 @@ public sealed class NotesMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateInitializer().Initialize());
+        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(ThroughV005).Initialize());
         Assert.Equal(DatabaseStartupFailure.MigrationFailed, ex.Failure);
         AssertUnchangedV4(beforeData, beforeSchema);
         var first = AssertValidatedBackups(beforeData, beforeSchema, expectedCount: 1);
 
         Thread.Sleep(5);
-        Assert.Throws<DatabaseStartupException>(() => _root.CreateInitializer().Initialize());
+        Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(ThroughV005).Initialize());
         AssertUnchangedV4(beforeData, beforeSchema);
         var all = AssertValidatedBackups(beforeData, beforeSchema, expectedCount: 2);
         Assert.All(first, b => Assert.Contains(b, all));
@@ -162,7 +165,7 @@ public sealed class NotesMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateInitializer().Initialize());
+        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(ThroughV005).Initialize());
 
         Assert.Equal(DatabaseStartupFailure.MigrationFailed, ex.Failure);
         AssertUnchangedV4(beforeData, beforeSchema);

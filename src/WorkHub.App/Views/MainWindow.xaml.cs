@@ -232,6 +232,7 @@ public partial class MainWindow : Window
         {
             Key.Enter when Keyboard.Modifiers == ModifierKeys.None => content.OpenCommand,
             Key.F2 when Keyboard.Modifiers == ModifierKeys.None => content.EditCommand,
+            Key.Delete when Keyboard.Modifiers == ModifierKeys.None => content.MoveToTrashCommand, // always confirmed
             Key.Back when Keyboard.Modifiers == ModifierKeys.None => content.GoUpCommand,
             Key.System when e.SystemKey == Key.Up && Keyboard.Modifiers == ModifierKeys.Alt => content.GoUpCommand,
             _ => (System.Windows.Input.ICommand?)null,
@@ -243,6 +244,15 @@ public partial class MainWindow : Window
         e.Handled = true;
         if (command == content.GoUpCommand || command == content.OpenCommand)
             Dispatcher.BeginInvoke(DispatcherPriority.Input, () => ContentList.Focus()); // keep keyboard navigation in the list
+    }
+
+    /// <summary>Enter restores the selected Trash entry (the same command as the Restore button; it never runs twice at once).</summary>
+    private void TrashList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (ProjectContent is not { } content || e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
+            return;
+        content.Trash.RestoreCommand.Execute(null);
+        e.Handled = true;
     }
 
     private void OwnerMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(OwnerMoreButton);

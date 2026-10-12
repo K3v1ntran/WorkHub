@@ -26,6 +26,7 @@ public static class SchemaMigrations
         new V003_Workspace(),
         new V004_ProjectContent(),
         new V005_ProjectNotes(),
+        new V006_ProjectContentTrash(),
     ];
 
     public static int LatestVersion => All[^1].Version;

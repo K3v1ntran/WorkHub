@@ -21,6 +21,12 @@ public sealed record ProjectNote(
     DateTimeOffset UpdatedAt)
 {
     public ProjectNoteSummary Summary => new(Id, ProjectNodeId, FolderId, Title, Revision, UpdatedAt);
+
+    /// <summary>
+    /// The note is in the Trash (schema v6). Only <c>GetNoteAsync</c>/<c>GetNotesAsync</c> return trashed notes (so preview,
+    /// editor open and reconciliation can say so); listings and search never do.
+    /// </summary>
+    public bool IsTrashed { get; init; }
 }
 
 /// <summary>User-editable Note fields (validated by <see cref="ProjectNoteValidator"/>).</summary>
@@ -35,6 +41,9 @@ public enum NoteSaveStatus
 
     /// <summary>The note exists at a different revision than the caller expected (changed elsewhere).</summary>
     Conflict,
+
+    /// <summary>The note is in the Trash (schema v6); nothing was written.</summary>
+    Trashed,
 }
 
 /// <summary>Store-level outcome of a revision-guarded save, classified inside the save transaction.</summary>
@@ -43,6 +52,8 @@ public sealed record NoteStoreSaveResult(NoteSaveStatus Status, ProjectNote? Not
     public static NoteStoreSaveResult Saved(ProjectNote note) => new(NoteSaveStatus.Saved, note, null);
 
     public static NoteStoreSaveResult NotFound { get; } = new(NoteSaveStatus.NotFound, null, null);
+
+    public static NoteStoreSaveResult Trashed { get; } = new(NoteSaveStatus.Trashed, null, null);
 
     public static NoteStoreSaveResult Conflict(long currentRevision) => new(NoteSaveStatus.Conflict, null, currentRevision);
 }
@@ -58,7 +69,13 @@ public enum NoteWriteStatus
 
     Conflict,
 
-    /// <summary>The Project or folder the note belongs in no longer exists (create / save as new); nothing was written.</summary>
+    /// <summary>The note is in the Trash; nothing was written. The draft is kept and recovery is offered.</summary>
+    Trashed,
+
+    /// <summary>
+    /// The Project or folder the note belongs in no longer exists or is in the Trash (create / save as new); nothing was
+    /// written.
+    /// </summary>
     LocationMissing,
 
     /// <summary>The write failed unexpectedly (database busy, I/O); nothing was written.</summary>
@@ -71,7 +88,7 @@ public sealed record NoteWriteResult(NoteWriteStatus Status, ProjectNote? Note, 
     public bool Succeeded => Status == NoteWriteStatus.Saved;
 
     /// <summary>Copy draft / Save as new note are offered for these outcomes.</summary>
-    public bool OffersRecovery => Status is NoteWriteStatus.NotFound or NoteWriteStatus.Conflict;
+    public bool OffersRecovery => Status is NoteWriteStatus.NotFound or NoteWriteStatus.Conflict or NoteWriteStatus.Trashed;
 
     public static NoteWriteResult Ok(ProjectNote note) => new(NoteWriteStatus.Saved, note, null, null, null);
 

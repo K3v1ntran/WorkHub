@@ -950,7 +950,7 @@
                             </StackPanel>
                         </Border>
 
-                        <WrapPanel DockPanel.Dock="Top" Margin="0,4,0,4">
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,4,0,4" Visibility="{Binding IsTrashOpen, Converter={StaticResource InverseBoolToVisibility}}">
                             <Button Style="{StaticResource ToolButton}" Command="{Binding GoUpCommand}" AutomationProperties.Name="Up one level" ToolTip="Up one level (Backspace)">
                                 <TextBlock Style="{StaticResource Icon}" Text="&#xE74A;" />
                             </Button>
@@ -976,10 +976,19 @@
                             <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}" AutomationProperties.Name="Open" ToolTip="Open (Enter)" Content="Open" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding EditCommand}" AutomationProperties.Name="Edit content item" ToolTip="Rename folder / edit link / edit note (F2)" Content="Edit…" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move content item" ToolTip="Move within this project" Content="Move to…" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding MoveToTrashCommand}" AutomationProperties.Name="Move to Trash" ToolTip="Move to the Trash (Del). Files on disk are not touched.">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Move to Trash" />
+                                </StackPanel>
+                            </Button>
                             <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding CheckCommand}" AutomationProperties.Name="Check link" ToolTip="Check whether the selected link's folder or file can be found" Content="Check" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding CheckAllCommand}" AutomationProperties.Name="Check all links" ToolTip="Check every link in this folder" Content="Check all" />
                             <Button Style="{StaticResource ToolButton}" Command="{Binding StopCheckingCommand}" AutomationProperties.Name="Stop checking" ToolTip="Stop checking" Content="Stop" />
+                            <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding OpenTrashCommand}" AutomationProperties.Name="Open Trash" ToolTip="This project's Trash" Content="{Binding TrashButtonText}"
+                                    AutomationProperties.AutomationId="OpenTrash" />
                         </WrapPanel>
 
                         <Border DockPanel.Dock="Top" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
@@ -1000,13 +1009,96 @@
                             </DockPanel>
                         </Border>
 
+                        <!-- Undo after Move to Trash: shown only in the visit that produced it (the view model withdraws it otherwise). -->
+                        <Border DockPanel.Dock="Top" Style="{StaticResource Banner}" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}"
+                                Visibility="{Binding HasUndo, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Trash notice">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding DismissUndoCommand}"
+                                        AutomationProperties.Name="Dismiss trash notice" Content="Dismiss" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}"
+                                        AutomationProperties.Name="Undo move to Trash" Content="Undo" FontWeight="SemiBold" />
+                                <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding UndoMessage}" AutomationProperties.AutomationId="UndoMessage" />
+                            </DockPanel>
+                        </Border>
+
                         <!-- List (fills) above the read-only Note preview (only for a selected Note, at most 40 % of this area). -->
                         <Grid x:Name="ContentArea">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                        <Grid>
+                        <!-- The Project's Trash replaces the listing while open. Restore returns an entry to the container it came from. -->
+                        <DockPanel x:Name="TrashPanel" Grid.RowSpan="2" DataContext="{Binding Trash}" Visibility="{Binding IsOpen, Converter={StaticResource BoolToVisibility}}"
+                                   AutomationProperties.Name="Trash">
+                            <DockPanel DockPanel.Dock="Top" Margin="0,4,0,4">
+                                <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DataContext.CloseTrashCommand, ElementName=ContentArea}"
+                                        AutomationProperties.Name="Back to content" ToolTip="Back to the folder that was shown">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Style="{StaticResource Icon}" Text="&#xE72B;" />
+                                        <TextBlock Margin="6,0,0,0" Text="Back" />
+                                    </StackPanel>
+                                </Button>
+                                <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding RestoreCommand}" AutomationProperties.Name="Restore"
+                                        ToolTip="Restore the selected entry to the folder it came from (Enter)" Content="Restore" />
+                                <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding Title}" AutomationProperties.AutomationId="TrashTitle" />
+                            </DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="TrashNotice"
+                                       Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
+                            <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
+                                       Text="Items in the Trash are kept until you restore them. Nothing on disk was moved or deleted." />
+                            <Grid>
+                                <ListView x:Name="TrashList" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" BorderThickness="0" Background="Transparent"
+                                          AutomationProperties.Name="Trash entries" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                          PreviewKeyDown="TrashList_PreviewKeyDown">
+                                    <ListView.ItemContainerStyle>
+                                        <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
+                                            <Setter Property="Padding" Value="8,5" />
+                                            <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                        </Style>
+                                    </ListView.ItemContainerStyle>
+                                    <ListView.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:TrashEntryViewModel}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="22" />
+                                                    <ColumnDefinition Width="2*" MinWidth="80" />
+                                                    <ColumnDefinition Width="3*" />
+                                                    <ColumnDefinition Width="70" />
+                                                    <ColumnDefinition Width="120" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" VerticalAlignment="Center" />
+                                                <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                                <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
+                                                           Text="{Binding FromText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding FromText}" />
+                                                <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding ItemsText}" />
+                                                <TextBlock Grid.Column="4" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding TrashedAtText}" />
+                                            </Grid>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsLink}" Value="True">
+                                                    <Setter TargetName="Glyph" Property="Text" Value="&#xE71B;" />
+                                                    <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsNote}" Value="True">
+                                                    <Setter TargetName="Glyph" Property="Text" Value="&#xE70B;" />
+                                                    <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.MutedText}" />
+                                                </DataTrigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ListView.ItemTemplate>
+                                    <ListView.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Restore" InputGestureText="Enter" Command="{Binding RestoreCommand}" />
+                                        </ContextMenu>
+                                    </ListView.ContextMenu>
+                                </ListView>
+                                <TextBlock Style="{StaticResource EmptyState}" Text="The Trash is empty." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
+                                           AutomationProperties.AutomationId="TrashEmpty" />
+                                <TextBlock Style="{StaticResource EmptyState}" Text="Loading the Trash…" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Style="{StaticResource EmptyState}" Foreground="{StaticResource Brush.Error}" Text="{Binding LoadError}"
+                                           Visibility="{Binding LoadError, Converter={StaticResource NullToCollapsed}}" />
+                            </Grid>
+                        </DockPanel>
+                        <Grid Visibility="{Binding IsTrashOpen, Converter={StaticResource InverseBoolToVisibility}}">
                             <ListView x:Name="ContentList" ItemsSource="{Binding Items}" SelectedItem="{Binding SelectedItem}"
                                       BorderThickness="0" Background="Transparent" AutomationProperties.Name="Project content"
                                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
@@ -1067,6 +1159,7 @@
                                         <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}" />
                                         <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}" />
                                         <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
+                                        <MenuItem Header="Move to Trash" InputGestureText="Del" Command="{Binding MoveToTrashCommand}" />
                                         <MenuItem Header="Check" Command="{Binding CheckCommand}" />
                                         <Separator />
                                         <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}" />

@@ -72,6 +72,9 @@ public sealed class ProjectFolderNameEditorViewModel : ObservableObject
     /// <summary>The stored folder after a successful create or rename.</summary>
     public ProjectFolder? SavedFolder { get; private set; }
 
+    /// <summary>A Save was refused (nothing written). The caller re-reads the item after the dialog closes.</summary>
+    public bool SaveRefused { get; private set; }
+
     private async Task SaveAsync()
     {
         Error = null;
@@ -91,6 +94,7 @@ public sealed class ProjectFolderNameEditorViewModel : ObservableObject
         if (!result.Succeeded)
         {
             Error = result.Error; // set before closing is allowed again
+            SaveRefused = true;
             IsSaving = false;
             return;
         }
@@ -205,6 +209,9 @@ public sealed class ProjectLinkEditorViewModel : ObservableObject
     /// <summary>The stored link after a successful create or edit.</summary>
     public ProjectLink? SavedLink { get; private set; }
 
+    /// <summary>A Save was refused (nothing written). The caller re-reads the item after the dialog closes.</summary>
+    public bool SaveRefused { get; private set; }
+
     private async Task SaveAsync()
     {
         NameError = TargetError = GeneralError = null;
@@ -231,6 +238,7 @@ public sealed class ProjectLinkEditorViewModel : ObservableObject
                 default: GeneralError = result.Error; break;
             }
 
+            SaveRefused = true;
             IsSaving = false;
             return;
         }
@@ -352,6 +360,9 @@ public sealed class ProjectContentMoveViewModel : ObservableObject
 
     public long? MovedTo { get; private set; }
 
+    /// <summary>A Move was refused (nothing moved). The caller re-reads the item after the dialog closes.</summary>
+    public bool MoveRefused { get; private set; }
+
     private async Task MoveAsync()
     {
         Error = null;
@@ -376,6 +387,7 @@ public sealed class ProjectContentMoveViewModel : ObservableObject
         {
             Error = result.Error; // set before closing is allowed again
             IsStale = result.IsStale;
+            MoveRefused = true;
             IsMoving = false;
             return;
         }

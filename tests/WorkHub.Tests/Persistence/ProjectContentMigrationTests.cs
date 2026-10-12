@@ -77,12 +77,13 @@ public sealed class ProjectContentMigrationTests : IDisposable
     [Fact]
     public void FreshDatabase_HasTheReviewedV004Schema()
     {
-        var result = _root.CreateInitializer().Initialize();
+        // Exactly V001–V004: later migrations (V006 Trash) extend these tables and are covered by their own tests.
+        var result = _root.CreateDatabaseInitializer(new V001_InitialSchema(), new V002_OwnerManager(), new V003_Workspace(), new V004_ProjectContent()).Initialize();
 
-        Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
+        Assert.Equal(DatabaseInitializationOutcome.Created, result.Outcome);
+        Assert.Equal(4, result.SchemaVersion);
         using var connection = _root.Open();
-        Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
+        Assert.Equal(4, Db.ScalarLong(connection, "PRAGMA user_version;"));
         Assert.Equal(
             ["Id", "ProjectNodeId", "ParentFolderId", "Name", "NameKey", "CreatedAt", "UpdatedAt"],
             Names(connection, "SELECT name FROM pragma_table_info('ProjectFolders') ORDER BY cid;"));
@@ -121,7 +122,7 @@ public sealed class ProjectContentMigrationTests : IDisposable
         Assert.Contains("CONSTRAINT FK_ProjectLinks_Folder", V004_ProjectContent.Sql);
         Assert.DoesNotContain("ProjectNotes", V004_ProjectContent.Sql);
         Assert.DoesNotContain("CASCADE", V004_ProjectContent.Sql);
-        Assert.Equal([1, 2, 3, 4, 5], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6], SchemaMigrations.All.Select(m => m.Version));
     }
 
     [Fact]

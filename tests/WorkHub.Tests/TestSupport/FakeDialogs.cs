@@ -76,9 +76,13 @@ internal sealed class FakeDialogs : IDialogService
         return OnUnsavedChanges(message);
     }
 
+    /// <summary>Runs while the confirmation is "open" (the user reading it), before <see cref="ConfirmAnswer"/> is returned.</summary>
+    public Action<string>? OnConfirm { get; set; }
+
     public bool Confirm(string title, string message, string confirmText)
     {
         Confirmations.Add((title, message, confirmText));
+        OnConfirm?.Invoke(message);
         return ConfirmAnswer;
     }
 

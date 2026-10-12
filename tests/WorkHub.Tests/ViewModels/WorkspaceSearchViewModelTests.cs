@@ -261,6 +261,35 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
     }
 
     [Fact]
+    public async Task ActivatingAHitTrashedSinceTheSearch_ReportsTrashed_AndRemovesExactlyThatKindAndId()
+    {
+        var project = await Project("Alpha");
+        using (var c = _root.Open())
+        {
+            Db.Exec(c, "INSERT INTO ProjectLinks (Id, ProjectNodeId, FolderId, LinkType, Name, Target, CreatedAt, UpdatedAt) VALUES (900, $p, NULL, 'Web', 'Twin', 'https://t.test/', $n, $n);", ("$p", project), ("$n", Db.Now));
+            Db.Exec(c, "INSERT INTO ProjectNotes (Id, ProjectNodeId, FolderId, Title, Content, CreatedAt, UpdatedAt) VALUES (900, $p, NULL, 'Twin', '', $n, $n);", ("$p", project), ("$n", Db.Now));
+        }
+
+        _dialogs.OnNoteEditor = _ => throw new InvalidOperationException("never");
+        var area = await Area();
+        var search = area.Search!;
+        await Type(search, "twin");
+        Assert.Equal(2, search.Results.Count);
+
+        Assert.Equal(TrashOutcome.Trashed, (await _otherContent.TrashAsync(new ContentRef(ContentKind.Note, 900))).Outcome);
+        search.SelectedResult = search.Results.Single(r => r.Item.Kind == SearchResultKind.Note);
+        search.ActivateSelectedCommand.Execute(null);
+        await search.CurrentActivation;
+
+        Assert.Equal("This item is in the Trash.", search.NoticeText);
+        Assert.Equal(new SearchItemRef(SearchResultKind.Link, 900), Assert.Single(search.Results).Item);
+        Assert.Null(area.SelectedContent); // nothing was revealed
+
+        await Type(search, "twin"); // a new search no longer finds it
+        Assert.Equal(new SearchItemRef(SearchResultKind.Link, 900), Assert.Single(search.Results).Item);
+    }
+
+    [Fact]
     public async Task TypingAgain_InvalidatesARevealInFlight()
     {
         var target = await Project("Target");
