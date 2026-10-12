@@ -39,7 +39,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         }
         catch (ContentContainerException ex)
         {
-            return WorkspaceResult<ProjectFolder>.Failed(ContainerProblem(ex.Problem));
+            return WorkspaceResult<ProjectFolder>.Failed(ContainerProblem(ex.Problem), failure: ContainerFailure(ex.Problem));
         }
     }
 
@@ -62,6 +62,10 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         {
             return WorkspaceResult<ProjectFolder>.Failed(ItemInTrash);
         }
+        catch (ProjectTrashedException)
+        {
+            return WorkspaceResult<ProjectFolder>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
+        }
     }
 
     public async Task<WorkspaceResult<ProjectLink>> CreateLinkAsync(long projectNodeId, long? folderId, ProjectLinkDraft draft, CancellationToken cancellationToken = default)
@@ -76,7 +80,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         }
         catch (ContentContainerException ex)
         {
-            return WorkspaceResult<ProjectLink>.Failed(ContainerProblem(ex.Problem));
+            return WorkspaceResult<ProjectLink>.Failed(ContainerProblem(ex.Problem), failure: ContainerFailure(ex.Problem));
         }
     }
 
@@ -95,6 +99,10 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         catch (ContentTrashedException)
         {
             return WorkspaceResult<ProjectLink>.Failed(ItemInTrash);
+        }
+        catch (ProjectTrashedException)
+        {
+            return WorkspaceResult<ProjectLink>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
         }
     }
 
@@ -137,6 +145,8 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         }
         catch (ContentContainerException ex)
         {
+            if (ex.Problem == ContentContainerProblem.ProjectTrashed)
+                return NoteWriteResult.Failed(NoteWriteStatus.ProjectTrashed, NoteProjectInTrash);
             return NoteWriteResult.Failed(NoteWriteStatus.LocationMissing, ex.Problem switch
             {
                 ContentContainerProblem.ProjectNotFound => "This project no longer exists. Your text is unchanged here.",
@@ -160,6 +170,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
                 $"This note was changed elsewhere since you opened it (now revision {result.CurrentRevision}). Your text is unchanged here.",
                 currentRevision: result.CurrentRevision),
             NoteSaveStatus.Trashed => NoteWriteResult.Failed(NoteWriteStatus.Trashed, "This note is in the Trash. Your text is unchanged here."),
+            NoteSaveStatus.ProjectTrashed => NoteWriteResult.Failed(NoteWriteStatus.ProjectTrashed, NoteProjectInTrash),
             _ => NoteWriteResult.Failed(NoteWriteStatus.NotFound, "This note no longer exists. Your text is unchanged here."),
         };
     }
@@ -173,6 +184,11 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         try
         {
             return NoteWriteResult.Ok(await store.SaveNoteAsNewAsync(originalNoteId, projectNodeId, lastKnownFolderId, normalized!, cancellationToken).ConfigureAwait(false));
+        }
+        catch (ContentContainerException ex) when (ex.Problem == ContentContainerProblem.ProjectTrashed)
+        {
+            // Save as new would write into the same Project, which is read-only while it is in the Trash.
+            return NoteWriteResult.Failed(NoteWriteStatus.ProjectTrashed, "This project is in the Trash, so a new note cannot be saved in it. Copy your text instead.");
         }
         catch (ContentContainerException ex)
         {
@@ -203,6 +219,8 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         var link = await store.GetLinkAsync(linkId, cancellationToken).ConfigureAwait(false);
         if (link is null)
             return new ProjectLinkOpenResult(ProjectLinkOpenProblem.LinkNotFound, LinkNoLongerExists);
+        if (link.IsProjectTrashed)
+            return new ProjectLinkOpenResult(ProjectLinkOpenProblem.ProjectTrashed, ProjectInTrash);
         if (link.IsTrashed)
             return new ProjectLinkOpenResult(ProjectLinkOpenProblem.LinkTrashed, LinkInTrash);
         return await Task.Run(() => launcher.Launch(link), cancellationToken).ConfigureAwait(false);
@@ -232,6 +250,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
                 TrashOutcome.Trashed => null,
                 TrashOutcome.NotFound => "This item no longer exists.",
                 TrashOutcome.AlreadyTrashed => "This item is already in the Trash.",
+                TrashOutcome.ProjectTrashed => "This project is in the Trash. Nothing was changed.",
                 _ => TrashFailed,
             },
         };
@@ -256,6 +275,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
                     : "The folder it came from is in the Trash. Restore that folder first.",
                 RestoreOutcome.ContainerMissing => "The folder it came from no longer exists. The item is still in the Trash.",
                 RestoreOutcome.NameConflict => "A folder with the same name already exists where it came from. Nothing was renamed; the item is still in the Trash.",
+                RestoreOutcome.ProjectTrashed => "This project is in the Trash. Nothing was restored.",
                 _ => RestoreFailed,
             },
         };
@@ -271,6 +291,11 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
     private const string LinkNoLongerExists = "This link no longer exists.";
     private const string LinkInTrash = "This link is in the Trash.";
     private const string ItemInTrash = "This item is in the Trash.";
+    private const string ProjectInTrash = WorkspaceService.ProjectInTrash;
+    private const string NoteProjectInTrash = "This project is in the Trash. Your text is unchanged here.";
+
+    private static WorkspaceFailure? ContainerFailure(ContentContainerProblem problem) =>
+        problem == ContentContainerProblem.ProjectTrashed ? WorkspaceFailure.ProjectTrashed : null;
 
     private static string DuplicateFolderName(string name) =>
         $"A folder named '{name}' already exists here (names are compared ignoring case and width).";
@@ -278,6 +303,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
     private static string ContainerProblem(ContentContainerProblem problem) => problem switch
     {
         ContentContainerProblem.ProjectNotFound => "This project no longer exists.",
+        ContentContainerProblem.ProjectTrashed => ProjectInTrash,
         ContentContainerProblem.WrongProject => "The destination folder belongs to another project.",
         ContentContainerProblem.FolderTrashed => "The destination folder is in the Trash.",
         _ => "The destination folder no longer exists.",
@@ -295,6 +321,7 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         ContentMoveOutcome.Cycle => "A folder cannot be moved into itself or into one of its own subfolders.",
         ContentMoveOutcome.AncestryUnverified => "The move could not be verified as safe. Nothing was moved.",
         ContentMoveOutcome.Duplicate => "The destination already contains a folder with this name.",
+        ContentMoveOutcome.ProjectTrashed => ProjectInTrash,
         _ => "The item could not be moved.",
     });
 }

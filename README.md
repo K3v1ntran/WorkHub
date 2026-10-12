@@ -69,6 +69,30 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   its subfolders, and a name clash at the destination is rejected without changing anything.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
 
+### Workspace Trash (schema v7)
+
+**Move to Trash** (toolbar, context menu, the details pane or **Del** on a project; always confirmed) moves a whole
+Project to the Workspace Trash. Only its marker changes: its details, project folders, links, notes and its own
+project Trash entries stay exactly as they are (names, content, note revisions, timestamps) and are read-only while it
+is in the Trash. Nothing on disk is touched.
+
+- The project leaves the tree only once the move is saved; while it is saving, it stays selectable and its content stays
+  usable. A different selection, its content and any open editor are never affected when the move completes.
+- **Undo** (in the banner) restores it. Undo is offered only while you stay on the Workspace tab: leaving the tab (or
+  Retry) withdraws it, and a move that completes after you left offers none. The project then selects itself only if you
+  have not selected anything else since pressing Undo.
+- **Trashed projects (n)** (above the tree) lists them with the folder they came from and when; **Restore** (or Enter)
+  puts the project back into that folder — by identity, wherever that folder is now — or the top level. A folder or
+  project with the same name there refuses the restore; nothing is renamed, created or moved. Restoring never changes the
+  selection; **Back** (or selecting a tree node) returns to it.
+- A project in the Trash reserves no name and is hidden from the tree, search and Move destinations. Acting on a project
+  another window moved to the Trash says "This project is in the Trash." and removes it from this tree. A note editor
+  keeps your text: Copy draft works, Save as new note is not offered (it would write into the same project).
+- **Remove folder** (or **Del** on a folder) permanently removes an **empty** Workspace Folder after confirmation. It is
+  refused, with the reason and without a dialog, while the folder holds anything — including a project in the Trash,
+  because restoring needs its original folder. Workspace Folders are never trashed, and there is no Undo for removal.
+- Projects and their content are never permanently deleted; there is no Empty Trash or automatic cleanup.
+
 ### Project content (schema v4–v6)
 
 Selecting a Project shows its **Content** below the details: one container at a time (the Project root or one project
@@ -114,8 +138,8 @@ change: files, folders and web pages a link points to are never moved, renamed o
   works, and Save as new note saves next to the original only if that folder is not in the Trash.
 - There is no permanent delete, Empty Trash or automatic cleanup: the Trash keeps everything until it is restored.
 
-Not available yet: permanent delete, Archive, tags, rich text, drag-and-drop, manual ordering, autosave and moving
-content between projects.
+Not available yet: permanent delete of projects or content, Archive, tags, rich text, drag-and-drop, manual ordering,
+autosave and moving content between projects.
 
 ### Workspace search
 
@@ -132,8 +156,9 @@ content. Systems and Owner Manager items are not included (the Repository tab ke
   the item is in now and selects it (a note shows its preview). Nothing is opened or launched; press Enter again on the
   revealed row for that.
 - Results are a snapshot. Revealing always re-reads where the item is now: if it was moved, the reveal goes there; if it
-  no longer exists, the result is removed. Items in the Trash are never found; revealing one found earlier says "This
-  item is in the Trash." and removes that result. A reveal updates only the folders on the item's path (including ones
+  no longer exists, the result is removed. Items in the Trash — and everything in a project in the Workspace Trash — are
+  never found; revealing one found earlier says "This item is in the Trash." (or "This item's project is in the Trash.")
+  and removes that result. A reveal updates only the folders on the item's path (including ones
   another window changed); other folders the tree already loaded are not re-read, and re-expanding a loaded folder does
   not refresh it either.
 - Search only reads. While another program or window holds the database for writing, the search retries for up to 30

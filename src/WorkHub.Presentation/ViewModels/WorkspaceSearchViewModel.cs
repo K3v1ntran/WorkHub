@@ -11,8 +11,11 @@ public enum WorkspaceRevealOutcome
     Selected,
     NotFound,
 
-    /// <summary>The content item is in the Trash; it is not revealed.</summary>
+    /// <summary>The content item, or the Project itself, is in the Trash; it is not revealed.</summary>
     Trashed,
+
+    /// <summary>The content item's Project is in the Workspace Trash; it is not revealed.</summary>
+    ProjectTrashed,
 
     MovedMeanwhile,
     ContainerMissing,
@@ -299,6 +302,13 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
             _context.Post(_ => Show(), null);
     }
 
+    /// <summary>Removes exactly this (Kind, Id) from the shown results, if listed (no re-query).</summary>
+    internal void RemoveResult(SearchItemRef item)
+    {
+        if (Results.FirstOrDefault(r => r.Item == item) is { } listed)
+            Results.Remove(listed);
+    }
+
     private void Activate(WorkspaceSearchHitViewModel? hit)
     {
         if (hit is null)
@@ -320,9 +330,12 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
                 break;
             case WorkspaceRevealOutcome.Trashed:
                 // Same rule: exactly this (Kind, Id) leaves the results.
-                if (Results.FirstOrDefault(r => r.Item == hit.Item) is { } trashed)
-                    Results.Remove(trashed);
-                NoticeText = "This item is in the Trash.";
+                RemoveResult(hit.Item);
+                NoticeText = hit.Item.Kind == SearchResultKind.Project ? "This project is in the Trash." : "This item is in the Trash.";
+                break;
+            case WorkspaceRevealOutcome.ProjectTrashed:
+                RemoveResult(hit.Item);
+                NoticeText = "This item's project is in the Trash.";
                 break;
             case WorkspaceRevealOutcome.MovedMeanwhile:
                 NoticeText = "The item was moved meanwhile. Search again.";

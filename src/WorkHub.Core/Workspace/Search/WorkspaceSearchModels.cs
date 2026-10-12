@@ -74,8 +74,14 @@ public enum RevealResolveStatus
     /// <summary>No row of that kind and Id exists (or a Workspace node's type no longer matches the kind).</summary>
     NotFound,
 
-    /// <summary>The content row of that kind and Id is in the Trash (schema v6); it is not revealed.</summary>
+    /// <summary>
+    /// The content row of that kind and Id is in the Trash (schema v6), or the Project itself is in the Workspace Trash
+    /// (schema v7); it is not revealed.
+    /// </summary>
     Trashed,
+
+    /// <summary>The content row's Project is in the Workspace Trash (schema v7); it is not revealed.</summary>
+    ProjectTrashed,
 }
 
 public sealed record RevealResolution(RevealResolveStatus Status, SearchRevealTarget? Target)
@@ -83,6 +89,8 @@ public sealed record RevealResolution(RevealResolveStatus Status, SearchRevealTa
     public static RevealResolution NotFound { get; } = new(RevealResolveStatus.NotFound, null);
 
     public static RevealResolution Trashed { get; } = new(RevealResolveStatus.Trashed, null);
+
+    public static RevealResolution ProjectTrashed { get; } = new(RevealResolveStatus.ProjectTrashed, null);
 
     public static RevealResolution Found(SearchRevealTarget target) => new(RevealResolveStatus.Found, target);
 }

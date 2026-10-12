@@ -44,6 +44,9 @@ public enum NoteSaveStatus
 
     /// <summary>The note is in the Trash (schema v6); nothing was written.</summary>
     Trashed,
+
+    /// <summary>The note's Project is in the Workspace Trash (schema v7, checked first); nothing was written.</summary>
+    ProjectTrashed,
 }
 
 /// <summary>Store-level outcome of a revision-guarded save, classified inside the save transaction.</summary>
@@ -54,6 +57,8 @@ public sealed record NoteStoreSaveResult(NoteSaveStatus Status, ProjectNote? Not
     public static NoteStoreSaveResult NotFound { get; } = new(NoteSaveStatus.NotFound, null, null);
 
     public static NoteStoreSaveResult Trashed { get; } = new(NoteSaveStatus.Trashed, null, null);
+
+    public static NoteStoreSaveResult ProjectTrashed { get; } = new(NoteSaveStatus.ProjectTrashed, null, null);
 
     public static NoteStoreSaveResult Conflict(long currentRevision) => new(NoteSaveStatus.Conflict, null, currentRevision);
 }
@@ -71,6 +76,12 @@ public enum NoteWriteStatus
 
     /// <summary>The note is in the Trash; nothing was written. The draft is kept and recovery is offered.</summary>
     Trashed,
+
+    /// <summary>
+    /// The note's Project is in the Workspace Trash; nothing was written. The draft is kept; Copy draft is the recovery
+    /// (Save as new would write into the same trashed Project and is refused).
+    /// </summary>
+    ProjectTrashed,
 
     /// <summary>
     /// The Project or folder the note belongs in no longer exists or is in the Trash (create / save as new); nothing was

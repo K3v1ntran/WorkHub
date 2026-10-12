@@ -67,6 +67,10 @@ public sealed class WorkspaceNameEditorViewModel : ObservableObject
     /// <summary>The stored (trimmed) name after a successful rename.</summary>
     public string? SavedName { get; private set; }
 
+    /// <summary>The typed reason of the last refused submit (for example ProjectTrashed or ParentNotFound); the caller reconciles
+    /// the node or parent by a fresh read after the dialog closes.</summary>
+    public WorkspaceFailure? Refusal { get; private set; }
+
     internal static string LocationOf(string? parentPath) =>
         parentPath is null ? "Location: Workspace (top level)" : $"Location: {parentPath}";
 
@@ -99,12 +103,14 @@ public sealed class WorkspaceNameEditorViewModel : ObservableObject
         {
             var renamed = await _workspace.RenameAsync(id, Name);
             Error = renamed.Error;
+            Refusal = renamed.Failure ?? Refusal;
             SavedName = renamed.Value;
             return renamed.Succeeded;
         }
 
         var created = await _workspace.CreateFolderAsync(_parentId, Name);
         Error = created.Error;
+        Refusal = created.Failure ?? Refusal;
         CreatedNode = created.Value;
         return created.Succeeded;
     }
@@ -210,6 +216,9 @@ public sealed class ProjectEditorViewModel : ObservableObject
     /// <summary>The stored state after a successful edit.</summary>
     public ProjectDetails? SavedDetails { get; private set; }
 
+    /// <summary>The typed reason of the last refused submit; the caller reconciles by a fresh read after the dialog closes.</summary>
+    public WorkspaceFailure? Refusal { get; private set; }
+
     private async Task SaveAsync()
     {
         NameError = StatusError = DescriptionError = OwnerError = ProjectManagerError = GeneralError = null;
@@ -223,12 +232,14 @@ public sealed class ProjectEditorViewModel : ObservableObject
             {
                 var created = await _workspace.CreateProjectAsync(_parentId, draft);
                 (field, error) = (created.Field, created.Error);
+                Refusal = created.Failure ?? Refusal;
                 CreatedNode = created.Value;
             }
             else
             {
                 var updated = await _workspace.UpdateProjectAsync(_existing.NodeId, draft);
                 (field, error) = (updated.Field, updated.Error);
+                Refusal = updated.Failure ?? Refusal;
                 SavedDetails = updated.Value;
             }
         }
@@ -341,6 +352,11 @@ public sealed class WorkspaceMoveViewModel : ObservableObject
 
     public long? MovedTo { get; private set; }
 
+    /// <summary>The typed reason of the last refused Move, and the destination it was refused for.</summary>
+    public WorkspaceFailure? Refusal { get; private set; }
+
+    public long? RefusedDestinationId { get; private set; }
+
     private async Task MoveAsync()
     {
         Error = null;
@@ -359,6 +375,8 @@ public sealed class WorkspaceMoveViewModel : ObservableObject
         if (!result.Succeeded)
         {
             Error = result.Error; // set before closing is allowed again
+            if (result.Failure is { } failure)
+                (Refusal, RefusedDestinationId) = (failure, destination.FolderId);
             IsMoving = false;
             return;
         }

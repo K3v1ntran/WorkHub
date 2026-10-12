@@ -214,6 +214,23 @@ public partial class MainWindow : Window
         }
     }
 
+    private void WorkspaceTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Clicking a node while the Workspace Trash is open shows that node again — also the node that is already selected,
+        // which raises no selection change (the view model closes the panel on every other selection).
+        if (Main?.Workspace is not { IsTrashOpen: true } workspace)
+            return;
+        for (var d = e.OriginalSource as DependencyObject; d is not null;
+             d = d is System.Windows.Media.Visual ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+        {
+            if (d is TreeViewItem { DataContext: WorkspaceNodeViewModel { IsPlaceholder: false } })
+            {
+                workspace.CloseTrashCommand.Execute(null);
+                return;
+            }
+        }
+    }
+
     private ProjectContentViewModel? ProjectContent => Main?.Workspace.SelectedContent;
 
     private void ContentList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -252,6 +269,14 @@ public partial class MainWindow : Window
         if (ProjectContent is not { } content || e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
             return;
         content.Trash.RestoreCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void WorkspaceTrashList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Main is not { } main || e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
+            return;
+        main.Workspace.Trash.RestoreCommand.Execute(null);
         e.Handled = true;
     }
 

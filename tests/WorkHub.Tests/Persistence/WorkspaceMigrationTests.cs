@@ -29,12 +29,12 @@ public sealed class WorkspaceMigrationTests : IDisposable
     [Fact]
     public void FreshDatabase_HasTheReviewedWorkspaceSchema()
     {
-        var result = _root.CreateInitializer().Initialize();
+        var result = _root.CreateDatabaseInitializer(MigrationSets.ThroughV006).Initialize(); // pinned: V007 replaces the V003 name indexes (WorkspaceTrashMigrationTests)
 
-        Assert.Equal(DatabaseInitializationOutcome.Created, result.Database.Outcome);
-        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
+        Assert.Equal(DatabaseInitializationOutcome.Created, result.Outcome);
+        Assert.Equal(6, result.SchemaVersion);
         using var connection = _root.Open();
-        Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
+        Assert.Equal(6, Db.ScalarLong(connection, "PRAGMA user_version;"));
         Assert.Equal(["Id", "ParentId", "NodeType", "Name", "NameKey", "SortOrder", "CreatedAt", "UpdatedAt"], Columns(connection, "WorkspaceNodes"));
         Assert.Equal(["NodeId", "ProjectId", "Status", "Description", "Owner", "ProjectManager"], Columns(connection, "Projects"));
         Assert.Equal(
@@ -52,7 +52,7 @@ public sealed class WorkspaceMigrationTests : IDisposable
     [Fact]
     public void PartialIndexes_AreUniqueAndScopedToRootOrChildren()
     {
-        _root.CreateInitializer().Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV006).Initialize(); // pinned (as above)
         using var connection = _root.Open();
 
         var root = Db.ScalarString(connection, "SELECT sql FROM sqlite_schema WHERE name = 'UX_WorkspaceNodes_RootName';");

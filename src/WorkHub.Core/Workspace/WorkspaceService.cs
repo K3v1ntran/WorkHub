@@ -27,11 +27,11 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized), NameField);
+            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (WorkspaceParentException ex)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(ParentProblem(ex.Problem));
+            return ParentFailed<WorkspaceNode>(ex.Problem);
         }
     }
 
@@ -49,11 +49,11 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized.Name!), NameField);
+            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized.Name!), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (WorkspaceParentException ex)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(ParentProblem(ex.Problem));
+            return ParentFailed<WorkspaceNode>(ex.Problem);
         }
     }
 
@@ -67,14 +67,19 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         {
             return await store.RenameAsync(nodeId, normalized, cancellationToken).ConfigureAwait(false)
                 ? WorkspaceResult<string>.Ok(normalized)
-                : WorkspaceResult<string>.Failed(NoLongerExists);
+                : WorkspaceResult<string>.Failed(NoLongerExists, failure: WorkspaceFailure.NodeNotFound);
         }
         catch (DuplicateWorkspaceNameException)
         {
-            return WorkspaceResult<string>.Failed(DuplicateName(normalized), NameField);
+            return WorkspaceResult<string>.Failed(DuplicateName(normalized), NameField, WorkspaceFailure.DuplicateName);
+        }
+        catch (ProjectTrashedException)
+        {
+            return WorkspaceResult<string>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
         }
     }
 
+    /// <summary>The Project's details (<see cref="ProjectDetails.IsTrashed"/> when it is in the Trash); null when it no longer exists.</summary>
     public Task<ProjectDetails?> GetProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
         store.GetProjectAsync(nodeId, cancellationToken);
 
@@ -89,11 +94,15 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         {
             return await store.UpdateProjectAsync(nodeId, normalized, cancellationToken).ConfigureAwait(false) is { } saved
                 ? WorkspaceResult<ProjectDetails>.Ok(saved)
-                : WorkspaceResult<ProjectDetails>.Failed(NoLongerExists);
+                : WorkspaceResult<ProjectDetails>.Failed(NoLongerExists, failure: WorkspaceFailure.NodeNotFound);
         }
         catch (DuplicateWorkspaceNameException)
         {
-            return WorkspaceResult<ProjectDetails>.Failed(DuplicateName(normalized.Name!), NameField);
+            return WorkspaceResult<ProjectDetails>.Failed(DuplicateName(normalized.Name!), NameField, WorkspaceFailure.DuplicateName);
+        }
+        catch (ProjectTrashedException)
+        {
+            return WorkspaceResult<ProjectDetails>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
         }
     }
 
@@ -114,30 +123,62 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (WorkspaceNodeNotFoundException)
         {
-            return WorkspaceResult<bool>.Failed(NoLongerExists);
+            return WorkspaceResult<bool>.Failed(NoLongerExists, failure: WorkspaceFailure.NodeNotFound);
         }
         catch (WorkspaceParentException ex)
         {
-            return WorkspaceResult<bool>.Failed(ParentProblem(ex.Problem));
+            return ParentFailed<bool>(ex.Problem);
         }
         catch (WorkspaceMoveCycleException)
         {
-            return WorkspaceResult<bool>.Failed("A folder cannot be moved into itself or into one of its own subfolders.");
+            return WorkspaceResult<bool>.Failed("A folder cannot be moved into itself or into one of its own subfolders.", failure: WorkspaceFailure.MoveCycle);
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<bool>.Failed($"The destination already contains a folder or project named '{ex.Name}'.");
+            return WorkspaceResult<bool>.Failed($"The destination already contains a folder or project named '{ex.Name}'.", failure: WorkspaceFailure.DuplicateName);
+        }
+        catch (ProjectTrashedException)
+        {
+            return WorkspaceResult<bool>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
         }
     }
 
+    // ---- Workspace Trash -----------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Moves a Project to the Workspace Trash: only its marker changes. Its details, folders, links, notes and Project-level
+    /// Trash entries stay exactly as they are (read-only while trashed). Nothing on disk is touched.
+    /// </summary>
+    public Task<ProjectTrashResult> TrashProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        store.TrashProjectAsync(nodeId, cancellationToken);
+
+    /// <summary>Restores a trashed Project into its original parent, or refuses (nothing is renamed, created or moved).</summary>
+    public Task<ProjectRestoreResult> RestoreProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        store.RestoreProjectAsync(nodeId, cancellationToken);
+
+    public Task<IReadOnlyList<WorkspaceTrashEntry>> ListTrashAsync(CancellationToken cancellationToken = default) =>
+        store.ListTrashAsync(cancellationToken);
+
+    public Task<int> CountTrashAsync(CancellationToken cancellationToken = default) =>
+        store.CountTrashAsync(cancellationToken);
+
+    /// <summary>Permanently removes a truly empty Workspace Folder (metadata only).</summary>
+    public Task<FolderRemoveResult> RemoveEmptyFolderAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        store.RemoveEmptyFolderAsync(nodeId, cancellationToken);
+
+    public Task<WorkspaceNodeState?> GetNodeStateAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        store.GetNodeStateAsync(nodeId, cancellationToken);
+
     internal static string NewProjectId() => Guid.NewGuid().ToString("N");
+
+    public const string ProjectInTrash = "This project is in the Trash.";
 
     private const string NoLongerExists = "This folder or project no longer exists.";
 
     private static string DuplicateName(string name) =>
         $"A folder or project named '{name}' already exists here (names are compared ignoring case and width).";
 
-    private static string ParentProblem(WorkspaceParentProblem problem) => problem == WorkspaceParentProblem.NotFound
-        ? "The destination folder no longer exists."
-        : "Only folders can contain folders and projects.";
+    private static WorkspaceResult<T> ParentFailed<T>(WorkspaceParentProblem problem) => problem == WorkspaceParentProblem.NotFound
+        ? WorkspaceResult<T>.Failed("The destination folder no longer exists.", failure: WorkspaceFailure.ParentNotFound)
+        : WorkspaceResult<T>.Failed("Only folders can contain folders and projects.", failure: WorkspaceFailure.ParentNotAFolder);
 }

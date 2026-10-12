@@ -144,6 +144,9 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         Run(connection =>
         {
             using var transaction = connection.BeginTransaction(deferred: false);
+            if (TrashedProjectOfRow(connection, transaction, "ProjectFolders", folderId) is { } trashedProject)
+                throw new ProjectTrashedException(trashedProject);
+
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = $"""
@@ -184,6 +187,9 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         Run(connection =>
         {
             using var transaction = connection.BeginTransaction(deferred: false);
+            if (TrashedProjectOfRow(connection, transaction, "ProjectLinks", linkId) is { } trashedProject)
+                throw new ProjectTrashedException(trashedProject);
+
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = $"""
@@ -219,9 +225,15 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         Run(connection =>
         {
             using var command = connection.CreateCommand();
+            using var transaction = connection.BeginTransaction(deferred: true); // the link and its Project state from one snapshot
+            command.Transaction = transaction;
             command.CommandText = $"SELECT {LinkColumns} FROM ProjectLinks WHERE Id = $id;";
             command.Parameters.AddWithValue("$id", linkId);
-            return ReadSingle(command, ReadLink);
+            var link = ReadSingle(command, ReadLink) is { } read
+                ? read with { IsProjectTrashed = TrashedProjectOfRow(connection, transaction, "ProjectLinks", linkId) is not null }
+                : null;
+            transaction.Commit();
+            return link;
         }, cancellationToken);
 
     public Task<IReadOnlyList<WorkspaceFolderPath>> ListFolderMoveTargetsAsync(long projectNodeId, long? movingFolderId, CancellationToken cancellationToken = default) =>
@@ -263,7 +275,7 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         {
             // One read transaction: the container check, Project name and breadcrumb come from the same snapshot.
             using var transaction = connection.BeginTransaction(deferred: true);
-            if ((ProjectProblem(connection, transaction, projectNodeId) ?? FolderProblem(connection, transaction, projectNodeId, folderId, requireActive: false)) is not null)
+            if ((ProjectProblem(connection, transaction, projectNodeId, requireActive: false) ?? FolderProblem(connection, transaction, projectNodeId, folderId, requireActive: false)) is not null)
                 return null;
 
             string projectName;
@@ -325,6 +337,8 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         Run(connection =>
         {
             using var transaction = connection.BeginTransaction(deferred: false);
+            if (TrashedProjectOfRow(connection, transaction, "ProjectNotes", noteId) is not null)
+                return NoteStoreSaveResult.ProjectTrashed; // checked first; nothing written
 
             // Only Title, Content, Revision and UpdatedAt: the container is never written by a save.
             using (var update = connection.CreateCommand())
@@ -409,8 +423,12 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         {
             using var transaction = connection.BeginTransaction(deferred: true);
             var root = ReadRoot(connection, transaction, item);
+            var state = root is null ? null : new ContentState(item, root.ProjectNodeId, root.ContainerFolderId, root.Trashed)
+            {
+                ProjectTrashed = ProjectProblem(connection, transaction, root.ProjectNodeId) == ContentContainerProblem.ProjectTrashed,
+            };
             transaction.Commit();
-            return root is null ? null : new ContentState(item, root.ProjectNodeId, root.ContainerFolderId, root.Trashed);
+            return state;
         }, cancellationToken);
 
     public Task<TrashCount> CountTrashSetAsync(ContentRef item, CancellationToken cancellationToken = default) =>
@@ -437,6 +455,8 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
             var root = ReadRoot(connection, transaction, item);
             if (root is null)
                 return TrashResult.Refused(TrashOutcome.NotFound);
+            if (ProjectProblem(connection, transaction, root.ProjectNodeId) == ContentContainerProblem.ProjectTrashed)
+                return TrashResult.Refused(TrashOutcome.ProjectTrashed); // checked before every content precondition
             if (root.Trashed)
                 return TrashResult.Refused(TrashOutcome.AlreadyTrashed);
 
@@ -542,18 +562,23 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         {
             using var transaction = connection.BeginTransaction(deferred: false);
 
-            // 1. The entry (already restored elsewhere → EntryNotFound).
+            // 1. The entry (already restored elsewhere → EntryNotFound), then its Project (in the Workspace Trash → ProjectTrashed).
             ContentRef item;
+            long entryProject;
             using (var entry = connection.CreateCommand())
             {
                 entry.Transaction = transaction;
-                entry.CommandText = "SELECT RootKind, RootId FROM ProjectTrashEntries WHERE Id = $entry;";
+                entry.CommandText = "SELECT RootKind, RootId, ProjectNodeId FROM ProjectTrashEntries WHERE Id = $entry;";
                 entry.Parameters.AddWithValue("$entry", entryId);
                 using var reader = entry.ExecuteReader();
                 if (!reader.Read())
                     return RestoreResult.Refused(RestoreOutcome.EntryNotFound);
                 item = new ContentRef(Enum.Parse<ContentKind>(reader.GetString(0)), reader.GetInt64(1));
+                entryProject = reader.GetInt64(2);
             }
+
+            if (ProjectProblem(connection, transaction, entryProject) == ContentContainerProblem.ProjectTrashed)
+                return RestoreResult.Refused(RestoreOutcome.ProjectTrashed); // checked before every content precondition
 
             var root = ReadRoot(connection, transaction, item)
                        ?? throw new InvalidDataException("The root row of a Trash entry no longer exists; nothing was restored.");
@@ -859,6 +884,8 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
                 using var reader = source.ExecuteReader();
                 if (!reader.Read())
                     return ContentMoveOutcome.NotFound;
+                if (TrashedProjectOfRow(connection, transaction, table, id) is not null)
+                    return ContentMoveOutcome.ProjectTrashed; // checked before every content precondition
                 if (reader.GetInt64(2) == 1)
                     return ContentMoveOutcome.ItemTrashed; // trashed rows are read-only
                 projectNodeId = reader.GetInt64(0);
@@ -963,13 +990,34 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
             throw new ContentContainerException(problem);
     }
 
-    private static ContentContainerProblem? ProjectProblem(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId)
+    /// <param name="requireActive">A Project in the Workspace Trash is <see cref="ContentContainerProblem.ProjectTrashed"/>
+    /// (listing, create, save as new). Display-only lookups pass false.</param>
+    private static ContentContainerProblem? ProjectProblem(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId, bool requireActive = true)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT EXISTS (SELECT 1 FROM Projects WHERE NodeId = $project);";
+        command.CommandText = "SELECT n.TrashedAt IS NOT NULL FROM Projects AS p JOIN WorkspaceNodes AS n ON n.Id = p.NodeId WHERE p.NodeId = $project;";
         command.Parameters.AddWithValue("$project", projectNodeId);
-        return (long)command.ExecuteScalar()! == 1 ? null : ContentContainerProblem.ProjectNotFound;
+        return command.ExecuteScalar() switch
+        {
+            null => ContentContainerProblem.ProjectNotFound,
+            1L when requireActive => ContentContainerProblem.ProjectTrashed,
+            _ => null,
+        };
+    }
+
+    /// <summary>
+    /// The Project owning row <paramref name="id"/> of <paramref name="table"/> if that Project is in the Workspace Trash;
+    /// null when it is active or the row no longer exists. Every item-based write asks this FIRST inside its write
+    /// transaction (schema v7); the V007 triggers back it up. The table name is a constant, never input.
+    /// </summary>
+    private static long? TrashedProjectOfRow(SqliteConnection connection, SqliteTransaction? transaction, string table, long id)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT r.ProjectNodeId FROM {table} AS r JOIN WorkspaceNodes AS n ON n.Id = r.ProjectNodeId WHERE r.Id = $id AND n.TrashedAt IS NOT NULL;";
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar() is long project ? project : null;
     }
 
     /// <param name="requireActive">A folder in the Trash is <see cref="ContentContainerProblem.FolderTrashed"/> (listing, create,

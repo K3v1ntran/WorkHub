@@ -20,10 +20,23 @@ public sealed class SqliteConnectionFactory
     /// which is what the app uses.
     /// </param>
     internal SqliteConnectionFactory(string databaseFile, int? defaultTimeoutSeconds)
+        : this(databaseFile, defaultTimeoutSeconds, opened: null)
+    {
+    }
+
+    /// <param name="opened">
+    /// Tests only (Phase 8 D14): called with every connection right after it opens, for example to register a blocking
+    /// function and a TEMP trigger that pause a store write inside its transaction. Connections of such a factory are never
+    /// pooled, so each one gets exactly the current registration. Null (the app) disables the hook.
+    /// </param>
+    internal SqliteConnectionFactory(string databaseFile, int? defaultTimeoutSeconds, Action<SqliteConnection>? opened)
     {
         DatabaseFile = databaseFile;
         _defaultTimeoutSeconds = defaultTimeoutSeconds;
+        _opened = opened;
     }
+
+    private readonly Action<SqliteConnection>? _opened;
 
     public string DatabaseFile { get; }
 
@@ -42,10 +55,11 @@ public sealed class SqliteConnectionFactory
 
     internal SqliteConnection Open(SqliteOpenMode mode, bool pooling = true)
     {
-        var connection = new SqliteConnection(ConnectionString(mode, pooling));
+        var connection = new SqliteConnection(ConnectionString(mode, pooling && _opened is null));
         try
         {
             connection.Open();
+            _opened?.Invoke(connection);
             return connection;
         }
         catch

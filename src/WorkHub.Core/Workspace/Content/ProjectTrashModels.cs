@@ -36,7 +36,11 @@ public sealed record TrashEntry(
 /// Where one item is now, by typed identity: its Project, CURRENT container (null = Project root) and whether it is in the
 /// Trash. A focused fresh read for reconciling a listed row after a refused write; null from the store = it no longer exists.
 /// </summary>
-public sealed record ContentState(ContentRef Item, long ProjectNodeId, long? ContainerFolderId, bool Trashed);
+public sealed record ContentState(ContentRef Item, long ProjectNodeId, long? ContainerFolderId, bool Trashed)
+{
+    /// <summary>The item's Project is in the Workspace Trash (schema v7).</summary>
+    public bool ProjectTrashed { get; init; }
+}
 
 /// <summary>Snapshot for the confirmation text, read before the dialog. The write never relies on it (T11).</summary>
 public sealed record TrashCount(bool Exists, bool Trashed, int ActiveItems);
@@ -51,6 +55,9 @@ public enum TrashOutcome
 
     /// <summary>The folder's subtree walk hit its depth bound or a broken chain; nothing was written (fails closed).</summary>
     AncestryUnverified,
+
+    /// <summary>The item's Project is in the Workspace Trash (checked first); nothing was written.</summary>
+    ProjectTrashed,
 }
 
 /// <param name="Committed">The database changed (true only for <see cref="TrashOutcome.Trashed"/>). It says nothing about
@@ -78,6 +85,9 @@ public enum RestoreOutcome
 
     /// <summary>An active folder with the same name already exists in the container. Restore never renames.</summary>
     NameConflict,
+
+    /// <summary>The entry's Project is in the Workspace Trash (checked first); nothing was written.</summary>
+    ProjectTrashed,
 }
 
 /// <summary>

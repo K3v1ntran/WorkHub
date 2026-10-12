@@ -348,6 +348,18 @@ public sealed class ProjectContentViewModel : ObservableObject
 
     internal bool IsDeactivated => _isDeactivated;
 
+    /// <summary>
+    /// Set by the Workspace area: called when this view learns from a fresh read or a refused write that its Project is in
+    /// the Workspace Trash (trashed by another window). Never called after deactivation.
+    /// </summary>
+    internal Action? ProjectTrashedObserved { get; set; }
+
+    internal void ObserveProjectTrashed()
+    {
+        if (!_isDeactivated)
+            ProjectTrashedObserved?.Invoke();
+    }
+
     internal ProjectContentService Content => _content;
 
     internal IAppLog Log => _log;
@@ -428,11 +440,14 @@ public sealed class ProjectContentViewModel : ObservableObject
             ContainerMessage = result.Problem switch
             {
                 ContentContainerProblem.ProjectNotFound => "This project no longer exists.",
+                ContentContainerProblem.ProjectTrashed => WorkspaceService.ProjectInTrash,
                 ContentContainerProblem.FolderTrashed => "This folder is in the Trash.",
                 _ => "This folder no longer exists.",
             };
             OnPropertyChanged(nameof(IsFolderMissing));
             IsLoading = false;
+            if (result.Problem == ContentContainerProblem.ProjectTrashed)
+                ObserveProjectTrashed();
             return;
         }
 
@@ -527,6 +542,8 @@ public sealed class ProjectContentViewModel : ObservableObject
         if (result.Problem == ProjectLinkOpenProblem.LinkTrashed)
             RemoveRow(item.Ref); // a stale row (trashed in another window) leaves this listing
         BannerMessage = result.Succeeded ? null : result.Message ?? "The target could not be opened.";
+        if (result.Problem == ProjectLinkOpenProblem.ProjectTrashed)
+            ObserveProjectTrashed();
     }
 
     private Task EditAsync()
@@ -607,6 +624,13 @@ public sealed class ProjectContentViewModel : ObservableObject
 
         if (!IsEligible(token) || Items.FirstOrDefault(i => i.Ref == target) is not { } row)
             return;
+        if (state is { ProjectTrashed: true })
+        {
+            BannerMessage = WorkspaceService.ProjectInTrash;
+            ObserveProjectTrashed(); // the Workspace area reconciles the Project by Id (and deactivates this view if current)
+            return;
+        }
+
         if (state is { Trashed: false } && state.ProjectNodeId == ProjectNodeId && state.ContainerFolderId == CurrentFolderId)
             return; // still active here (for example restored meanwhile): the row is valid
 
@@ -756,6 +780,8 @@ public sealed class ProjectContentViewModel : ObservableObject
                     break;
                 default:
                     BannerMessage = result.Error; // nothing written; the row stays
+                    if (result.Outcome == TrashOutcome.ProjectTrashed)
+                        ObserveProjectTrashed();
                     break;
             }
         }
@@ -798,6 +824,8 @@ public sealed class ProjectContentViewModel : ObservableObject
             if (result.Outcome != RestoreOutcome.Restored)
             {
                 BannerMessage = result.Error; // no Undo is offered again
+                if (result.Outcome == RestoreOutcome.ProjectTrashed)
+                    ObserveProjectTrashed();
                 return;
             }
 

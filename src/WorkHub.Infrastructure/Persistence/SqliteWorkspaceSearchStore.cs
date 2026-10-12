@@ -140,6 +140,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
 
             foreach (var folder in folders.Values)
             {
+                if (!nodes.ContainsKey(folder.ProjectNodeId))
+                    continue; // content of a Project in the Workspace Trash is never a candidate
                 if (WorkspaceSearchText.MaskOfFolded(folder.NameKey, terms) == all)
                     candidates.Add(new Candidate(new SearchItemRef(SearchResultKind.ProjectFolder, folder.Id), folder.ProjectNodeId, folder.Name, SearchField.Name, true, null) { ContainerFolderId = folder.ParentFolderId });
             }
@@ -153,6 +155,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                 while (reader.Read())
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!nodes.ContainsKey(reader.GetInt64(1)))
+                        continue; // Project in the Workspace Trash
                     var name = reader.GetString(3);
                     var target = reader.GetString(4);
                     var nameMask = WorkspaceSearchText.Mask(name, terms);
@@ -181,6 +185,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     var contentMask = (int)reader.GetInt64(5);
                     if ((titleMask | contentMask) != all)
                         continue;
+                    if (!nodes.ContainsKey(reader.GetInt64(1)))
+                        continue; // Project in the Workspace Trash
                     var field = titleMask != 0 ? SearchField.Name : SearchField.Content;
                     var candidate = new Candidate(new SearchItemRef(SearchResultKind.Note, reader.GetInt64(0)), reader.GetInt64(1), reader.GetString(3), field, titleMask == all, null)
                     {
@@ -269,7 +275,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
         command.Transaction = transaction;
         command.CommandText = """
             SELECT n.Id, n.ParentId, n.NodeType, n.Name, n.NameKey, p.Owner, p.ProjectManager, p.Description
-            FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id;
+            FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id
+            WHERE n.TrashedAt IS NULL;
             """;
         using var reader = command.ExecuteReader();
         var nodes = new Dictionary<long, NodeRow>();
@@ -340,6 +347,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     var expected = item.Kind == SearchResultKind.Project ? "Project" : "Folder";
                     if (!string.Equals(Scalar(connection, transaction, "SELECT NodeType FROM WorkspaceNodes WHERE Id = $id;", item.Id) as string, expected, StringComparison.Ordinal))
                         return RevealResolution.NotFound;
+                    if (Scalar(connection, transaction, "SELECT TrashedAt IS NOT NULL FROM WorkspaceNodes WHERE Id = $id;", item.Id) is 1L)
+                        return RevealResolution.Trashed; // a Project in the Workspace Trash is never revealed
                     workspaceNodeId = item.Id;
                     break;
                 }
@@ -361,6 +370,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     using var reader = command.ExecuteReader();
                     if (!reader.Read())
                         return RevealResolution.NotFound;
+                    if (Scalar(connection, transaction, "SELECT TrashedAt IS NOT NULL FROM WorkspaceNodes WHERE Id = $id;", reader.GetInt64(0)) is 1L)
+                        return RevealResolution.ProjectTrashed; // content of a Project in the Workspace Trash is never revealed
                     if (reader.GetInt64(2) == 1)
                         return RevealResolution.Trashed; // never revealed; the hit is removed by (Kind, Id)
                     workspaceNodeId = reader.GetInt64(0);
@@ -415,7 +426,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"{NodeSelect} WHERE n.ParentId IS $parent LIMIT $limit;";
+        command.CommandText = $"{NodeSelect} WHERE n.ParentId IS $parent AND n.TrashedAt IS NULL LIMIT $limit;";
         command.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
         command.Parameters.AddWithValue("$limit", _maxRowsPerLevel + 1);
         var children = ReadWorkspaceNodes(command);
@@ -438,7 +449,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
 
     private const string NodeSelect = """
         SELECT n.Id, n.ParentId, n.NodeType, n.Name,
-               EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id) AS HasChildren
+               EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND c.TrashedAt IS NULL) AS HasChildren
         FROM WorkspaceNodes AS n
         """;
 

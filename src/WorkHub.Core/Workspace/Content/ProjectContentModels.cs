@@ -52,6 +52,9 @@ public sealed record ProjectLink(
 {
     /// <summary>The link is in the Trash (schema v6). Only single-item reads return trashed links; listings never do.</summary>
     public bool IsTrashed { get; init; }
+
+    /// <summary>The link's Project is in the Workspace Trash (schema v7). Set by single-item reads only.</summary>
+    public bool IsProjectTrashed { get; init; }
 }
 
 /// <summary>User-editable Link fields (validated by <see cref="ProjectLinkValidator"/>).</summary>
@@ -90,6 +93,9 @@ public enum ContentContainerProblem
 
     /// <summary>The folder exists but is in the Trash (schema v6): nothing can be listed in, created in or moved into it.</summary>
     FolderTrashed,
+
+    /// <summary>The Project is in the Workspace Trash (schema v7): its content is read-only and not listed.</summary>
+    ProjectTrashed,
 }
 
 /// <summary>A listing, or why the container could not be listed.</summary>
@@ -136,6 +142,9 @@ public enum ContentMoveOutcome
 
     /// <summary>The destination already has a sibling folder with the same name key.</summary>
     Duplicate,
+
+    /// <summary>The item's Project is in the Workspace Trash (checked first); nothing written.</summary>
+    ProjectTrashed,
 }
 
 /// <summary>Service-level move result with a user-facing message for failures.</summary>

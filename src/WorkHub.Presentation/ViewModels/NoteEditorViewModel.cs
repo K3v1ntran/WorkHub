@@ -76,7 +76,7 @@ public sealed class NoteEditorViewModel : ObservableObject
         SaveCommand = new AsyncRelayCommand(() => SaveCoreAsync(fromClose: false), () => State == NoteEditorState.Editing && (IsDirty || IsNew));
         RequestCloseCommand = new RelayCommand(RequestClose, () => State == NoteEditorState.Editing);
         CopyDraftCommand = new RelayCommand(CopyDraft, () => State == NoteEditorState.Editing && CanRecover);
-        SaveAsNewCommand = new AsyncRelayCommand(SaveAsNewAsync, () => State == NoteEditorState.Editing && CanRecover && _noteId is not null);
+        SaveAsNewCommand = new AsyncRelayCommand(SaveAsNewAsync, () => State == NoteEditorState.Editing && CanRecover && !IsProjectTrashed && _noteId is not null);
     }
 
     /// <summary>A new note in the given container (null = Project root). Nothing is written until the first Save.</summary>
@@ -195,6 +195,22 @@ public sealed class NoteEditorViewModel : ObservableObject
                 RaiseCommands();
         }
     }
+
+    /// <summary>
+    /// The note's Project is in the Workspace Trash: Copy draft stays available, Save as new is not offered (it would write
+    /// into the same read-only Project).
+    /// </summary>
+    public bool IsProjectTrashed
+    {
+        get => _isProjectTrashed;
+        private set
+        {
+            if (SetProperty(ref _isProjectTrashed, value))
+                RaiseCommands();
+        }
+    }
+
+    private bool _isProjectTrashed;
 
     /// <summary>Something was persisted during this editor session.</summary>
     public bool SavedAny { get; private set; }
@@ -328,6 +344,8 @@ public sealed class NoteEditorViewModel : ObservableObject
                 ShowFailure(result);
             else
                 GeneralError = result.Error;
+            if (result.Status == NoteWriteStatus.ProjectTrashed)
+                IsProjectTrashed = true; // Copy draft remains; Save as new is withdrawn
         }
 
         State = NoteEditorState.Editing;
@@ -380,8 +398,15 @@ public sealed class NoteEditorViewModel : ObservableObject
             default: GeneralError = result.Error; break;
         }
 
-        if (result.OffersRecovery)
+        if (result.Status == NoteWriteStatus.ProjectTrashed)
+        {
+            IsProjectTrashed = true; // the text stays here; Copy draft is the recovery
             CanRecover = true;
+        }
+        else if (result.OffersRecovery)
+        {
+            CanRecover = true;
+        }
     }
 
     private void Approve()

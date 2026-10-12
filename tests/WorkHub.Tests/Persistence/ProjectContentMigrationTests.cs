@@ -122,7 +122,7 @@ public sealed class ProjectContentMigrationTests : IDisposable
         Assert.Contains("CONSTRAINT FK_ProjectLinks_Folder", V004_ProjectContent.Sql);
         Assert.DoesNotContain("ProjectNotes", V004_ProjectContent.Sql);
         Assert.DoesNotContain("CASCADE", V004_ProjectContent.Sql);
-        Assert.Equal([1, 2, 3, 4, 5, 6], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7], SchemaMigrations.All.Select(m => m.Version));
     }
 
     [Fact]
@@ -139,14 +139,14 @@ public sealed class ProjectContentMigrationTests : IDisposable
         Assert.Contains(beforeData, r => r.StartsWith("SystemRepositories|", StringComparison.Ordinal) && r.Contains("IsEnabled=0", StringComparison.Ordinal));
         Assert.Contains(beforeData, r => r.Contains("CustomTarget=http://example.test/custom", StringComparison.Ordinal));
 
-        var result = _root.CreateInitializer().Initialize();
+        var result = _root.CreateDatabaseInitializer(MigrationSets.ThroughV006).Initialize(); // pinned: the v3 objects V007 replaces are checked below
 
-        Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Database.Outcome);
-        Assert.Equal(3, result.Database.PreviousSchemaVersion);
-        Assert.Equal(SchemaMigrations.LatestVersion, result.Database.SchemaVersion);
+        Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Outcome);
+        Assert.Equal(3, result.PreviousSchemaVersion);
+        Assert.Equal(6, result.SchemaVersion);
         using (var connection = _root.Open())
         {
-            Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
+            Assert.Equal(6, Db.ScalarLong(connection, "PRAGMA user_version;"));
             Assert.Equal(beforeData, DataSnapshot(connection)); // every pre-existing row unchanged; no seed into an existing database
             var afterSchema = SchemaSnapshot(connection);
             Assert.All(beforeSchema, entry => Assert.Contains(entry, afterSchema)); // every v3 object unchanged
@@ -154,9 +154,9 @@ public sealed class ProjectContentMigrationTests : IDisposable
         }
 
         // The validated pre-migration copy is the untouched v3 database.
-        var backupFile = result.Database.MigrationBackupFile!;
+        var backupFile = result.MigrationBackupFile!;
         Assert.StartsWith(_root.Paths.MigrationBackupsDirectory, backupFile);
-        Assert.Contains($"_v3_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(backupFile));
+        Assert.Contains("_v3_before_v6_", Path.GetFileName(backupFile));
         using var backup = new SqliteConnection($"Data Source={backupFile};Mode=ReadOnly;Pooling=False");
         backup.Open();
         Assert.Equal(3, Db.ScalarLong(backup, "PRAGMA user_version;"));

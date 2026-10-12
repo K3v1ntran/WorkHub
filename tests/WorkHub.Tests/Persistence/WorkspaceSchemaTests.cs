@@ -17,7 +17,7 @@ public sealed class WorkspaceSchemaTests : IDisposable
 
     public WorkspaceSchemaTests()
     {
-        _root.CreateInitializer().Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV006).Initialize(); // pinned: V007 adds delete guards (see WorkspaceTrashSchemaTests)
         _connection = _root.Open();
     }
 

@@ -170,8 +170,9 @@ public sealed class WorkspaceViewModelTests : IDisposable
     {
         var members = typeof(WorkspaceAreaViewModel).GetProperties().Select(p => p.Name).ToList();
 
-        Assert.DoesNotContain(members, m => m.Contains("Delete") || m.Contains("Trash") || m.Contains("Archive")
-                                            || m.Contains("Tag") || m.Contains("Link") || m.Contains("Note"));
+        // Phase 8 adds Project Trash and empty-folder removal (Delete = Del key); Archive and Tags stay deferred.
+        Assert.DoesNotContain(members, m => m.Contains("Archive") || m.Contains("Tag") || m.Contains("Link") || m.Contains("Note") || m.Contains("Purge"));
+        Assert.DoesNotContain(members, m => m.Contains("Delete") && m != nameof(WorkspaceAreaViewModel.DeleteCommand));
         Assert.DoesNotContain(ProjectEditorViewModel.ForCreate(_workspace, null, null).Statuses, s => s.Status == ProjectStatus.Archived);
     }
 
@@ -673,8 +674,8 @@ public sealed class WorkspaceViewModelTests : IDisposable
         var area = await ActivatedArea();
         using (var connection = _root.Open())
         {
-            Db.Exec(connection, "DELETE FROM WorkspaceNodes WHERE Id = $id;", ("$id", a));
-            Db.Exec(connection, "DELETE FROM WorkspaceNodes WHERE Id = $id;", ("$id", b));
+            Db.DeleteProjectBypassingGuards(connection, a); // only possible outside WorkHub since V007
+            Db.DeleteProjectBypassingGuards(connection, b);
         }
 
         area.SelectedNode = Node(area.Roots, "A");

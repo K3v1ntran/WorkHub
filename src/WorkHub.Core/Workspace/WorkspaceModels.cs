@@ -68,7 +68,11 @@ public sealed record ProjectDetails(
     string? Owner,
     string? ProjectManager,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>The Project is in the Workspace Trash (read-only until restored).</summary>
+    public bool IsTrashed { get; init; }
+}
 
 /// <summary>User-editable Project fields. Owner/ProjectManager are free text, unrelated to Owner Manager.</summary>
 public sealed record ProjectDraft(
@@ -81,12 +85,26 @@ public sealed record ProjectDraft(
 /// <summary>A folder offered as a Move destination, with its path from the root for display.</summary>
 public sealed record WorkspaceFolderPath(long Id, string Path);
 
-/// <summary>Outcome of a Workspace write: a value, or a user-facing error (optionally tied to an editor field).</summary>
-public sealed record WorkspaceResult<T>(T? Value, string? Field, string? Error)
+/// <summary>Typed reason of a refused Workspace write; view models branch on this, never on the message text.</summary>
+public enum WorkspaceFailure
+{
+    DuplicateName,
+    ParentNotFound,
+    ParentNotAFolder,
+    NodeNotFound,
+    MoveCycle,
+    ProjectTrashed,
+}
+
+/// <summary>
+/// Outcome of a Workspace write: a value, or a user-facing error (optionally tied to an editor field) with its typed
+/// <see cref="Failure"/> when the store refused it (null for input validation errors).
+/// </summary>
+public sealed record WorkspaceResult<T>(T? Value, string? Field, string? Error, WorkspaceFailure? Failure = null)
 {
     public bool Succeeded => Error is null;
 
     public static WorkspaceResult<T> Ok(T value) => new(value, null, null);
 
-    public static WorkspaceResult<T> Failed(string error, string? field = null) => new(default, field, error);
+    public static WorkspaceResult<T> Failed(string error, string? field = null, WorkspaceFailure? failure = null) => new(default, field, error, failure);
 }

@@ -506,7 +506,7 @@ public sealed class WorkspaceRevealTests : IDisposable
         var project = await Project("Gone soon");
         var area = await Area();
         using (var c = _root.Open())
-            Db.Exec(c, "DELETE FROM Projects WHERE NodeId = $id; DELETE FROM WorkspaceNodes WHERE Id = $id;", ("$id", project));
+            Db.DeleteProjectBypassingGuards(c, project); // only possible outside WorkHub since V007
 
         Assert.Equal(WorkspaceRevealOutcome.NotFound, await Reveal(area, SearchResultKind.Project, project));
         Assert.Equal(["Gone soon"], Names(area.Roots));

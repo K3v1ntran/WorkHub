@@ -228,6 +228,8 @@ public sealed class ProjectTrashViewModel : ObservableObject
                     break;
                 default:
                     Notice = result.Error; // the entry stays, unchanged
+                    if (result.Outcome == RestoreOutcome.ProjectTrashed)
+                        _owner.ObserveProjectTrashed();
                     break;
             }
         }

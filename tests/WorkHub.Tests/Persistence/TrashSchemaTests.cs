@@ -17,7 +17,7 @@ public sealed class TrashSchemaTests : IDisposable
 
     public TrashSchemaTests()
     {
-        _root.CreateInitializer().Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV006).Initialize(); // pinned: V007 adds delete guards (see WorkspaceTrashSchemaTests)
         _connection = _root.Open();
         _alpha = Db.InsertNode(_connection, null, "Project", "Alpha");
         Db.InsertProjectDetails(_connection, _alpha, "0123456789abcdef0123456789abcdef");

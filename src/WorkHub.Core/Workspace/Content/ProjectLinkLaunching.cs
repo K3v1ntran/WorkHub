@@ -16,6 +16,9 @@ public enum ProjectLinkOpenProblem
 
     /// <summary>The link is in the Trash (schema v6).</summary>
     LinkTrashed,
+
+    /// <summary>The link's Project is in the Workspace Trash (schema v7); nothing is opened.</summary>
+    ProjectTrashed,
 }
 
 public sealed record ProjectLinkOpenResult(ProjectLinkOpenProblem? Problem, string? Message)

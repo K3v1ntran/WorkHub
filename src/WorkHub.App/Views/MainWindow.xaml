@@ -614,6 +614,10 @@
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding DismissBannerCommand}"
                                     AutomationProperties.Name="Dismiss workspace message" Content="Dismiss" />
+                            <!-- Undo of the latest Move to Trash: offered only in the Workspace visit that started it. -->
+                            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}" FontWeight="SemiBold"
+                                    Visibility="{Binding IsUndoAvailable, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.Name="Undo move project to Trash" Content="Undo" />
                             <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap"
                                        Text="{Binding BannerMessage}" AutomationProperties.AutomationId="WorkspaceBanner" />
                         </DockPanel>
@@ -640,7 +644,20 @@
                             <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move to" ToolTip="Move to…">
                                 <TextBlock Style="{StaticResource Icon}" Text="&#xE8DE;" />
                             </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash"
+                                    ToolTip="Move the project to the Trash (Del). Its content stays with it; nothing on disk is touched.">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
+                            </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove empty folder"
+                                    ToolTip="Remove an empty folder (Del). Only the WorkHub folder is removed; nothing on disk is touched.">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8F8;" />
+                            </Button>
                         </StackPanel>
+                        <!-- The Workspace Trash (trashed Projects); the content pane keeps its own per-Project "Trash (n)". -->
+                        <Button DockPanel.Dock="Top" HorizontalAlignment="Left" Margin="8,0,8,4" Style="{StaticResource ToolButton}"
+                                Command="{Binding OpenTrashCommand}" Content="{Binding Trash.ButtonText}"
+                                AutomationProperties.Name="Trashed projects" AutomationProperties.AutomationId="OpenWorkspaceTrash"
+                                ToolTip="Projects in the Workspace Trash (restore them from here)" />
 
                         <!-- Search (Ctrl+F): the results replace the tree while the query is non-empty; Esc clears it. -->
                         <StackPanel DockPanel.Dock="Top" Margin="8,0,8,4" DataContext="{Binding Search}"
@@ -726,10 +743,12 @@
                                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                       PreviewMouseRightButtonDown="WorkspaceTree_PreviewMouseRightButtonDown"
+                                      PreviewMouseLeftButtonDown="WorkspaceTree_PreviewMouseLeftButtonDown"
                                       TreeViewItem.Selected="WorkspaceTree_ItemSelected"
                                       Visibility="{Binding Search.IsActive, Converter={StaticResource InverseBoolToVisibility}, FallbackValue=Visible}">
                                 <TreeView.InputBindings>
                                     <KeyBinding Key="F2" Command="{Binding RenameCommand}" />
+                                    <KeyBinding Key="Delete" Command="{Binding DeleteCommand}" />
                                 </TreeView.InputBindings>
                                 <TreeView.ItemContainerStyle>
                                     <StaticResource ResourceKey="WorkspaceTreeItem" />
@@ -760,6 +779,9 @@
                                         <MenuItem Header="Rename…" InputGestureText="F2" Command="{Binding RenameCommand}" />
                                         <MenuItem Header="Edit Project…" Command="{Binding EditProjectCommand}" />
                                         <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
+                                        <Separator />
+                                        <MenuItem Header="Move to Trash…" InputGestureText="Del" Command="{Binding TrashProjectCommand}" />
+                                        <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}" />
                                     </ContextMenu>
                                 </TreeView.ContextMenu>
                             </TreeView>
@@ -790,7 +812,70 @@
                         Details (top, scrolls on its own) and the selected Project's content (fills the rest). The content
                         list is not inside a ScrollViewer, so its own VirtualizingStackPanel keeps virtualizing.
                     -->
-                    <Grid Grid.Row="1" Grid.Column="2">
+                    <!--
+                        The Workspace Trash replaces the details and content while open (D6). The selection and its content view
+                        stay as they are behind it; Back (or selecting a tree node) shows them again. Restore never selects.
+                    -->
+                    <DockPanel Grid.Row="1" Grid.Column="2" Margin="20,12,20,12" DataContext="{Binding Trash}"
+                               Visibility="{Binding IsOpen, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Workspace Trash">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DataContext.CloseTrashCommand, ElementName=WorkspaceTree}"
+                                    AutomationProperties.Name="Back from Workspace Trash" ToolTip="Back to the selected folder or project">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE72B;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Back" />
+                                </StackPanel>
+                            </Button>
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding RestoreCommand}" AutomationProperties.Name="Restore project"
+                                    ToolTip="Restore the selected project to the folder it came from (Enter)" Content="Restore" />
+                            <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding ButtonText}" AutomationProperties.AutomationId="WorkspaceTrashTitle" />
+                        </DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="WorkspaceTrashNotice"
+                                   Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
+                                   Text="Projects in the Trash keep their folders, links and notes and are kept until you restore them. Nothing on disk was moved or deleted." />
+                        <Grid>
+                            <ListView x:Name="WorkspaceTrashList" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" BorderThickness="0" Background="Transparent"
+                                      AutomationProperties.Name="Trashed projects list" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      PreviewKeyDown="WorkspaceTrashList_PreviewKeyDown">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
+                                        <Setter Property="Padding" Value="8,5" />
+                                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:WorkspaceTrashEntryViewModel}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="22" />
+                                                <ColumnDefinition Width="2*" MinWidth="80" />
+                                                <ColumnDefinition Width="3*" />
+                                                <ColumnDefinition Width="120" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Style="{StaticResource Icon}" Text="&#xE8A5;" Foreground="{StaticResource Brush.Accent}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                            <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
+                                                       Text="{Binding FromText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding FromText}" />
+                                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding TrashedAtText}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                                <ListView.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Restore" InputGestureText="Enter" Command="{Binding RestoreCommand}" />
+                                    </ContextMenu>
+                                </ListView.ContextMenu>
+                            </ListView>
+                            <TextBlock Style="{StaticResource EmptyState}" Text="No projects are in the Trash." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
+                                       AutomationProperties.AutomationId="WorkspaceTrashEmpty" />
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Loading the Trash…" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Style="{StaticResource EmptyState}" Foreground="{StaticResource Brush.Error}" Text="{Binding LoadError}"
+                                       Visibility="{Binding LoadError, Converter={StaticResource NullToCollapsed}}" />
+                        </Grid>
+                    </DockPanel>
+
+                    <Grid Grid.Row="1" Grid.Column="2" Visibility="{Binding IsTrashOpen, Converter={StaticResource InverseBoolToVisibility}}">
                         <Grid.RowDefinitions>
                             <!-- Without Project content (Folder or nothing selected) the details take the whole pane. -->
                             <RowDefinition>
@@ -856,6 +941,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                     <Button Content="Rename…" Command="{Binding RenameCommand}" />
                                     <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
+                                    <Button Margin="8,0,0,0" Content="Remove folder…" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove folder" />
                                 </StackPanel>
                             </StackPanel>
 
@@ -905,6 +991,7 @@
                                 <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                                     <Button Content="Edit…" Style="{StaticResource PrimaryButton}" Command="{Binding EditProjectCommand}" AutomationProperties.Name="Edit Project" />
                                     <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
+                                    <Button Margin="8,0,0,0" Content="Move to Trash…" Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash (details)" />
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>
