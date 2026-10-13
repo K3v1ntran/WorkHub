@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WorkHub.Core.Diagnostics;
 using WorkHub.Core.Startup;
+using WorkHub.Infrastructure.Backup;
 using WorkHub.Infrastructure.Persistence.Migrations;
 
 namespace WorkHub.Infrastructure.Persistence;
@@ -11,7 +12,8 @@ namespace WorkHub.Infrastructure.Persistence;
 /// <list type="bullet">
 /// <item>An existing file is opened with <see cref="SqliteOpenMode.ReadWrite"/> and is never deleted, replaced or reset.</item>
 /// <item>Unreadable, corrupt, foreign or newer-schema databases stop startup with <see cref="DatabaseStartupException"/>.</item>
-/// <item>Before migrating an existing schema, a validated copy is written to <c>Backups\Migrations</c>.</item>
+/// <item>Before migrating an existing schema, a validated standalone copy is written to <c>Backups\Migrations</c>
+/// (Phase 9 D14: candidate file, published only after validation; failure stops startup without migrating).</item>
 /// <item>Each migration and its version bump commit atomically.</item>
 /// <item>A NEW database (no file, or an empty SQLite file with no objects) is built completely in a staging file
 /// (<c>workhub.db.new</c>): schema, then the optional initial data in one transaction. Only a finished database is
@@ -55,6 +57,12 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
     }
 
     public int LatestVersion => _migrations.Count == 0 ? 0 : _migrations[^1].Version;
+
+    /// <summary>
+    /// Tests only: called after the existing database passed its checks and right before the pre-migration safety backup,
+    /// so contention can be arranged exactly at that stage. Null in the application.
+    /// </summary>
+    internal Action? BeforeMigrationBackup { get; init; }
 
     /// <summary>Where a new database is assembled before it is moved to <see cref="WorkHubPaths.DatabaseFile"/>.</summary>
     internal string StagingFile => _paths.DatabaseFile + ".new";
@@ -173,7 +181,8 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
         if (version == LatestVersion)
             return new DatabaseInitializationResult(DatabaseInitializationOutcome.Opened, version, version);
 
-        var backupFile = CreateMigrationBackup(connection, version);
+        BeforeMigrationBackup?.Invoke();
+        var backupFile = CreateMigrationBackup(version);
         ApplyMigrations(connection, version);
         return new DatabaseInitializationResult(DatabaseInitializationOutcome.Migrated, version, LatestVersion, backupFile);
     }
@@ -202,26 +211,38 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
         }
     }
 
-    private string CreateMigrationBackup(SqliteConnection source, int fromVersion)
+    /// <summary>
+    /// Phase 9 D14: the pre-migration backup uses the daily backup's snapshot protocol (pinned read transaction, candidate
+    /// file, candidate-only journal normalization) and is published under its usual name only after candidate-level
+    /// validation against the source at <paramref name="fromVersion"/>. Failure semantics are unchanged: if the backup
+    /// cannot be made or validated, the database is NOT migrated and startup stops. D17: a schema-identity or foreign-key
+    /// finding in the source is logged only — it does not add a new reason to refuse an existing database.
+    /// </summary>
+    private string CreateMigrationBackup(int fromVersion)
     {
-        Directory.CreateDirectory(_paths.MigrationBackupsDirectory);
         var stamp = _time.GetUtcNow().ToString("yyyyMMdd-HHmmssfff", System.Globalization.CultureInfo.InvariantCulture);
         var file = Path.Combine(_paths.MigrationBackupsDirectory, $"workhub_v{fromVersion}_before_v{LatestVersion}_{stamp}.db");
+        var candidate = $"{file}.{Guid.NewGuid():N}.partial";
+        var files = new BackupFileOps();
+        var references = new SchemaReference(_migrations);
 
         try
         {
-            var backupConnections = new SqliteConnectionFactory(file);
-            using (var destination = backupConnections.Open(SqliteOpenMode.ReadWriteCreate, pooling: false))
-                source.BackupDatabase(destination);
+            Directory.CreateDirectory(_paths.MigrationBackupsDirectory);
+            var snapshotter = new SqliteSnapshotter(references, files, SqliteSnapshotter.DefaultLockWaitSeconds);
+            var facts = snapshotter.Copy(_paths.DatabaseFile, candidate, new SnapshotRules(fromVersion, ValidationRules.Migration));
+            foreach (var warning in facts.Warnings)
+                _log.Warn($"Pre-migration check (logged only; the upgrade continues): {warning}.");
 
-            using var check = backupConnections.Open(SqliteOpenMode.ReadOnly, pooling: false);
-            var problem = check.QuickCheck();
-            var copiedVersion = check.GetUserVersion();
-            if (problem is not null || copiedVersion != fromVersion)
-                throw new InvalidOperationException($"Backup validation failed (check: {problem ?? "ok"}, version: {copiedVersion}).");
+            var check = new BackupValidator(references, files).CheckCandidate(candidate, facts, ValidationRules.Migration);
+            if (!check.IsFullyValidated)
+                throw new InvalidOperationException($"Backup validation failed ({check.Status}: {check.Detail}).");
+
+            files.Move(candidate, file);
         }
-        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception ex) when (ex is SqliteException or IOException or UnauthorizedAccessException or InvalidOperationException or BackupStepException)
         {
+            DeleteMigrationCandidate(candidate);
             throw new DatabaseStartupException(
                 DatabaseStartupFailure.MigrationBackupFailed,
                 "The safety backup required before a schema upgrade could not be created. The database was not migrated.",
@@ -230,5 +251,20 @@ public sealed class DatabaseInitializer : IDatabaseInitializer
 
         _log.Info($"Created pre-migration backup {Path.GetFileName(file)}.");
         return file;
+    }
+
+    private void DeleteMigrationCandidate(string candidate)
+    {
+        foreach (var path in StandaloneGate.SidecarSuffixes.Select(s => candidate + s).Prepend(candidate))
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log.Warn($"Could not delete the incomplete backup file {Path.GetFileName(path)} ({ex.GetType().Name}).");
+            }
+        }
     }
 }

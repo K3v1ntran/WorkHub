@@ -43,7 +43,8 @@ public partial class App : Application
             services.LegacyImport,
             dialogs,
             services.Log,
-            () => TortoiseLocator.Detect());
+            () => TortoiseLocator.Detect(),
+            backups: () => new BackupsViewModel(services.Backups));
 
         var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
         var navigation = new RepositoryNavigationViewModel(repository, owner);

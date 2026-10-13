@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkHub.Tests", "tests\Work
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkHub.Presentation", "src\WorkHub.Presentation\WorkHub.Presentation.csproj", "{C8B6E9FE-8BDB-42A0-8360-94DB83609251}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkHub.CrashProbe", "tests\WorkHub.CrashProbe\WorkHub.CrashProbe.csproj", "{17457781-DD8F-4E66-BF0A-2430E630894E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -87,6 +89,18 @@ Global
 		{C8B6E9FE-8BDB-42A0-8360-94DB83609251}.Release|x64.Build.0 = Release|Any CPU
 		{C8B6E9FE-8BDB-42A0-8360-94DB83609251}.Release|x86.ActiveCfg = Release|Any CPU
 		{C8B6E9FE-8BDB-42A0-8360-94DB83609251}.Release|x86.Build.0 = Release|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Debug|x64.Build.0 = Debug|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Debug|x86.Build.0 = Debug|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Release|x64.ActiveCfg = Release|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Release|x64.Build.0 = Release|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Release|x86.ActiveCfg = Release|Any CPU
+		{17457781-DD8F-4E66-BF0A-2430E630894E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -97,5 +111,6 @@ Global
 		{5F6F3309-A7A6-4C44-B6D1-1812BEB17BF6} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{770ADD54-758A-4B67-BDA8-CE6613BE769F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{C8B6E9FE-8BDB-42A0-8360-94DB83609251} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{17457781-DD8F-4E66-BF0A-2430E630894E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

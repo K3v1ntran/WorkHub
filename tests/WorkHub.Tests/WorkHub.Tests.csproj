@@ -25,6 +25,15 @@
     <ProjectReference Include="..\..\src\WorkHub.Core\WorkHub.Core.csproj" />
     <ProjectReference Include="..\..\src\WorkHub.Infrastructure\WorkHub.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\WorkHub.Presentation\WorkHub.Presentation.csproj" />
+    <!-- Built first; started and killed by the process-crash tests (not referenced as an assembly). -->
+    <ProjectReference Include="..\WorkHub.CrashProbe\WorkHub.CrashProbe.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>CrashProbePath</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)..\WorkHub.CrashProbe\bin\$(Configuration)\net10.0\WorkHub.CrashProbe.exe</_Parameter2>
+    </AssemblyAttribute>
   </ItemGroup>
 
 </Project>

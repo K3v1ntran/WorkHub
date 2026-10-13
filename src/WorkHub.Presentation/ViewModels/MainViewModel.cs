@@ -75,10 +75,16 @@ public sealed class MainViewModel(
             var result = await Task.Run(initializer.Initialize);
             settings.Initialize(result.Settings);
 
+            var warnings = new List<string>();
             if (result.Settings.Status == SettingsLoadStatus.InvalidFileUsingDefaults)
-                WarningMessage = $"settings.json could not be read and was left unchanged; defaults are in use until you save Settings. ({result.Settings.Problem})";
+                warnings.Add($"settings.json could not be read and was left unchanged; defaults are in use until you save Settings. ({result.Settings.Problem})");
+            if (DailyBackupNotices.For(result.DailyBackup) is { } backupNotice)
+                warnings.Add(backupNotice);
+            WarningMessage = warnings.Count == 0 ? null : string.Join(Environment.NewLine, warnings);
 
-            StatusText = $"Ready · schema v{result.Database.SchemaVersion}";
+            StatusText = result.DailyBackup?.BackedUpToday == true
+                ? $"Ready · schema v{result.Database.SchemaVersion} · backed up today"
+                : $"Ready · schema v{result.Database.SchemaVersion}";
             State = ShellState.Ready;
         }
         catch (DatabaseStartupException ex)

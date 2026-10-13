@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="WorkHub.Tests" />
+    <InternalsVisibleTo Include="WorkHub.CrashProbe" />
   </ItemGroup>
 
   <ItemGroup>

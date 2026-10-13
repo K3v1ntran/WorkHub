@@ -199,9 +199,79 @@ On every start WorkHub ensures `%LOCALAPPDATA%\WorkHub\` contains:
 Data\workhub.db        SQLite database (schema version in PRAGMA user_version)
 Config\settings.json   application configuration (safe defaults, no secrets)
 Logs\                  daily diagnostic logs
-Backups\               database backups (Backups\Migrations\ for pre-migration copies)
+Backups\               database backups: Daily\ (daily backups) and Migrations\ (pre-migration copies)
 ```
 
 `Security\credentials.whvault` is **not** created until Password Manager setup (later phase).
-An existing database that is unreadable, corrupt, foreign or from a newer schema stops startup
-and is never replaced.
+An existing database that cannot be opened, fails SQLite's quick integrity check, has a newer schema version, or is a
+SQLite file with schema version 0 stops startup and is never replaced. Startup does **not** compare the schema with
+WorkHub's own definition: a file at the current version that passes the quick check is used as it is.
+
+## Database backups
+
+**What is protected.** Only the database, `Data\workhub.db`: Systems and memberships, Owner groups and items, the
+Workspace tree, Projects (including those in the Workspace Trash), Project details, folders, links, notes (with their
+revisions) and Project Trash entries. **Not protected:** `Config\settings.json` (repository hosts and prefixes, the
+TortoiseProc path — recreated with defaults if lost), `Logs\`, and the files, folders and web pages that links and Owner
+items point to (WorkHub stores only their paths and addresses).
+
+**Daily backups (`Backups\Daily\`).** On the first start of each calendar day in Japan time (Asia/Tokyo, whatever the
+computer's own time zone), after the database has been opened or upgraded, WorkHub makes one backup:
+
+- It reads a consistent snapshot through SQLite (never a plain file copy), writes it to a temporary file, makes that file
+  standalone (no `-journal`, `-wal` or `-shm` file belongs to it) and fully validates it — SQLite integrity check,
+  foreign keys, the exact schema definition of this WorkHub version, and the same row counts as the database. Only then
+  is it renamed to `workhub_daily_<day>_v<schema>_<time>.db`. An existing file is never overwritten.
+- The live database is only read: its journal mode and its own `-journal`/`-wal`/`-shm` files are never changed.
+- If another WorkHub window on the same data folder is already making today's backup, this start skips it. A failed
+  backup (database busy for more than 10 seconds, disk full, folder not writable, failed check) shows a notice, removes
+  nothing, and is retried at the next start that day. Startup itself never fails because of a backup.
+- WorkHub keeps the **3 most recent fully validated** daily backups. It removes an older backup only after it has just
+  made a new one, has confirmed three newer backups by a full check, and the old backup itself passes the full check.
+  Damaged, unrecognized and future-dated files are never removed; neither are pre-migration backups or anything else in
+  `Backups\`. Leftover temporary files of an interrupted backup are removed by the next backup.
+- A clock set to the wrong day can create a backup under that day; such files are kept, and a file dated in the future
+  is neither counted nor removed.
+
+**Pre-migration backups (`Backups\Migrations\`).** Before a schema upgrade WorkHub makes the same kind of standalone,
+validated copy at the old version. If it cannot, the database is **not** upgraded and startup stops, as before.
+
+**Settings → Backups** lists both folders and shows, for each backup, its date (Japan time), schema version, size,
+status and whether this version can use it. *Quick-checked* is a light check made when the list loads; **Validate**
+runs the full check (*Fully validated*). The page only reads: it cannot restore, replace or delete anything.
+
+### Recovering from a backup (manual, advanced)
+
+WorkHub does not restore backups itself. If you need to go back to a backup, follow these steps exactly. Each step is
+yours; there is no recovery journal that finishes an interrupted step for you.
+
+What the next start checks: WorkHub opens `Data\workhub.db`, runs SQLite's quick integrity check and reads the schema
+version. It refuses (and leaves unchanged) a file that cannot be opened, fails that check, has a newer version, or is a
+SQLite file at version 0; it upgrades an older version after making a pre-migration backup. It does **not** check that
+a current-version file has WorkHub's schema — a foreign or altered file at the current version would be used. It treats
+an empty file as an interrupted first start and replaces it, and if `workhub.db` is **missing** it creates a new
+database with only the initial Systems. Opening the database also makes SQLite apply any `workhub.db-journal` or
+`workhub.db-wal` lying next to it — even one that belongs to a different database. Hence:
+
+1. While WorkHub is running: **Settings → Backups**, select the backup, click **Validate**. Continue only if it shows
+   **Fully validated** and its version is *Current* or *Older*. Never use a backup that is only *Quick-checked*, *Not
+   standalone*, *Structure differs*, *Not a WorkHub database*, *Newer WorkHub version* or damaged.
+2. Close **every** WorkHub window that uses this data folder; check that no `WorkHub.exe` is still running.
+3. Create a folder outside `Data\` for your current data (for example `Backups\Recovery-<date>\`). **Move** — do not
+   copy — `Data\workhub.db` together with every `Data\workhub.db-journal`, `workhub.db-wal` and `workhub.db-shm` that
+   exists into it. These files belong together: never separate, edit or delete them.
+4. Check that `Data\` now contains no `workhub.db*` file.
+5. Copy the chosen backup into `Data\` under a temporary name, for example `workhub.db.copying`, and check that the copy
+   finished and has the same size as the backup.
+6. Rename `workhub.db.copying` to `workhub.db`.
+7. Start WorkHub. An older backup is upgraded (with its own pre-migration backup). Settings are not affected.
+
+If something goes wrong:
+
+| Situation | What to do |
+| --- | --- |
+| Step 3 was interrupted (some files moved, some not) | Do not start WorkHub. Move the moved files back so the database and its `-journal`/`-wal`/`-shm` files are together in `Data\` again, then start over. |
+| The copy in step 5 was interrupted | `workhub.db` does not exist yet. Do **not** start WorkHub (it would create a new, nearly empty database). Delete `workhub.db.copying` and repeat step 5. |
+| WorkHub was started while `workhub.db` was missing | It created a new database. Close WorkHub, move that new `workhub.db` and its `-journal`/`-wal`/`-shm` files aside, and repeat steps 5–6. Your recovery folder is unaffected. |
+| The restored database is refused at startup | It is left unchanged. Close WorkHub, move it aside, and choose another backup or undo the recovery. |
+| Undo the whole recovery | Close WorkHub, move `Data\workhub.db*` aside, and move all files from your recovery folder back into `Data\` together. |

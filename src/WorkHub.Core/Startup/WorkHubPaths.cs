@@ -32,6 +32,12 @@ public sealed class WorkHubPaths
     /// <summary>Safety copies taken before schema migrations. Kept apart from daily backups.</summary>
     public string MigrationBackupsDirectory => Path.Combine(BackupsDirectory, "Migrations");
 
+    /// <summary>Daily database backups (Phase 9). Owned by the daily backup; created when the first one is taken.</summary>
+    public string DailyBackupsDirectory => Path.Combine(BackupsDirectory, "Daily");
+
+    /// <summary>Held exclusively while a daily backup runs, so instances on the same data root never overlap.</summary>
+    public string DailyBackupLockFile => Path.Combine(DailyBackupsDirectory, "daily-backup.lock");
+
     public string DatabaseFile => Path.Combine(DataDirectory, "workhub.db");
 
     public string SettingsFile => Path.Combine(ConfigDirectory, "settings.json");

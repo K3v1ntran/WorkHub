@@ -24,6 +24,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
     private readonly LegacyImportService _legacyImport;
     private readonly Func<string?> _detectTortoise;
     private readonly int _searchDelayMs;
+    private readonly Func<BackupsViewModel>? _backups;
 
     private RepositoryCategoryViewModel _selectedCategory;
     private IReadOnlyList<SystemListItem> _items = [];
@@ -46,7 +47,8 @@ public sealed class RepositoryAreaViewModel : ObservableObject
         IDialogService dialogs,
         IAppLog log,
         Func<string?> detectTortoise,
-        int searchDelayMs = DefaultSearchDelayMs)
+        int searchDelayMs = DefaultSearchDelayMs,
+        Func<BackupsViewModel>? backups = null)
     {
         _systems = systems;
         _opener = opener;
@@ -56,6 +58,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
         _log = log;
         _detectTortoise = detectTortoise;
         _searchDelayMs = searchDelayMs;
+        _backups = backups;
 
         Categories = RepositoryCatalog.All.Select(info => new RepositoryCategoryViewModel(info)).ToList();
         _selectedCategory = Categories[0];
@@ -342,7 +345,7 @@ public sealed class RepositoryAreaViewModel : ObservableObject
 
     private async Task OpenSettingsAsync(SettingsSection? section)
     {
-        var viewModel = new SettingsViewModel(_settings, _systems, _legacyImport, _dialogs, _detectTortoise, section ?? SettingsSection.Svn);
+        var viewModel = new SettingsViewModel(_settings, _systems, _legacyImport, _dialogs, _detectTortoise, section ?? SettingsSection.Svn, _backups?.Invoke());
         await viewModel.LoadUsageAsync();
         if (_dialogs.ShowSettings(viewModel))
             ClearBanner();

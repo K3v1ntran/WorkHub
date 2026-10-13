@@ -34,18 +34,21 @@ public sealed class SettingsViewModel : ObservableObject
         LegacyImportService legacyImport,
         IDialogService dialogs,
         Func<string?> detectTortoise,
-        SettingsSection initialSection = SettingsSection.Svn)
+        SettingsSection initialSection = SettingsSection.Svn,
+        BackupsViewModel? backups = null)
     {
         _settings = settings;
         _systems = systems;
         _dialogs = dialogs;
         _detectTortoise = detectTortoise;
         _draft = settings.CreateRepositoryDraft();
+        Backups = backups;
         Pages =
         [
             new SettingsPageItem(SettingsPage.Svn, "SVN", "REPOSITORY"),
             new SettingsPageItem(SettingsPage.Git, "Git", "REPOSITORY"),
             new SettingsPageItem(SettingsPage.LegacyImport, "Import Legacy XML", "DATA"),
+            .. backups is null ? Array.Empty<SettingsPageItem>() : [new SettingsPageItem(SettingsPage.Backups, "Backups", "DATA")],
         ];
         _selectedPage = PageFor(initialSection);
         LegacyImport = new LegacyImportViewModel(legacyImport, dialogs, () => !_isSaving);
@@ -64,10 +67,13 @@ public sealed class SettingsViewModel : ObservableObject
 
     public event EventHandler<bool>? CloseRequested;
 
-    /// <summary>Settings navigation: Repository (SVN, Git) and Data (legacy import).</summary>
+    /// <summary>Settings navigation: Repository (SVN, Git) and Data (legacy import, backups).</summary>
     public IReadOnlyList<SettingsPageItem> Pages { get; }
 
     public LegacyImportViewModel LegacyImport { get; }
+
+    /// <summary>Read-only Backups page (Phase 9); null when not configured. Loads when the page is first shown.</summary>
+    public BackupsViewModel? Backups { get; }
 
     /// <summary>True once a legacy import committed while this window was open (callers refresh their lists).</summary>
     public bool DataChanged => LegacyImport.ImportedAny;
@@ -99,7 +105,10 @@ public sealed class SettingsViewModel : ObservableObject
             OnPropertyChanged(nameof(IsSvnSelected));
             OnPropertyChanged(nameof(IsGitSelected));
             OnPropertyChanged(nameof(IsLegacyImportSelected));
+            OnPropertyChanged(nameof(IsBackupsSelected));
             OnPropertyChanged(nameof(IsRepositoryPageSelected));
+            if (IsBackupsSelected)
+                _ = Backups!.ActivateAsync();
         }
     }
 
@@ -116,7 +125,9 @@ public sealed class SettingsViewModel : ObservableObject
 
     public bool IsLegacyImportSelected => _selectedPage.Page == SettingsPage.LegacyImport;
 
-    public bool IsRepositoryPageSelected => !IsLegacyImportSelected;
+    public bool IsBackupsSelected => _selectedPage.Page == SettingsPage.Backups;
+
+    public bool IsRepositoryPageSelected => IsSvnSelected || IsGitSelected;
 
     private SettingsPageItem PageFor(SettingsSection section) =>
         Pages.First(p => p.Page == (section == SettingsSection.Git ? SettingsPage.Git : SettingsPage.Svn));
@@ -270,6 +281,7 @@ public enum SettingsPage
     Svn,
     Git,
     LegacyImport,
+    Backups,
 }
 
 /// <summary>One entry of the Settings navigation, grouped under <see cref="Group"/> (REPOSITORY, DATA).</summary>

@@ -1,3 +1,4 @@
+using WorkHub.Core.Backup;
 using WorkHub.Core.Diagnostics;
 using WorkHub.Core.LegacyImport;
 using WorkHub.Core.Owner;
@@ -7,6 +8,7 @@ using WorkHub.Core.Startup;
 using WorkHub.Core.Workspace;
 using WorkHub.Core.Workspace.Content;
 using WorkHub.Core.Workspace.Search;
+using WorkHub.Infrastructure.Backup;
 using WorkHub.Infrastructure.FileSystem;
 using WorkHub.Infrastructure.Launching;
 using WorkHub.Infrastructure.LegacyImport;
@@ -29,7 +31,8 @@ public sealed class WorkHubServices
         Connections = new SqliteConnectionFactory(paths.DatabaseFile);
 
         var settingsStore = new JsonSettingsStore(paths.SettingsFile);
-        Initializer = new AppInitializer(paths, new LocalStorage(paths), settingsStore, new DatabaseInitializer(paths, Log, InitialSystemsSeed.Apply), Log);
+        Initializer = new AppInitializer(paths, new LocalStorage(paths), settingsStore, new DatabaseInitializer(paths, Log, InitialSystemsSeed.Apply), Log, new DailyBackupService(paths, Log));
+        Backups = new BackupCatalog(paths);
         Settings = new SettingsService(settingsStore);
         Systems = new SystemService(new SqliteSystemStore(Connections));
         RepositoryOpener = new RepositoryOpenService(Settings, new ProcessRepositoryLauncher());
@@ -67,6 +70,9 @@ public sealed class WorkHubServices
 
     /// <summary>Read-only Workspace search; its own connections use a short busy timeout with bounded retries.</summary>
     public WorkspaceSearchService WorkspaceSearch { get; }
+
+    /// <summary>Read-only discovery and checking of database backups (Settings → Backups). It cannot change a database.</summary>
+    public IBackupCatalog Backups { get; }
 
     /// <summary>The one application-wide manual link checker (bounded; never polls).</summary>
     public ILinkHealthChecker LinkChecker { get; }
