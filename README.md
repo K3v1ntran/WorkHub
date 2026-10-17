@@ -199,8 +199,13 @@ On every start WorkHub ensures `%LOCALAPPDATA%\WorkHub\` contains:
 Data\workhub.db        SQLite database (schema version in PRAGMA user_version)
 Config\settings.json   application configuration (safe defaults, no secrets)
 Logs\                  daily diagnostic logs
-Backups\               database backups: Daily\ (daily backups) and Migrations\ (pre-migration copies)
+Backups\               database backups: Daily\ (daily backups), Migrations\ (pre-migration copies) and
+                       PreRestore\ (copies of your data made before a restore)
 ```
+
+WorkHub also keeps three small lock files in `Data\` (`workhub-startup.lock`, `workhub-instance.lock` and
+`Restore\restore.lock`) that coordinate windows on the same data folder, and `Data\Restore\<operation>\` folders that
+record each restore (see "Restoring a backup"). Never delete or edit these.
 
 `Security\credentials.whvault` is **not** created until Password Manager setup (later phase).
 An existing database that cannot be opened, fails SQLite's quick integrity check, has a newer schema version, or is a
@@ -236,14 +241,69 @@ computer's own time zone), after the database has been opened or upgraded, WorkH
 **Pre-migration backups (`Backups\Migrations\`).** Before a schema upgrade WorkHub makes the same kind of standalone,
 validated copy at the old version. If it cannot, the database is **not** upgraded and startup stops, as before.
 
-**Settings → Backups** lists both folders and shows, for each backup, its date (Japan time), schema version, size,
+**Settings → Backups** lists the three folders and shows, for each backup, its date (Japan time), schema version, size,
 status and whether this version can use it. *Quick-checked* is a light check made when the list loads; **Validate**
-runs the full check (*Fully validated*). The page only reads: it cannot restore, replace or delete anything.
+runs the full check (*Fully validated*). **Restore…** is described below. Nothing on the page deletes or overwrites a
+backup.
+
+### Restoring a backup
+
+**Restore…** (Settings → Backups, or **Restore from a backup…** when WorkHub could not start) replaces your data with
+the selected backup. It happens when WorkHub restarts, before the database is opened:
+
+1. WorkHub copies the backup privately (checking that the copy is byte-for-byte identical) and fully validates the copy.
+   Only a fully validated backup of this or an older schema version can be restored; newer, foreign, damaged,
+   structurally different or non-standalone files are refused. It also checks your current data without changing it.
+2. The confirmation shows the backup, its contents, and how your current data will be kept. Nothing has changed yet;
+   **Cancel** (the default) leaves everything as it was. Unsaved Repository settings are saved or discarded first.
+3. **Restore and restart** closes this window and starts WorkHub again. Every other WorkHub window on this data folder
+   must be closed first (save open notes); WorkHub waits for them and never closes them itself. While it waits you can
+   still **Cancel restore** — until WorkHub starts moving your data. After that, the restore finishes or can be put back,
+   but not cancelled.
+4. Your current data is kept before anything is moved: a **validated safety backup**
+   (`Backups\PreRestore\workhub_prerestore_v<N>_<time>.db`) when it is healthy; a **preserved copy**
+   (`workhub_preserved_v<N>_<time>.db`, *not* a validated backup) when it is newer, not recognized, structurally different
+   or has broken links; nothing (but the files themselves) when it cannot be read. If your current data changed since you
+   confirmed, or no safety copy can be made, the restore stops without changing anything.
+5. The current `workhub.db` and its `-journal`/`-wal`/`-shm` files are moved, unchanged, to
+   `Data\Restore\<operation>\previous\` (with exact copies in `asfound\` if sidecar files existed), the backup copy
+   becomes `Data\workhub.db`, and WorkHub opens it as usual — an older backup is upgraded after its own pre-migration
+   backup. Settings, `Logs\` and the files your links point to are not changed.
+
+`Backups\PreRestore\` and `Data\Restore\` are kept forever: daily backup retention never touches them, and WorkHub never
+deletes what they hold (only its own unfinished temporary files). Daily backups continue as before.
+
+**Put back previous data.** If the restored backup cannot be opened (or could not be put in place), WorkHub offers
+**Put back previous data**. It restarts WorkHub and moves your data from before the restore back into `Data\`; the
+restored backup is kept in `Data\Restore\<operation>\restored\` (or stays staged). Once you choose Put back it **cannot
+be cancelled**: if WorkHub is closed before it finishes, it continues the next time WorkHub starts. **Try starting
+again** / **Retry** restart WorkHub without changing anything.
+
+**Interruptions.** Every step is recorded in `Data\Restore\<operation>\journal.json` before it happens. If WorkHub's process is killed in
+the middle, the next start recognizes exactly where it stopped from the journal and
+the files and finishes the restore or the Put back. A database is only opened after the files are where they belong;
+WorkHub never creates a new, empty database while your data is set aside. (This was tested for killed processes; it is
+not claimed to survive a power loss or an operating-system crash.)
+
+**Requirements and limits.** The WorkHub data folder must be on a local, fixed **NTFS** drive, with no links or
+junctions inside it; network, removable, FAT/exFAT and ReFS folders are refused. Older WorkHub versions do not know
+about restores: do not run them on this data folder. If one is running, the restore stops before changing anything
+("in use by another program").
+
+### Unfinished restore
+
+If WorkHub reports that it found restore files it cannot finish safely, it has not opened, created or changed any
+database. **Do not delete anything.** Use **Open the Restore folder**: each `Data\Restore\<operation>\` folder holds
+`journal.json` (what happened), `previous\` (your data from before the restore), possibly `restored\`, `asfound\` and
+`candidate.db` (the copy of the backup). Your data from before the restore is in `previous\`; a safety backup or
+preserved copy may also be in `Backups\PreRestore\`. To recover by hand, close every WorkHub window, follow the manual
+steps below using the files from `previous\` (move them back into `Data\` together), and then move the whole operation
+folder out of `Data\Restore\` (for example into `Backups\Recovery-<date>\`) so WorkHub no longer sees it as unfinished.
 
 ### Recovering from a backup (manual, advanced)
 
-WorkHub does not restore backups itself. If you need to go back to a backup, follow these steps exactly. Each step is
-yours; there is no recovery journal that finishes an interrupted step for you.
+**Restore…** (above) is the supported way. If you nevertheless go back to a backup by hand, follow these steps exactly.
+Each step is yours; nothing finishes an interrupted manual step for you.
 
 What the next start checks: WorkHub opens `Data\workhub.db`, runs SQLite's quick integrity check and reads the schema
 version. It refuses (and leaves unchanged) a file that cannot be opened, fails that check, has a newer version, or is a

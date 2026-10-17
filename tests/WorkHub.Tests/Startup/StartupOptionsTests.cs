@@ -175,6 +175,49 @@ public sealed class StartupOptionsTests : IDisposable
         Assert.Equal("--data-root may be given only once.", result.Error);
     }
 
+    // ---- Phase 10: --restore-continue and relaunch on the same data root --------------------------------------------
+
+    [Fact]
+    public void RestoreContinue_TakesAValidOperationId_WithOrWithoutADataRoot()
+    {
+        var plain = Parse("--restore-continue", "20261016-120000-0123abcd");
+        Assert.True(plain.IsValid, plain.Error);
+        Assert.Equal("20261016-120000-0123abcd", plain.Options!.RestoreContinueOp);
+        Assert.False(plain.Options.IsCustomDataRoot);
+
+        var root = Sandbox("Restore");
+        var both = Parse("--data-root", root, "--restore-continue", "20261016-120000-0123abcd");
+        Assert.True(both.IsValid, both.Error);
+        Assert.Equal(Path.GetFullPath(root), both.Options!.Paths.Root);
+        Assert.Equal("20261016-120000-0123abcd", both.Options.RestoreContinueOp);
+    }
+
+    [Theory]
+    [InlineData("--restore-continue")]
+    [InlineData("--restore-continue", "..\\..\\x")]
+    [InlineData("--restore-continue", "20261016-120000-0123ABCD")]
+    [InlineData("--restore-continue", "20261016-120000-0123abcd", "--restore-continue", "20261016-120000-0123abcd")]
+    public void RestoreContinue_RejectsMissingMalformedOrRepeatedValues(params string[] args)
+    {
+        var result = Parse(args);
+        Assert.False(result.IsValid);
+        Assert.Contains("--restore-continue", result.Error);
+    }
+
+    [Fact]
+    public void RelaunchArguments_KeepTheIsolatedDataRoot_AndNeverNameTheDefaultProfile()
+    {
+        var root = Sandbox("Relaunch");
+        var custom = Parse("--data-root", root).Options!;
+        Assert.Equal(["--data-root", Path.GetFullPath(root), "--restore-continue", "20261016-120000-0123abcd"], custom.RelaunchArguments("20261016-120000-0123abcd"));
+        Assert.Equal(["--data-root", Path.GetFullPath(root)], custom.RelaunchArguments(null));
+
+        var standard = Parse().Options!;
+        Assert.Empty(standard.RelaunchArguments(null));
+        Assert.Equal(["--restore-continue", "20261016-120000-0123abcd"], standard.RelaunchArguments("20261016-120000-0123abcd"));
+        Assert.Throws<ArgumentException>(() => standard.RelaunchArguments("not-an-op"));
+    }
+
     [Theory]
     [InlineData("--verbose")]
     [InlineData("C:\\WorkHubTest")]

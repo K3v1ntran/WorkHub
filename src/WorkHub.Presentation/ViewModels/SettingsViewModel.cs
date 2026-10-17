@@ -58,6 +58,9 @@ public sealed class SettingsViewModel : ObservableObject
                 OnCanCloseChanged();
         };
 
+        if (backups is not null)
+            backups.BeforeConfirm = ResolveUnsavedBeforeRestoreAsync;
+
         SaveCommand = new AsyncRelayCommand(SaveAsync, () => CanClose, ex => SaveError = $"Could not save settings: {ex.Message}");
         CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false), () => CanClose);
         BrowseTortoiseCommand = new RelayCommand(BrowseTortoise);
@@ -255,6 +258,45 @@ public sealed class SettingsViewModel : ObservableObject
         var firstError = result.Issues.FirstOrDefault(i => i.Severity == IssueSeverity.Error);
         if (firstError is not null)
             SelectedSection = firstError.Section;
+    }
+
+    /// <summary>True when the Repository draft differs from the saved settings (values compared after trimming).</summary>
+    public bool HasUnsavedRepositoryChanges
+    {
+        get
+        {
+            var draft = _draft.Trimmed();
+            var saved = _settings.Current.Repository.Trimmed();
+            return draft.Svn.Host != saved.Svn.Host || draft.Svn.SystemPrefix != saved.Svn.SystemPrefix
+                || draft.Svn.OraclePrefix != saved.Svn.OraclePrefix || draft.Svn.ReleasePrefix != saved.Svn.ReleasePrefix
+                || draft.Svn.TortoiseProcPath != saved.Svn.TortoiseProcPath || draft.Git.Host != saved.Git.Host
+                || draft.Git.SystemPrefix != saved.Git.SystemPrefix || draft.Git.OraclePrefix != saved.Git.OraclePrefix;
+        }
+    }
+
+    /// <summary>
+    /// Phase 10 Q5b: before a confirmed restore restarts WorkHub, unsaved Repository settings are saved, discarded or the
+    /// restore is cancelled. Returns false to cancel the restore.
+    /// </summary>
+    public async Task<bool> ResolveUnsavedBeforeRestoreAsync()
+    {
+        if (!HasUnsavedRepositoryChanges)
+            return true;
+
+        switch (_dialogs.AskUnsavedChanges("Unsaved settings", "WorkHub restarts for the restore. Save your Repository settings first?"))
+        {
+            case UnsavedChangesChoice.Discard:
+                return true;
+            case UnsavedChangesChoice.Save:
+                var result = await _settings.SaveRepositoryAsync(_draft, _usage);
+                if (result.Saved)
+                    return true;
+                Issues = result.Issues;
+                SaveError = result.Error ?? "Fix the errors below before saving.";
+                return false;
+            default:
+                return false;
+        }
     }
 
     private void BrowseTortoise()

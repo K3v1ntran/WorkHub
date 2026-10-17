@@ -139,15 +139,19 @@ public sealed class BackupsViewModelTests : IDisposable
     }
 
     [Fact]
-    public void ThePageHasNoWriteOperation()
+    public void TheCatalogStaysReadOnly_RestoreIsTheOnlyChangingCommand_AndGoesThroughTheRequester()
     {
+        // Phase 10 (R1/R2) adds Restore… to this page. It is a request carried out after a restart (IRestoreRequester);
+        // the catalog itself still has no operation that writes, replaces or deletes anything.
         var commands = typeof(BackupsViewModel).GetProperties().Where(p => p.PropertyType.Name.Contains("Command", StringComparison.Ordinal)).Select(p => p.Name).Order();
-        Assert.Equal(["OpenFolderCommand", "RefreshCommand", "ValidateCommand"], commands);
+        Assert.Equal(["OpenFolderCommand", "RefreshCommand", "RestoreCommand", "ValidateCommand"], commands);
+        Assert.False(new BackupsViewModel(new GatedCatalog([])).IsRestoreAvailable);
         Assert.Equal(["CheckAsync", "ListAsync", "OpenFolder", "get_LatestSchemaVersion"], typeof(IBackupCatalog).GetMethods().Select(m => m.Name).Order(StringComparer.Ordinal));
         Assert.Contains("settings.json", BackupsViewModel.ScopeText);
         Assert.Contains("links point to", BackupsViewModel.ScopeText);
-        Assert.Contains("close every WorkHub window", BackupsViewModel.RecoveryText);
-        Assert.Contains("Fully validated", BackupsViewModel.RecoveryText);
+        Assert.Contains("when WorkHub restarts", BackupsViewModel.RecoveryText);
+        Assert.Contains("can be put back", BackupsViewModel.RecoveryText);
+        Assert.Contains("fully validated", BackupsViewModel.RecoveryText);
     }
 
     [Fact]
@@ -226,7 +230,7 @@ public sealed class BackupsViewModelTests : IDisposable
     [Fact]
     public async Task MainWindow_RealStartup_ShowsBackedUpTodayInTheStatus()
     {
-        var services = WorkHubServices.Create(_root.Paths);
+        using var services = WorkHubServices.Create(_root.Paths);
         var main = NewMain(services);
 
         await main.InitializeAsync();
@@ -245,7 +249,7 @@ public sealed class BackupsViewModelTests : IDisposable
         File.WriteAllText(_root.Paths.SettingsFile, "{ not json");
         Directory.CreateDirectory(_root.Paths.BackupsDirectory);
         File.WriteAllText(_root.Paths.DailyBackupsDirectory, "a file where the Daily folder should be");
-        var services = WorkHubServices.Create(_root.Paths);
+        using var services = WorkHubServices.Create(_root.Paths);
         var main = NewMain(services);
 
         await main.InitializeAsync();

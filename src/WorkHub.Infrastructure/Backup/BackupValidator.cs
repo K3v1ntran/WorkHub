@@ -36,6 +36,59 @@ internal sealed class BackupValidator(SchemaReference references, IBackupFileOps
         Inspect(path, BackupCheckLevel.Full, rules, nameVersion: null, extra: connection => Fidelity(connection, path, source));
 
     /// <summary>
+    /// Phase 10 preservation check for a faithful copy of DEGRADED current data (newer, foreign, structurally different or
+    /// with foreign-key rows). Standalone gate, unpooled ReadOnly open, full <c>integrity_check</c>, and fidelity to the
+    /// pinned source facts (version, fingerprint hash, every table's row count, length = page_count × page_size). There is
+    /// deliberately NO version-range, schema-identity or foreign-key classification: the result is <see cref="BackupStatus.Preserved"/>,
+    /// never <see cref="BackupStatus.FullyValidated"/>. <see cref="Check"/> and <see cref="CheckCandidate"/> are unchanged, so
+    /// restore candidates are never accepted through this path.
+    /// </summary>
+    public BackupCheckResult CheckPreservation(string path, SourceFacts source)
+    {
+        try
+        {
+            if (StandaloneGate.Check(files, path) is { } refused)
+                return refused;
+        }
+        catch (Exception ex) when (IsUnavailable(ex))
+        {
+            return Unavailable(ex);
+        }
+
+        BackupCheckResult result;
+        try
+        {
+            using var connection = new SqliteConnectionFactory(path).Open(SqliteOpenMode.ReadOnly, pooling: false);
+            var version = connection.GetUserVersion();
+            result = IntegrityCheck(connection) is { } problem
+                ? new BackupCheckResult(BackupStatus.IntegrityFailed, version, Short(problem))
+                : Fidelity(connection, path, source) ?? new BackupCheckResult(BackupStatus.Preserved, version);
+        }
+        catch (SqliteException ex)
+        {
+            result = new BackupCheckResult(ex.SqliteErrorCode == SqliteCodes.Corrupt ? BackupStatus.IntegrityFailed : BackupStatus.Unreadable, Detail: $"SQLite error {ex.SqliteErrorCode}");
+        }
+        catch (Exception ex) when (IsUnavailable(ex))
+        {
+            result = Unavailable(ex);
+        }
+
+        IReadOnlyList<string> leftovers;
+        try
+        {
+            leftovers = StandaloneGate.Sidecars(files, path);
+        }
+        catch (Exception ex) when (IsUnavailable(ex))
+        {
+            return Unavailable(ex);
+        }
+
+        return leftovers.Count == 0
+            ? result
+            : new BackupCheckResult(BackupStatus.ValidationSideEffect, result.SchemaVersion, $"checking left {string.Join(", ", leftovers)} behind");
+    }
+
+    /// <summary>
     /// Every expected per-file file-system failure (locked by another process, removed, access denied) — in the pre-open
     /// gate, while inspecting, or in the sidecar re-check afterwards — is a non-passing <see cref="BackupStatus.Unreadable"/>
     /// result for this file, never an exception: one unavailable backup must not fail a run or be treated as validated.

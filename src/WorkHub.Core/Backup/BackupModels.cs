@@ -8,6 +8,12 @@ public enum BackupKind
     /// <summary>A safety copy taken before a schema migration, in <c>Backups\Migrations</c>.</summary>
     PreMigration,
 
+    /// <summary>Phase 10: a validated safety backup of the current data taken before a restore (<c>workhub_prerestore_…</c>).</summary>
+    PreRestore,
+
+    /// <summary>Phase 10: a faithful preservation copy of degraded current data (<c>workhub_preserved_…</c>); not a validated backup.</summary>
+    Preserved,
+
     /// <summary>Any other file in those folders. Listed by name and size only; never opened.</summary>
     Unrecognized,
 }
@@ -53,6 +59,12 @@ public enum BackupStatus
 
     /// <summary>Passed the full level (<c>integrity_check</c> and <c>foreign_key_check</c> included).</summary>
     FullyValidated,
+
+    /// <summary>
+    /// Phase 10 preservation check only: a faithful standalone copy of degraded current data (integrity and fidelity to the
+    /// source). Never a validated backup and never a restore candidate on its own.
+    /// </summary>
+    Preserved,
 }
 
 public enum BackupCheckLevel
@@ -101,9 +113,12 @@ public enum BackupFolder
 {
     Daily,
     Migrations,
+
+    /// <summary>Phase 10 <c>Backups\PreRestore</c>: safety backups and preserved copies made before a restore.</summary>
+    PreRestore,
 }
 
-/// <summary>One file found in <c>Backups\Daily</c> or <c>Backups\Migrations</c>.</summary>
+/// <summary>One file found in <c>Backups\Daily</c>, <c>Backups\Migrations</c> or <c>Backups\PreRestore</c>.</summary>
 /// <param name="Taken">When the backup was taken, as Tokyo time (migration names carry UTC and are converted).</param>
 /// <param name="NameVersion">Schema version in the name (daily: the backup's; migration: the version before the upgrade).</param>
 public sealed record BackupEntry(

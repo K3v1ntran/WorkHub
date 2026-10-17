@@ -38,7 +38,28 @@ public sealed class WorkHubPaths
     /// <summary>Held exclusively while a daily backup runs, so instances on the same data root never overlap.</summary>
     public string DailyBackupLockFile => Path.Combine(DailyBackupsDirectory, "daily-backup.lock");
 
+    /// <summary>Phase 10: safety backups and preserved copies made before a restore. Outside daily retention; kept forever.</summary>
+    public string PreRestoreBackupsDirectory => Path.Combine(BackupsDirectory, "PreRestore");
+
     public string DatabaseFile => Path.Combine(DataDirectory, "workhub.db");
+
+    /// <summary>Phase 10 startup Gate (G). Held by every start through reconciliation and database initialization.</summary>
+    public string StartupGateFile => Path.Combine(DataDirectory, "workhub-startup.lock");
+
+    /// <summary>Phase 10 Presence (P): shared by every running instance; exclusive while a restore or Put back executes.</summary>
+    public string PresenceFile => Path.Combine(DataDirectory, "workhub-instance.lock");
+
+    /// <summary>Phase 10 restore metadata: one folder per operation, plus the Restore lock.</summary>
+    public string RestoreDirectory => Path.Combine(DataDirectory, "Restore");
+
+    /// <summary>Phase 10 Restore lock (R). Required for every create, write, rename or delete under <see cref="RestoreDirectory"/>.</summary>
+    public string RestoreLockFile => Path.Combine(RestoreDirectory, "restore.lock");
+
+    /// <summary>The folder of one restore operation. Only validated operation identifiers become paths.</summary>
+    public string RestoreOperationDirectory(string op) =>
+        Restore.RestoreOpId.IsValid(op)
+            ? Path.Combine(RestoreDirectory, op)
+            : throw new ArgumentException("Not a restore operation identifier.", nameof(op));
 
     public string SettingsFile => Path.Combine(ConfigDirectory, "settings.json");
 

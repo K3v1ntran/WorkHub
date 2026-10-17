@@ -25,7 +25,8 @@ public partial class App : Application
             return;
         }
 
-        var services = WorkHubServices.Create(options.Options!.Paths);
+        var services = WorkHubServices.Create(options.Options!.Paths, options.Options.RestoreContinueOp);
+        Exit += (_, _) => services.Dispose();
         if (options.Options.IsCustomDataRoot)
             services.Log.Info($"Using custom data root ({StartupOptions.DataRootOption}): {services.Paths.Root}");
         DispatcherUnhandledException += (_, args) =>
@@ -36,6 +37,8 @@ public partial class App : Application
         };
 
         var dialogs = new DialogService();
+        var lifetime = new AppLifetime(options.Options);
+        BackupsViewModel Backups() => new(services.Backups, services.RestoreRequester, dialogs, lifetime, services.Log);
         var repository = new RepositoryAreaViewModel(
             services.Systems,
             services.RepositoryOpener,
@@ -44,16 +47,18 @@ public partial class App : Application
             dialogs,
             services.Log,
             () => TortoiseLocator.Detect(),
-            backups: () => new BackupsViewModel(services.Backups));
+            backups: Backups);
 
         var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
         var navigation = new RepositoryNavigationViewModel(repository, owner);
         var workspace = new WorkspaceAreaViewModel(services.Workspace, dialogs, services.Log, services.ProjectContent, services.LinkChecker, services.WorkspaceSearch);
 
-        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, workspace, services.Log)
+        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, workspace, services.Log, services.RestoreOwner, lifetime, dialogs, Backups)
         {
             CustomDataRoot = options.Options.IsCustomDataRoot ? services.Paths.Root : null,
         };
+        if (options.Options.RestoreContinueOp is { } op)
+            services.Log.Info($"Started to continue restore operation {op}.");
         MainWindow = new MainWindow { DataContext = viewModel };
         MainWindow.Show();
 

@@ -132,6 +132,25 @@ public sealed class DialogService : IDialogService
 
     public void CopyToClipboard(string text) => Clipboard.SetText(text);
 
+    public bool ShowRestoreConfirmation(RestoreConfirmationViewModel viewModel)
+    {
+        var window = new RestoreConfirmationWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, confirmed) => window.DialogResult = confirmed;
+        return window.ShowDialog() == true;
+    }
+
+    public void ShowRestoreBackups(BackupsViewModel viewModel)
+    {
+        var window = new RestoreBackupsWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        // While a request holds the Restore lock (staging or the confirmation is open) the window stays open.
+        window.Closing += (_, e) => e.Cancel |= viewModel.IsRestoring;
+        _ = viewModel.ActivateAsync();
+        window.ShowDialog();
+    }
+
+    public void ShowMessage(string title, string message) =>
+        MessageBox.Show(ActiveWindow() ?? Application.Current.MainWindow!, message, title, MessageBoxButton.OK, MessageBoxImage.Information);
+
     private static string? PickFileCore(string title, string? initialPath, string filter)
     {
         var dialog = new OpenFileDialog { Title = title, Filter = filter, CheckFileExists = true };

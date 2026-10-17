@@ -64,6 +64,16 @@ public interface IDialogService
     string? PickFolder(string title, string? initialPath);
 
     void CopyToClipboard(string text);
+
+    /// <summary>Phase 10: the restore confirmation (shown while the Restore lock is held). Cancel is the default.</summary>
+    /// <returns>True when the user chose Restore and restart.</returns>
+    bool ShowRestoreConfirmation(RestoreConfirmationViewModel viewModel);
+
+    /// <summary>Phase 10: the backups list with Restore…, opened from the Failed shell (Settings is unreachable there).</summary>
+    void ShowRestoreBackups(BackupsViewModel viewModel);
+
+    /// <summary>An information or error message with an OK button.</summary>
+    void ShowMessage(string title, string message);
 }
 
 public enum UnsavedChangesChoice

@@ -1,0 +1,77 @@
+<UserControl x:Class="WorkHub.App.Views.BackupsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+             mc:Ignorable="d"
+             d:DataContext="{d:DesignInstance Type=vm:BackupsViewModel}">
+    <!-- Database backups (Phase 9 list and checks; Phase 10 Restore…). Nothing here deletes or overwrites a backup. -->
+    <StackPanel>
+        <TextBlock Margin="0,10,0,0" FontSize="16" FontWeight="SemiBold" Text="Database backups" />
+        <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{x:Static vm:BackupsViewModel.ScopeText}" AutomationProperties.AutomationId="BackupsScope" />
+        <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{x:Static vm:BackupsViewModel.RetentionText}" />
+        <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Foreground="{StaticResource Brush.Warning}" Text="{x:Static vm:BackupsViewModel.RecoveryText}" />
+
+        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="Refresh" Command="{Binding RefreshCommand}" AutomationProperties.Name="Refresh backups" />
+            <Button Margin="8,0,0,0" Content="Validate" Command="{Binding ValidateCommand}" AutomationProperties.Name="Validate selected backup"
+                    ToolTip="Full check of the selected backup: integrity, foreign keys and schema structure. Read-only." />
+            <Button Margin="8,0,0,0" Content="Restore…" Command="{Binding RestoreCommand}" AutomationProperties.Name="Restore selected backup"
+                    Visibility="{Binding IsRestoreAvailable, Converter={StaticResource BoolToVisibility}}"
+                    ToolTip="Fully validates a private copy of the selected backup and asks for confirmation. The restore happens when WorkHub restarts." />
+            <Button Margin="8,0,0,0" Content="Open Backups folder" Command="{Binding OpenFolderCommand}" AutomationProperties.Name="Open Backups folder" />
+            <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="Loading…"
+                       Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+            <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="Preparing the restore (copying and validating)…"
+                       Visibility="{Binding IsRestoring, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="RestorePreparing" />
+        </StackPanel>
+        <TextBlock Margin="0,8,0,0" Style="{StaticResource FieldError}" FontSize="12" TextWrapping="Wrap" Text="{Binding Error}" AutomationProperties.AutomationId="BackupsError" />
+        <TextBlock Margin="0,8,0,0" Foreground="{StaticResource Brush.MutedText}" Text="No backups yet."
+                   Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" />
+
+        <ListBox Margin="0,8,0,0" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}" AutomationProperties.Name="Backups"
+                 BorderThickness="1" BorderBrush="{StaticResource Brush.Border}" HorizontalContentAlignment="Stretch"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="AutomationProperties.Name" Value="{Binding FileName}" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:BackupRowViewModel}">
+                    <Grid Margin="4,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="170" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding KindText}" />
+                            <TextBlock FontSize="11" Foreground="{StaticResource Brush.MutedText}" Text="{Binding TakenText}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="8,0">
+                            <TextBlock FontFamily="Consolas" FontSize="11" TextTrimming="CharacterEllipsis" Text="{Binding FileName}" ToolTip="{Binding FileName}" />
+                            <TextBlock FontSize="11" Foreground="{StaticResource Brush.MutedText}" Text="{Binding CompatibilityText}" />
+                            <TextBlock FontSize="11" Foreground="{StaticResource Brush.MutedText}" TextWrapping="Wrap" Text="{Binding DetailText}"
+                                       Visibility="{Binding IsProblem, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                            <TextBlock x:Name="Status" HorizontalAlignment="Right" Text="{Binding StatusText}" />
+                            <TextBlock HorizontalAlignment="Right" FontSize="11" Foreground="{StaticResource Brush.MutedText}" Text="{Binding SizeText}" />
+                        </StackPanel>
+                    </Grid>
+                    <DataTemplate.Triggers>
+                        <DataTrigger Binding="{Binding IsProblem}" Value="True">
+                            <Setter TargetName="Status" Property="Foreground" Value="{StaticResource Brush.Error}" />
+                        </DataTrigger>
+                        <DataTrigger Binding="{Binding IsFullyValidated}" Value="True">
+                            <Setter TargetName="Status" Property="FontWeight" Value="SemiBold" />
+                        </DataTrigger>
+                    </DataTemplate.Triggers>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </StackPanel>
+</UserControl>

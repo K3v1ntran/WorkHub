@@ -1,13 +1,17 @@
 using System.Globalization;
 using WorkHub.Core.Backup;
+using WorkHub.Core.Diagnostics;
+using WorkHub.Core.Restore;
 using WorkHub.Presentation.Mvvm;
+using WorkHub.Presentation.Services;
 
 namespace WorkHub.Presentation.ViewModels;
 
 /// <summary>
-/// Settings → Data → Backups (Phase 9 §9.3). Read-only: lists daily and pre-migration backups, quick-checks each listed
-/// backup, fully validates the selected one on request and opens the Backups folder. There is no command that restores,
-/// replaces, deletes or writes anything.
+/// Settings → Data → Backups (Phase 9 §9.3; Phase 10 §13.1). Lists daily, pre-migration and before-restore backups,
+/// quick-checks each listed backup, fully validates the selected one on request and opens the Backups folder. Phase 10 adds
+/// <see cref="RestoreCommand"/>: a request (reservation, staging, confirmation) that is carried out after WorkHub restarts.
+/// Nothing on this page deletes or overwrites a backup.
 /// <para>
 /// Late results: a Refresh starts a new generation; checks from an older generation are discarded. Within a row a full
 /// result is never overwritten by a quick result that finishes later.
@@ -22,7 +26,7 @@ public sealed class BackupsViewModel : ObservableObject
         "WorkHub makes one database backup on the first start of each day (Japan time) and keeps the 3 most recent fully validated daily backups. Pre-migration backups are always kept.";
 
     public const string RecoveryText =
-        "WorkHub does not restore backups itself. To recover, close every WorkHub window first and follow \"Recovering from a backup\" in the README. Use only a backup shown as Fully validated.";
+        "Restore… replaces your data with the selected backup when WorkHub restarts. Your current data is kept first (a safety backup or a preserved copy) and can be put back. Only fully validated backups of this or an older version can be restored.";
 
     private readonly IBackupCatalog _catalog;
     private IReadOnlyList<BackupRowViewModel> _rows = [];
@@ -34,12 +38,104 @@ public sealed class BackupsViewModel : ObservableObject
     private bool _isValidating;
     private string? _error;
 
-    public BackupsViewModel(IBackupCatalog catalog)
+    private readonly IRestoreRequester? _requester;
+    private readonly IDialogService? _dialogs;
+    private readonly IAppLifetime? _lifetime;
+    private readonly IAppLog _log;
+    private bool _isRestoring;
+
+    /// <param name="requester">Phase 10 restore requests; null hides Restore… (read-only page).</param>
+    public BackupsViewModel(IBackupCatalog catalog, IRestoreRequester? requester = null, IDialogService? dialogs = null, IAppLifetime? lifetime = null, IAppLog? log = null)
     {
         _catalog = catalog;
+        _requester = requester;
+        _dialogs = dialogs;
+        _lifetime = lifetime;
+        _log = log ?? NullAppLog.Instance;
         RefreshCommand = new AsyncRelayCommand(LoadAsync, onError: ex => Error = $"The backups could not be listed: {ex.Message}");
         ValidateCommand = new AsyncRelayCommand(ValidateSelectedAsync, () => CanValidate, ex => Error = $"The backup could not be checked: {ex.Message}");
         OpenFolderCommand = new RelayCommand(() => Error = _catalog.OpenFolder());
+        RestoreCommand = new AsyncRelayCommand(RestoreSelectedAsync, () => CanRestore, ex => Error = $"The restore could not be prepared: {ex.Message}");
+    }
+
+    /// <summary>
+    /// Phase 10 Q0–Q5: reserve, stage and validate the selected backup, confirm, then publish <c>Confirmed</c>, relaunch and
+    /// exit. While the confirmation is open the Restore lock is held.
+    /// </summary>
+    public AsyncRelayCommand RestoreCommand { get; }
+
+    /// <summary>True when this page can request a restore (Phase 10); the Restore… button is shown.</summary>
+    public bool IsRestoreAvailable => _requester is not null;
+
+    /// <summary>
+    /// Q5b: resolves unsaved repository settings (Save / Don't save / Cancel) before <c>Confirmed</c> is published; false
+    /// cancels the restore (Q5a). Set by the Settings window.
+    /// </summary>
+    public Func<Task<bool>>? BeforeConfirm { get; set; }
+
+    public bool IsRestoring
+    {
+        get => _isRestoring;
+        private set
+        {
+            if (SetProperty(ref _isRestoring, value))
+                RaiseRestore();
+        }
+    }
+
+    public bool CanRestore => _requester is not null && !IsRestoring && SelectedRow is { IsRestorable: true };
+
+    /// <summary>Phase 10: set when a restore was confirmed and WorkHub is restarting (the window should close).</summary>
+    public event EventHandler? RestoreConfirmed;
+
+    private async Task RestoreSelectedAsync()
+    {
+        var row = SelectedRow;
+        if (row is null || _requester is null || _dialogs is null || _lifetime is null)
+            return;
+
+        Error = null;
+        IsRestoring = true;
+        try
+        {
+            var start = await _requester.BeginAsync(row.Entry);
+            if (start.Request is not { } request)
+            {
+                Error = start.Refusal;
+                return;
+            }
+
+            using (request)
+            {
+                var confirmation = new RestoreConfirmationViewModel(request.Facts);
+                if (!_dialogs.ShowRestoreConfirmation(confirmation) || (BeforeConfirm is { } before && !await before()))
+                {
+                    await request.CancelAsync(); // Q5a: candidate deleted, Cancelled published, R released
+                    return;
+                }
+
+                var op = await request.ConfirmAsync();
+                _log.Info($"Restore {op} confirmed; restarting.");
+                RestoreConfirmed?.Invoke(this, EventArgs.Empty);
+                if (!_lifetime.Relaunch(op))
+                {
+                    _log.Warn($"Restore {op}: WorkHub could not restart itself; the request stays confirmed.");
+                    _dialogs.ShowMessage("WorkHub", "The restore was confirmed, but WorkHub could not restart itself. Start WorkHub again to continue or cancel the restore.");
+                }
+
+                _lifetime.Shutdown();
+            }
+        }
+        finally
+        {
+            IsRestoring = false;
+        }
+    }
+
+    private void RaiseRestore()
+    {
+        OnPropertyChanged(nameof(CanRestore));
+        RestoreCommand.RaiseCanExecuteChanged();
     }
 
     public AsyncRelayCommand RefreshCommand { get; }
@@ -66,8 +162,10 @@ public sealed class BackupsViewModel : ObservableObject
         get => _selectedRow;
         set
         {
-            if (SetProperty(ref _selectedRow, value))
-                ValidateCommand.RaiseCanExecuteChanged();
+            if (!SetProperty(ref _selectedRow, value))
+                return;
+            ValidateCommand.RaiseCanExecuteChanged();
+            RaiseRestore();
         }
     }
 
@@ -214,10 +312,15 @@ public sealed class BackupRowViewModel : ObservableObject
 
     public bool IsRecognized => Entry.Kind != BackupKind.Unrecognized;
 
+    /// <summary>Restore… may be tried on any recognized backup; the request validates it fully (never loosened).</summary>
+    public bool IsRestorable => IsRecognized;
+
     public string KindText => Entry.Kind switch
     {
         BackupKind.Daily => "Daily",
         BackupKind.PreMigration => Entry.MigratedToVersion is { } to ? $"Before upgrade to v{to}" : "Pre-migration",
+        BackupKind.PreRestore => "Before restore (validated safety backup)",
+        BackupKind.Preserved => "Before restore (preserved copy, not a validated backup)",
         _ => $"Other file ({Entry.Folder})",
     };
 
@@ -225,12 +328,14 @@ public sealed class BackupRowViewModel : ObservableObject
         ? taken.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " JST"
         : "—";
 
-    public string SizeText => Entry.Size switch
+    public string SizeText => SizeTextOf(Entry.Size);
+
+    public static string SizeTextOf(long size) => size switch
     {
         < 0 => "—",
-        < 1024 => $"{Entry.Size} B",
-        < 1024 * 1024 => $"{Entry.Size / 1024.0:0.#} KB",
-        _ => $"{Entry.Size / (1024.0 * 1024.0):0.#} MB",
+        < 1024 => $"{size} B",
+        < 1024 * 1024 => $"{size / 1024.0:0.#} KB",
+        _ => $"{size / (1024.0 * 1024.0):0.#} MB",
     };
 
     public BackupCheckResult? Result => _result;
@@ -288,6 +393,7 @@ public sealed class BackupRowViewModel : ObservableObject
         BackupStatus.NameVersionMismatch => "Version does not match its name",
         BackupStatus.ValidationSideEffect => "Check left files behind",
         BackupStatus.NotEqualToSource => "Differs from its source",
+        BackupStatus.Preserved => "Preserved copy (not validated)",
         _ => status.ToString(),
     };
 

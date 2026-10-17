@@ -25,7 +25,11 @@ public sealed class InitialDataTests : IDisposable
     public void Dispose() => _root.Dispose();
 
     /// <summary>The production startup path (settings + database with initial data).</summary>
-    private InitializationResult StartApp() => WorkHubServices.Create(_root.Paths).Initializer.Initialize();
+    private InitializationResult StartApp()
+    {
+        using var services = WorkHubServices.Create(_root.Paths); // disposed like an exiting app (releases Presence)
+        return services.Initializer.Initialize();
+    }
 
     private long Scalar(string sql)
     {

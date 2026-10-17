@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         PreviewKeyDown += OnPreviewKeyDown;
+        // Phase 10 (R17): while a restore or Put back moves database files, the window does not close.
+        Closing += (_, e) => e.Cancel |= Main?.IsCloseBlocked == true;
     }
 
     private MainViewModel? Main => DataContext as MainViewModel;

@@ -102,4 +102,17 @@ internal sealed class FakeDialogs : IDialogService
     public string? PickFolder(string title, string? initialPath) => null;
 
     public void CopyToClipboard(string text) => Clipboard = text;
+
+    /// <summary>Plays the restore confirmation (default: Cancel).</summary>
+    public Func<RestoreConfirmationViewModel, bool> OnRestoreConfirmation { get; set; } = _ => false;
+
+    public bool ShowRestoreConfirmation(RestoreConfirmationViewModel viewModel) => OnRestoreConfirmation(viewModel);
+
+    public List<BackupsViewModel> RestoreBackupsShown { get; } = [];
+
+    public void ShowRestoreBackups(BackupsViewModel viewModel) => RestoreBackupsShown.Add(viewModel);
+
+    public List<(string Title, string Message)> Messages { get; } = [];
+
+    public void ShowMessage(string title, string message) => Messages.Add((title, message));
 }

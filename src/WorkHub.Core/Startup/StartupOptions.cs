@@ -15,10 +15,17 @@ public sealed class StartupOptions
     /// <summary>Top-level entries WorkHub itself creates in a data root; anything else marks a foreign folder.</summary>
     public static readonly IReadOnlyList<string> WorkHubRootEntries = ["Data", "Config", "Logs", "Backups", "Security"];
 
-    private StartupOptions(WorkHubPaths paths, bool isCustomDataRoot)
+    /// <summary>
+    /// Phase 10: passed by WorkHub itself when it relaunches after a confirmed Restore or Put back. It only allows the start
+    /// to act without asking when the journal, re-read under the locks, still names this operation in that state.
+    /// </summary>
+    public const string RestoreContinueOption = "--restore-continue";
+
+    private StartupOptions(WorkHubPaths paths, bool isCustomDataRoot, string? restoreContinueOp)
     {
         Paths = paths;
         IsCustomDataRoot = isCustomDataRoot;
+        RestoreContinueOp = restoreContinueOp;
     }
 
     public WorkHubPaths Paths { get; }
@@ -26,13 +33,27 @@ public sealed class StartupOptions
     /// <summary>True when <c>--data-root</c> selected the root (shown in the UI and logged inside that root).</summary>
     public bool IsCustomDataRoot { get; }
 
+    /// <summary>The validated operation identifier of <c>--restore-continue</c>, or null.</summary>
+    public string? RestoreContinueOp { get; }
+
     /// <param name="args">Process arguments, excluding the executable.</param>
     /// <param name="defaultRoot">The real per-user root (%LOCALAPPDATA%\WorkHub); an override may never point into it.</param>
     public static StartupOptionsResult Parse(IReadOnlyList<string> args, string defaultRoot)
     {
         string? rawRoot = null;
+        string? restoreOp = null;
         for (var i = 0; i < args.Count; i++)
         {
+            if (string.Equals(args[i], RestoreContinueOption, StringComparison.OrdinalIgnoreCase))
+            {
+                if (restoreOp is not null)
+                    return StartupOptionsResult.Failed($"{RestoreContinueOption} may be given only once.");
+                if (i + 1 >= args.Count || !Restore.RestoreOpId.IsValid(args[i + 1]))
+                    return StartupOptionsResult.Failed($"{RestoreContinueOption} requires a restore operation identifier.");
+                restoreOp = args[++i];
+                continue;
+            }
+
             if (!string.Equals(args[i], DataRootOption, StringComparison.OrdinalIgnoreCase))
                 return StartupOptionsResult.Failed($"Unknown argument '{args[i]}'. The only supported option is {DataRootOption} <path>.");
             if (rawRoot is not null)
@@ -43,12 +64,23 @@ public sealed class StartupOptions
         }
 
         if (rawRoot is null)
-            return StartupOptionsResult.Ok(new StartupOptions(new WorkHubPaths(defaultRoot), isCustomDataRoot: false));
+            return StartupOptionsResult.Ok(new StartupOptions(new WorkHubPaths(defaultRoot), isCustomDataRoot: false, restoreOp));
 
         var error = ValidateDataRoot(rawRoot, defaultRoot, out var fullPath);
         return error is null
-            ? StartupOptionsResult.Ok(new StartupOptions(new WorkHubPaths(fullPath!), isCustomDataRoot: true))
+            ? StartupOptionsResult.Ok(new StartupOptions(new WorkHubPaths(fullPath!), isCustomDataRoot: true, restoreOp))
             : StartupOptionsResult.Failed($"{DataRootOption} '{rawRoot}' cannot be used: {error}");
+    }
+
+    /// <summary>The arguments that start WorkHub again on the same data root (Phase 10 relaunch).</summary>
+    public IReadOnlyList<string> RelaunchArguments(string? restoreOp)
+    {
+        var args = new List<string>();
+        if (IsCustomDataRoot)
+            args.AddRange([DataRootOption, Paths.Root]);
+        if (restoreOp is not null)
+            args.AddRange([RestoreContinueOption, Restore.RestoreOpId.IsValid(restoreOp) ? restoreOp : throw new ArgumentException("Not a restore operation identifier.", nameof(restoreOp))]);
+        return args;
     }
 
     private static string? ValidateDataRoot(string raw, string defaultRoot, out string? fullPath)

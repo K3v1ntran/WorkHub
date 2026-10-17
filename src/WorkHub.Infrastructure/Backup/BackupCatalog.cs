@@ -7,7 +7,8 @@ using WorkHub.Infrastructure.Launching;
 namespace WorkHub.Infrastructure.Backup;
 
 /// <summary>
-/// Read-only discovery and checking of <c>Backups\Daily</c> and <c>Backups\Migrations</c> (Phase 9 §8.1). Listing never
+/// Read-only discovery and checking of <c>Backups\Daily</c>, <c>Backups\Migrations</c> and (Phase 10) <c>Backups\PreRestore</c>
+/// (Phase 9 §8.1). Listing never
 /// opens a file; a check opens one file with an unpooled read-only connection after the pre-open gates and closes it
 /// before returning. There is no operation that writes, replaces or deletes anything.
 /// </summary>
@@ -41,11 +42,13 @@ public sealed class BackupCatalog : IBackupCatalog
         {
             var daily = List(BackupFolder.Daily, _paths.DailyBackupsDirectory);
             var migrations = List(BackupFolder.Migrations, _paths.MigrationBackupsDirectory);
+            var preRestore = List(BackupFolder.PreRestore, _paths.PreRestoreBackupsDirectory);
             return
             [
                 .. daily.Where(e => e.Kind == BackupKind.Daily).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
                 .. migrations.Where(e => e.Kind == BackupKind.PreMigration).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
-                .. daily.Concat(migrations).Where(e => e.Kind == BackupKind.Unrecognized).OrderBy(e => e.Folder).ThenBy(e => e.FileName, StringComparer.OrdinalIgnoreCase),
+                .. preRestore.Where(e => e.Kind is BackupKind.PreRestore or BackupKind.Preserved).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
+                .. daily.Concat(migrations).Concat(preRestore).Where(e => e.Kind == BackupKind.Unrecognized).OrderBy(e => e.Folder).ThenBy(e => e.FileName, StringComparer.OrdinalIgnoreCase),
             ];
         }, cancellationToken);
 
@@ -54,7 +57,8 @@ public sealed class BackupCatalog : IBackupCatalog
         if (entry.Kind == BackupKind.Unrecognized)
             return Task.FromResult(new BackupCheckResult(BackupStatus.Unrecognized, Detail: "not a WorkHub backup name; not opened"));
 
-        // Migration backups are checked against their own version (the name's "from" version).
+        // Migration backups are checked against their own version (the name's "from" version). PreRestore files are checked
+        // with the same daily rules: a preserved copy shows its real status (newer, foreign, structure differs…).
         return Task.Run(() => _validator.Check(PathOf(entry), level, entry.NameVersion, ValidationRules.Daily), cancellationToken);
     }
 
@@ -75,8 +79,14 @@ public sealed class BackupCatalog : IBackupCatalog
         }
     }
 
-    private string PathOf(BackupEntry entry) =>
-        Path.Combine(entry.Folder == BackupFolder.Daily ? _paths.DailyBackupsDirectory : _paths.MigrationBackupsDirectory, entry.FileName);
+    private string PathOf(BackupEntry entry) => Path.Combine(
+        entry.Folder switch
+        {
+            BackupFolder.Daily => _paths.DailyBackupsDirectory,
+            BackupFolder.Migrations => _paths.MigrationBackupsDirectory,
+            _ => _paths.PreRestoreBackupsDirectory,
+        },
+        entry.FileName);
 
     private List<BackupEntry> List(BackupFolder folder, string directory)
     {
@@ -108,6 +118,10 @@ public sealed class BackupCatalog : IBackupCatalog
             else if (folder == BackupFolder.Migrations && DailyBackupPolicy.TryParseMigration(name, out var from, out var to, out var takenUtc))
             {
                 entries.Add(new BackupEntry(name, folder, BackupKind.PreMigration, size, _calendar.ToTokyo(takenUtc), from, to));
+            }
+            else if (folder == BackupFolder.PreRestore && PreRestoreNames.TryParse(name, out var kind, out var version, out var preRestoreUtc))
+            {
+                entries.Add(new BackupEntry(name, folder, kind, size, _calendar.ToTokyo(preRestoreUtc), version));
             }
             else
             {

@@ -1,0 +1,39 @@
+<Window x:Class="WorkHub.App.Views.RestoreConfirmationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:RestoreConfirmationViewModel}"
+        Title="{Binding Title}"
+        Width="560" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+    <!-- Phase 10 §13.2. Shown while the Restore lock is held; Cancel is the default (Enter/Esc never confirm). -->
+    <DockPanel Margin="20,16,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True" Command="{Binding CancelCommand}" AutomationProperties.Name="Cancel restore" />
+            <Button Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Content="Restore and restart" Command="{Binding ConfirmCommand}" AutomationProperties.Name="Restore and restart" />
+        </StackPanel>
+        <StackPanel>
+            <TextBlock FontSize="15" FontWeight="SemiBold" Text="{Binding Title}" />
+            <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" Text="{Binding BackupText}" AutomationProperties.AutomationId="RestoreBackupText" />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SchemaText}" />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding ContentsText}" />
+            <TextBlock Margin="0,10,0,0" TextWrapping="Wrap" FontWeight="SemiBold" Text="{Binding CurrentDataText}" AutomationProperties.AutomationId="RestoreCurrentDataText" />
+            <CheckBox Margin="0,6,0,0" IsChecked="{Binding IsAcknowledged}" Content="{Binding AcknowledgementText}" AutomationProperties.Name="Acknowledge current data"
+                      Visibility="{Binding RequiresAcknowledgement, Converter={StaticResource BoolToVisibility}}" />
+            <ItemsControl Margin="0,10,0,0" ItemsSource="{Binding Notes}" Focusable="False">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Margin="0,2" TextWrapping="Wrap" Foreground="{StaticResource Brush.MutedText}" Text="{Binding}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </DockPanel>
+</Window>

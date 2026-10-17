@@ -154,19 +154,73 @@
             </DockPanel>
         </Border>
 
-        <!-- Startup error -->
-        <Border Grid.Row="1" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
-            <Border.Style>
-                <Style TargetType="Border" BasedOn="{StaticResource Banner}">
-                    <Style.Triggers>
-                        <DataTrigger Binding="{Binding ErrorMessage}" Value="{x:Null}">
-                            <Setter Property="Visibility" Value="Collapsed" />
-                        </DataTrigger>
-                    </Style.Triggers>
-                </Style>
-            </Border.Style>
-            <TextBlock Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorMessage}" />
-        </Border>
+        <StackPanel Grid.Row="1">
+            <!-- Phase 10: restore startup screen (waiting holds the startup Gate only; asking; progress). -->
+            <Border Style="{StaticResource Banner}" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}"
+                    DataContext="{Binding RestoreScreen}" AutomationProperties.AutomationId="RestoreScreen"
+                    Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}, FallbackValue=Collapsed}">
+                <StackPanel>
+                    <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding Text}" AutomationProperties.AutomationId="RestoreScreenText" />
+                    <TextBlock Margin="0,4,0,0" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="RestoreScreenNotice"
+                               Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Style="{StaticResource PrimaryButton}" Content="{Binding NowText}" Command="{Binding NowCommand}" AutomationProperties.Name="{Binding NowText}"
+                                Visibility="{Binding IsAsking, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="Cancel restore" Command="{Binding CancelRestoreCommand}" AutomationProperties.Name="Cancel restore"
+                                Visibility="{Binding CanCancelRestore, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="Not now" Command="{Binding NotNowCommand}" AutomationProperties.Name="Not now"
+                                Visibility="{Binding IsAsking, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="Exit" Command="{Binding ExitCommand}" AutomationProperties.Name="Exit"
+                                Visibility="{Binding CanExit, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Startup error (and Phase 10 recovery / Failed-shell restore entry) -->
+            <Border Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource Banner}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding ErrorMessage}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <StackPanel>
+                    <TextBlock Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorMessage}" AutomationProperties.AutomationId="StartupError" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Restore from a backup…" Command="{Binding RestoreFromBackupCommand}" AutomationProperties.Name="Restore from a backup"
+                                Visibility="{Binding CanRestoreFromBackup, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Content="Open the Restore folder" Command="{Binding OpenRestoreFolderCommand}" AutomationProperties.Name="Open the Restore folder"
+                                Visibility="{Binding IsRecoveryRequired, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="Exit" Command="{Binding ExitCommand}" AutomationProperties.Name="Exit WorkHub"
+                                Visibility="{Binding IsRecoveryRequired, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Phase 10: this window owns an unfinished restore (§10.1). Every write re-reads under the Restore lock. -->
+            <Border Style="{StaticResource Banner}" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}"
+                    DataContext="{Binding RestoreOwner}" AutomationProperties.AutomationId="RestoreOwner"
+                    Visibility="{Binding IsVisible, Converter={StaticResource BoolToVisibility}, FallbackValue=Collapsed}">
+                <StackPanel>
+                    <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding StatusText}" AutomationProperties.AutomationId="RestoreOwnerText" />
+                    <TextBlock Margin="0,4,0,0" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding Message}"
+                               Visibility="{Binding Message, Converter={StaticResource NullToCollapsed}}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Put back previous data" Command="{Binding PutBackCommand}" AutomationProperties.Name="Put back previous data"
+                                Visibility="{Binding CanPutBack, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="Try again" Command="{Binding TryAgainCommand}" AutomationProperties.Name="Try again"
+                                Visibility="{Binding CanTryAgain, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="{Binding RestartText}" Command="{Binding RestartCommand}" AutomationProperties.Name="{Binding RestartText}"
+                                Visibility="{Binding CanRestart, Converter={StaticResource BoolToVisibility}}" />
+                        <Button Margin="8,0,0,0" Content="Exit" Command="{Binding ExitCommand}" AutomationProperties.Name="Exit after restore problem"
+                                Visibility="{Binding CanRestart, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
 
         <!-- Non-fatal startup warning -->
         <Border Grid.Row="2" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}">
