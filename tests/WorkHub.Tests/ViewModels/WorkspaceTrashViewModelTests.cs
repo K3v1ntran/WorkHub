@@ -16,6 +16,11 @@ namespace WorkHub.Tests.ViewModels;
 /// (tests 1–10, 10a), ownership and timing (11–17), the visit-bound Undo (17a–17d) and stale nodes (18–21). Gated stores
 /// hold reads (snapshot when called, delivered on release) and writes (run on release). A second set of services on the
 /// same database plays the other window.
+/// <para>
+/// Phase 11: every test body runs on a <see cref="SingleThreadContext"/> (one thread, like the WPF Dispatcher), so the view
+/// models' continuations never run concurrently; modal callbacks pump instead of blocking. Teardown follows
+/// <see cref="ContextTeardown"/>: release gates, settle on the context, confirm the stop, then delete the root.
+/// </para>
 /// </summary>
 public sealed class WorkspaceTrashViewModelTests : IDisposable
 {
@@ -28,6 +33,11 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
     private readonly WorkspaceService _other;
     private readonly ProjectContentService _otherContent;
     private readonly List<WorkspaceAreaViewModel> _areas = [];
+    private readonly List<GatedSearchStore> _searchStores = [];
+    private readonly SingleThreadContext _context = new();
+
+    private static readonly TimeSpan BodyTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan TeardownBound = TimeSpan.FromSeconds(30);
 
     public WorkspaceTrashViewModelTests()
     {
@@ -40,21 +50,35 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         _otherContent = new ProjectContentService(new SqliteProjectContentStore(_connections), new ProcessProjectLinkLauncher(new RecordingProcessStarter(), _ => true, _ => true));
     }
 
-    public void Dispose()
-    {
-        foreach (var area in _areas)
-        {
-            var pending = new List<Task>
-            {
-                area.CurrentDetailsLoad, area.CurrentReveal, area.CurrentLifecycleOperation, area.CurrentReconciliation,
-                area.Trash.CurrentLoad, area.Trash.CurrentCount, area.Trash.CurrentRestore,
-            };
-            if (area.SelectedContent is { } content)
-                pending.AddRange([content.CurrentLoad, content.CurrentPreviewLoad]);
-            Task.WhenAll(pending).ContinueWith(_ => { }).Wait(TimeSpan.FromSeconds(10));
-        }
+    /// <summary>Every area is observed as its own tracked set, even when another faults (see <see cref="ContextTeardown"/>).</summary>
+    public void Dispose() =>
+        ContextTeardown.Run(_context, ReleaseGates, _areas.Select((area, i) => (ContextTeardown.TrackedSet)(() => Tracked(area, $"area{i}."))).ToList(),
+            _root.Dispose, _root.Paths.Root, TeardownBound);
 
-        _root.Dispose();
+    private Task InContext(Func<Task> body) => _context.RunAsync(body, BodyTimeout);
+
+    private void ReleaseGates()
+    {
+        _treeStore.ReleaseAll();
+        _contentStore.ReleaseAll();
+        foreach (var store in _searchStores)
+            store.ReleaseAll();
+    }
+
+    /// <summary>Awaits the area's tracked operations until they are quiescent (faults propagate; see <see cref="TrackedTasks"/>).</summary>
+    private static Task Settle(WorkspaceAreaViewModel area) => TrackedTasks.SettleAsync(() => Tracked(area, ""));
+
+    private static IReadOnlyList<(string Name, Task Task)> Tracked(WorkspaceAreaViewModel area, string prefix)
+    {
+        var tasks = new List<(string Name, Task Task)>
+        {
+            ("CurrentDetailsLoad", area.CurrentDetailsLoad), ("CurrentReveal", area.CurrentReveal),
+            ("CurrentLifecycleOperation", area.CurrentLifecycleOperation), ("CurrentReconciliation", area.CurrentReconciliation),
+            ("Trash.CurrentLoad", area.Trash.CurrentLoad), ("Trash.CurrentCount", area.Trash.CurrentCount), ("Trash.CurrentRestore", area.Trash.CurrentRestore),
+        };
+        if (area.SelectedContent is { } content)
+            tasks.AddRange([("Content.CurrentLoad", content.CurrentLoad), ("Content.CurrentPreviewLoad", content.CurrentPreviewLoad)]);
+        return tasks.Select(t => (prefix + t.Name, t.Task)).ToList();
     }
 
     private GatedSearchStore SearchStore { get; set; } = null!;
@@ -62,6 +86,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
     private async Task<WorkspaceAreaViewModel> Area(WorkspaceSearchStoreOptions? options = null)
     {
         SearchStore = new GatedSearchStore(new SqliteWorkspaceSearchStore(_connections, options ?? WorkspaceSearchStoreOptions.Default));
+        _searchStores.Add(SearchStore);
         var content = new ProjectContentService(_contentStore, new ProcessProjectLinkLauncher(_starter, _ => true, _ => true));
         var area = new WorkspaceAreaViewModel(new WorkspaceService(_treeStore), _dialogs, NullAppLog.Instance, content, new ScriptedLinkChecker(),
             new WorkspaceSearchService(SearchStore), searchDelayMs: 0);
@@ -130,7 +155,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
     // ==== Basic flows ===========================================================================================================
 
     [Fact]
-    public async Task MoveToTrash_ConfirmsThenRemovesTheNodeAfterCommit_AndOffersUndo()
+    public Task MoveToTrash_ConfirmsThenRemovesTheNodeAfterCommit_AndOffersUndo() => InContext(async () =>
     {
         var alpha = await Project("Alpha Portal");
         await Project("Beta");
@@ -147,10 +172,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.True(IsTrashedInDb(alpha));
         await area.Trash.CurrentCount;
         Assert.Equal("Trashed projects (1)", area.Trash.ButtonText);
-    }
+    });
 
     [Fact]
-    public async Task ARemovedSelectedRow_IsUnselectedBeforeItLeavesItsCollection_SoNoParentIsSelectedForIt()
+    public Task ARemovedSelectedRow_IsUnselectedBeforeItLeavesItsCollection_SoNoParentIsSelectedForIt() => InContext(async () =>
     {
         var f = await Folder("F");
         await Project("P", f);
@@ -170,10 +195,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.False(selectedWhenRemoved); // a WPF tree selects the parent of a removed SELECTED row by itself
         Assert.Null(area.SelectedNode);
         Assert.False(fNode.IsSelected);
-    }
+    });
 
     [Fact]
-    public async Task Undo_RestoresAndSelects_InTheSameVisit()
+    public Task Undo_RestoresAndSelects_InTheSameVisit() => InContext(async () =>
     {
         await Project("Alpha");
         var area = await Area();
@@ -186,10 +211,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.False(area.IsUndoAvailable);
         await area.Trash.CurrentCount;
         Assert.Equal("Trashed projects (0)", area.Trash.ButtonText);
-    }
+    });
 
     [Fact]
-    public async Task RemoveFolder_EmptyOnlyAfterConfirmation_OtherwiseNoDialogAndAReason()
+    public Task RemoveFolder_EmptyOnlyAfterConfirmation_OtherwiseNoDialogAndAReason() => InContext(async () =>
     {
         var empty = await Folder("Drafts");
         var clients = await Folder("Clients");
@@ -218,12 +243,12 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.DoesNotContain("Drafts", Names(area.Roots));
         Assert.Null(area.SelectedNode);
         Assert.Null(await _other.GetNodeStateAsync(empty));
-    }
+    });
 
     // ==== Stale reads (§8.3) =========================================================================================================
 
     [Fact]
-    public async Task T01_OlderLazyLoad_CannotResurrectATrashedProject_OtherRowsAndExpansionKept()
+    public Task T01_OlderLazyLoad_CannotResurrectATrashedProject_OtherRowsAndExpansionKept() => InContext(async () =>
     {
         var f = await Folder("F");
         var p = await Project("P", f);
@@ -250,10 +275,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Empty(Placements(area, p));
         Assert.Same(inside, Node(keepNode.Children, "Inside"));
         Assert.True(keepNode.IsExpanded);
-    }
+    });
 
     [Fact]
-    public async Task T02_LazyLoadStartedDuringAPendingTrash_CannotResurrectIt()
+    public Task T02_LazyLoadStartedDuringAPendingTrash_CannotResurrectIt() => InContext(async () =>
     {
         var f = await Folder("F");
         var p = await Project("P", f);
@@ -277,10 +302,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Equal(["A"], Names(fNode.Children));
         Assert.Empty(Placements(area, p));
-    }
+    });
 
     [Fact]
-    public async Task T03_Restore_AwaitsTheParentsLoad_ThenAppearsExactlyOnce()
+    public Task T03_Restore_AwaitsTheParentsLoad_ThenAppearsExactlyOnce() => InContext(async () =>
     {
         var f = await Folder("F");
         var p = await Project("P", f);
@@ -305,10 +330,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(["A", "P"], Names(fNode.Children));
         Assert.Single(Placements(area, p));
         Assert.Null(area.SelectedNode); // Restore from the panel never changes the selection
-    }
+    });
 
     [Fact]
-    public async Task T03b_RestoreCommittedBeforeTheLoadStarted_IsNeitherFilteredOutNorDuplicated()
+    public Task T03b_RestoreCommittedBeforeTheLoadStarted_IsNeitherFilteredOutNorDuplicated() => InContext(async () =>
     {
         var f = await Folder("F");
         var p = await Project("P", f);
@@ -332,10 +357,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Equal(["P"], Names(fNode.Children));
         Assert.Single(Placements(area, p));
-    }
+    });
 
     [Fact]
-    public async Task T04_OlderLazyLoad_CannotResurrectARemovedFolder()
+    public Task T04_OlderLazyLoad_CannotResurrectARemovedFolder() => InContext(async () =>
     {
         var g = await Folder("G");
         var e = await Folder("E", g);
@@ -353,10 +378,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Equal(["B"], Names(gNode.Children));
         Assert.Empty(Placements(area, e));
-    }
+    });
 
     [Fact]
-    public async Task T05_RevealStartedDuringAPendingTrash_IsRetried_AndNeverResurrectsIt()
+    public Task T05_RevealStartedDuringAPendingTrash_IsRetried_AndNeverResurrectsIt() => InContext(async () =>
     {
         var p = await Project("P");
         var f = await Folder("F");
@@ -377,10 +402,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Empty(Placements(area, p));
         Assert.Same(Assert.Single(Placements(area, s)), area.SelectedNode);
         Assert.Single(Placements(area, f));
-    }
+    });
 
     [Fact]
-    public async Task T05b_RevealStartedDuringAPendingTrash_InALoadedBranch_DoesNotPutItBack()
+    public Task T05b_RevealStartedDuringAPendingTrash_InALoadedBranch_DoesNotPutItBack() => InContext(async () =>
     {
         var f = await Folder("F");
         await Project("P", f);
@@ -401,10 +426,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(WorkspaceRevealOutcome.Selected, await reveal);
         Assert.Equal(["S"], Names(fNode.Children));
         Assert.Same(sInstance, area.SelectedNode);
-    }
+    });
 
     [Fact]
-    public async Task T06_RevealOfTheProjectItself_DuringAPendingTrash_ReportsTrashed_NothingPlaced()
+    public Task T06_RevealOfTheProjectItself_DuringAPendingTrash_ReportsTrashed_NothingPlaced() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -421,10 +446,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(WorkspaceRevealOutcome.Trashed, await reveal);
         Assert.Empty(Placements(area, p));
         Assert.Null(area.SelectedNode);
-    }
+    });
 
     [Fact]
-    public async Task T07_RevealAppliedBeforeTheCompletion_IsCorrectedByTheCompletion()
+    public Task T07_RevealAppliedBeforeTheCompletion_IsCorrectedByTheCompletion() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -440,10 +465,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Empty(Placements(area, p));
         Assert.Null(area.SelectedNode);
         Assert.True(content.IsDeactivated);
-    }
+    });
 
     [Fact]
-    public async Task T08_RevealSnapshotReadBeforeARestore_IsRetried_RestoredProjectPresentOnce()
+    public Task T08_RevealSnapshotReadBeforeARestore_IsRetried_RestoredProjectPresentOnce() => InContext(async () =>
     {
         var f = await Folder("F");
         var p = await Project("P", f);
@@ -470,10 +495,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(2, SearchStore.Resolves);
         Assert.Equal(["P", "X"], Names(fNode.Children));
         Assert.Single(Placements(area, p));
-    }
+    });
 
     [Fact]
-    public async Task T08b_RestoreIntoAnUnloadedFolder_DuringAReveal_ChangesNoBranchStamp_YetTheStaleSnapshotIsNotApplied()
+    public Task T08b_RestoreIntoAnUnloadedFolder_DuringAReveal_ChangesNoBranchStamp_YetTheStaleSnapshotIsNotApplied() => InContext(async () =>
     {
         var f = await Folder("F");
         var p = await Project("P", f);
@@ -501,10 +526,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.True(fNode.IsChildrenLoaded);
         Assert.Equal(["P", "X"], Names(fNode.Children)); // the stale [X] would have dropped the restored P
         Assert.Single(Placements(area, p));
-    }
+    });
 
     [Fact]
-    public async Task T09_TrashListAndCount_ReadBeforeACompletion_AreDiscardedAndReadAgain()
+    public Task T09_TrashListAndCount_ReadBeforeACompletion_AreDiscardedAndReadAgain() => InContext(async () =>
     {
         var p = await Project("P");
         var q = await Project("Q");
@@ -522,10 +547,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         await area.Trash.CurrentLoad;
 
         Assert.Equal(["Q", "P"], area.Trash.Entries.Select(e => e.Name));
-    }
+    });
 
     [Fact]
-    public async Task T09b_CountReadBeforeACompletion_IsNeverShown()
+    public Task T09b_CountReadBeforeACompletion_IsNeverShown() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -544,10 +569,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         await area.Trash.CurrentCount;
 
         Assert.Equal([2], shown);
-    }
+    });
 
     [Fact]
-    public async Task T10_RevealStartedBeforeTheCommand_IsSuperseded()
+    public Task T10_RevealStartedBeforeTheCommand_IsSuperseded() => InContext(async () =>
     {
         var p = await Project("P");
         var s = await Project("S");
@@ -562,10 +587,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Equal(WorkspaceRevealOutcome.Superseded, await reveal);
         Assert.Empty(Placements(area, p));
-    }
+    });
 
     [Fact]
-    public async Task T10a_RevealSpanningTwoSequentialCompletions_ReturnsWorkspaceChanged_SecondSnapshotNotApplied()
+    public Task T10a_RevealSpanningTwoSequentialCompletions_ReturnsWorkspaceChanged_SecondSnapshotNotApplied() => InContext(async () =>
     {
         var p = await Project("P");
         var q = await Project("Q");
@@ -607,7 +632,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Empty(Placements(area, p));
         Assert.Empty(Placements(area, q));
         listing.Release(); // its view was deactivated when Q left the tree: the late result changes nothing
-    }
+    });
 
     // ==== Stale NEGATIVE resolutions (Codex review of Phase 8) =====================================================================
 
@@ -633,7 +658,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task N1_StaleTrashedResolution_DeliveredAfterRestore_IsReResolved_AndSelectsTheActiveProject()
+    public Task N1_StaleTrashedResolution_DeliveredAfterRestore_IsReResolved_AndSelectsTheActiveProject() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -651,10 +676,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(WorkspaceRevealOutcome.Selected, await reveal);
         Assert.Equal(2, SearchStore.Resolves);
         Assert.Same(Assert.Single(Placements(area, p)), area.SelectedNode);
-    }
+    });
 
     [Fact]
-    public async Task N2_StaleProjectTrashedResolution_ForContent_DeliveredAfterRestore_RevealsTheActiveContent()
+    public Task N2_StaleProjectTrashedResolution_ForContent_DeliveredAfterRestore_RevealsTheActiveContent() => InContext(async () =>
     {
         var p = await Project("P");
         var note = (await _otherContent.CreateNoteAsync(p, null, new ProjectNoteDraft("Kickoff", "x"))).Note!.Id;
@@ -672,10 +697,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(2, SearchStore.Resolves);
         Assert.Equal(p, area.SelectedNode!.Id);
         Assert.Equal(new ContentRef(ContentKind.Note, note), area.SelectedContent!.SelectedItem!.Ref);
-    }
+    });
 
     [Fact]
-    public async Task N3_TwoConsecutiveInvalidatedResolutions_FirstNegative_ReturnWorkspaceChanged_NothingApplied()
+    public Task N3_TwoConsecutiveInvalidatedResolutions_FirstNegative_ReturnWorkspaceChanged_NothingApplied() => InContext(async () =>
     {
         var p = await Project("P");
         var q = await Project("Q");
@@ -701,10 +726,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(roots, Names(area.Roots));
         Assert.Same(selected, area.SelectedNode); // R2 not applied (P not selected by the reveal)
         Assert.Single(Placements(area, p));
-    }
+    });
 
     [Fact]
-    public async Task N3b_TwoConsecutiveInvalidatedResolutions_SecondNegative_ReturnWorkspaceChanged()
+    public Task N3b_TwoConsecutiveInvalidatedResolutions_SecondNegative_ReturnWorkspaceChanged() => InContext(async () =>
     {
         var p = await Project("P");
         var q = await Project("Q");
@@ -729,10 +754,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(WorkspaceRevealOutcome.WorkspaceChanged, await reveal); // never a false "in the Trash"
         Assert.Equal(2, SearchStore.Resolves);
         Assert.Single(Placements(area, q));
-    }
+    });
 
     [Fact]
-    public async Task N4_NegativeResolutionsWithoutAnInterveningCompletion_KeepTheirBehavior()
+    public Task N4_NegativeResolutionsWithoutAnInterveningCompletion_KeepTheirBehavior() => InContext(async () =>
     {
         var p = await Project("P");
         var note = (await _otherContent.CreateNoteAsync(p, null, new ProjectNoteDraft("Kickoff", "x"))).Note!.Id;
@@ -745,10 +770,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(2, SearchStore.Resolves);
         Assert.Equal(WorkspaceRevealOutcome.NotFound, await Reveal(area, SearchResultKind.Project, 9999));
         Assert.Equal(3, SearchStore.Resolves);
-    }
+    });
 
     [Fact]
-    public async Task N5_Search_HitOfARestoredProject_IsNotRemovedByAStaleTrashedResolution()
+    public Task N5_Search_HitOfARestoredProject_IsNotRemovedByAStaleTrashedResolution() => InContext(async () =>
     {
         var p = await Project("Alpha Portal");
         var area = await Area();
@@ -775,12 +800,12 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Contains(hit, search.Results);
         Assert.Null(search.NoticeText);
         Assert.Equal(p, area.SelectedNode!.Id);
-    }
+    });
 
     // ==== Ownership and timing (§8.2) ============================================================================================
 
     [Fact]
-    public async Task T11_SelectionMovesToQ_DuringAPendingTrash_QsViewVisitAndDraftAreUntouched()
+    public Task T11_SelectionMovesToQ_DuringAPendingTrash_QsViewVisitAndDraftAreUntouched() => InContext(async () =>
     {
         await Project("P");
         await Project("Q");
@@ -799,7 +824,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
             editor.Title = "Draft title";
             editor.Content = "draft text";
             gate.Release();
-            Assert.True(trash.Wait(TimeSpan.FromSeconds(10))); // the Trash completes while this editor is open
+            Assert.True(_dialogs.PumpWhileModal(() => trash.IsCompleted, TimeSpan.FromSeconds(10))); // the Trash completes while this editor is open
 
             Assert.Same(qNode, area.SelectedNode);
             Assert.Same(qView, area.SelectedContent);
@@ -818,10 +843,15 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.True(checkedInside);
         Assert.Equal(["Q"], Names(area.Roots));
         Assert.Same(qNode, area.SelectedNode);
-    }
+
+        await Settle(area); // Phase 11: the end state holds once every tracked operation has finished, too
+        Assert.Equal(["Q"], Names(area.Roots));
+        Assert.Same(qNode, area.SelectedNode);
+        Assert.False(qView.IsDeactivated);
+    });
 
     [Fact]
-    public async Task T12_P_Q_P_DuringAPendingTrash_DeactivatesOnlyTheCurrentPView()
+    public Task T12_P_Q_P_DuringAPendingTrash_DeactivatesOnlyTheCurrentPView() => InContext(async () =>
     {
         await Project("P");
         await Project("Q");
@@ -842,10 +872,15 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Null(area.SelectedContent);
         Assert.True(qView.IsDeactivated); // deactivated earlier by the user's own selection change, as before
         Assert.Equal(["Q"], Names(area.Roots));
-    }
+
+        await Settle(area); // Phase 11: the end state holds once every tracked operation has finished, too
+        Assert.True(current.IsDeactivated);
+        Assert.Null(area.SelectedContent);
+        Assert.Equal(["Q"], Names(area.Roots));
+    });
 
     [Fact]
-    public async Task T13_TrashFailure_ChangesNothing_AndReleasesTheSlot()
+    public Task T13_TrashFailure_ChangesNothing_AndReleasesTheSlot() => InContext(async () =>
     {
         await Project("P");
         var area = await Area();
@@ -864,10 +899,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.False(area.IsLifecycleBusy);
         Assert.False(area.IsUndoAvailable);
         Assert.True(area.TrashProjectCommand.CanExecute(null));
-    }
+    });
 
     [Fact]
-    public async Task T14_DeclinedConfirmation_MakesNoStoreCall()
+    public Task T14_DeclinedConfirmation_MakesNoStoreCall() => InContext(async () =>
     {
         await Project("P");
         var area = await Area();
@@ -877,12 +912,12 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Equal(0, _treeStore.Calls("trashProject"));
         Assert.Equal(["P"], Names(area.Roots));
-    }
+    });
 
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task T15_ContentWriteDuringAPendingTrash_BothCommitOrders(bool contentFirst)
+    public Task T15_ContentWriteDuringAPendingTrash_BothCommitOrders(bool contentFirst) => InContext(async () =>
     {
         var p = await Project("P");
         var link = (await _otherContent.CreateLinkAsync(p, null, new ProjectLinkDraft("Wiki", ProjectLinkType.Web, "https://wiki.example.test/"))).Value!.Id;
@@ -915,10 +950,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(contentFirst ? 1 : 0, Db.Count(connection, "ProjectTrashEntries")); // saved and kept / refused, nothing written
         Assert.Equal(contentFirst ? 1 : 0, Db.ScalarLongWith(connection, "SELECT TrashEntryId IS NOT NULL FROM ProjectLinks WHERE Id = $id;", ("$id", link)));
         Assert.True(view.IsDeactivated);
-    }
+    });
 
     [Fact]
-    public async Task T16_PendingTrash_KeepsTheNodeAndView_DisablesWorkspaceWrites_AllowsTheRest()
+    public Task T16_PendingTrash_KeepsTheNodeAndView_DisablesWorkspaceWrites_AllowsTheRest() => InContext(async () =>
     {
         await Project("P");
         await Project("Q");
@@ -944,10 +979,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         gate.Release();
         await trash;
         Assert.True(area.NewFolderCommand.CanExecute(null));
-    }
+    });
 
     [Fact]
-    public async Task T17_UndoSelectsOnlyIfTheSelectionIsUnchanged_PanelRestoreNeverSelects_BackKeepsTheSelection()
+    public Task T17_UndoSelectsOnlyIfTheSelectionIsUnchanged_PanelRestoreNeverSelects_BackKeepsTheSelection() => InContext(async () =>
     {
         await Project("P");
         await Project("Q");
@@ -976,12 +1011,12 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Same(qView, area.SelectedContent);
         Assert.False(qView!.IsDeactivated);
         Assert.Contains("R", Names(area.Roots));
-    }
+    });
 
     // ==== Visit-bound Undo (§8.2) =================================================================================================
 
     [Fact]
-    public async Task T17a_TrashCompletingAfterTheTabWasLeft_ReconcilesTheTree_OffersNoUndo()
+    public Task T17a_TrashCompletingAfterTheTabWasLeft_ReconcilesTheTree_OffersNoUndo() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -1000,10 +1035,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.False(area.UndoCommand.CanExecute(null));
         await area.UndoCommand.ExecuteAsync();
         Assert.Equal(0, _treeStore.Calls("restoreProject"));
-    }
+    });
 
     [Fact]
-    public async Task T17b_LeavingAndReEnteringBeforeTheCompletion_DoesNotRevivetheOldVisit()
+    public Task T17b_LeavingAndReEnteringBeforeTheCompletion_DoesNotRevivetheOldVisit() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -1018,10 +1053,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Empty(Placements(area, p));
         Assert.False(area.IsUndoAvailable);
         Assert.False(area.UndoCommand.CanExecute(null));
-    }
+    });
 
     [Fact]
-    public async Task T17c_PendingUndo_LeaveAndReEnter_RestoresIntoTheTree_WithoutSelecting()
+    public Task T17c_PendingUndo_LeaveAndReEnter_RestoresIntoTheTree_WithoutSelecting() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -1042,10 +1077,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(["P", "Q"], Names(area.Roots));
         Assert.Null(area.SelectedNode); // selection unchanged, but the Undo's visit ended
         Assert.Equal("Restored “P” to Workspace (top level).", area.BannerMessage);
-    }
+    });
 
     [Fact]
-    public async Task T17d_SameVisit_KeepsTheApprovedUndoBehavior()
+    public Task T17d_SameVisit_KeepsTheApprovedUndoBehavior() => InContext(async () =>
     {
         await Project("P");
         await Project("Q");
@@ -1058,10 +1093,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Equal("P", area.SelectedNode!.Name); // selection unchanged since the click
         Assert.False(area.IsUndoAvailable);
-    }
+    });
 
     [Fact]
-    public async Task DismissingOrReplacingTheBannerMessage_WithdrawsItsUndo()
+    public Task DismissingOrReplacingTheBannerMessage_WithdrawsItsUndo() => InContext(async () =>
     {
         var p = await Project("P");
         var q = await Project("Q");
@@ -1077,12 +1112,12 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         await area.ReconcileNodeAsync(p); // another message replaces "Moved “Q” …"
         Assert.False(area.IsUndoAvailable);
         Assert.True(IsTrashedInDb(q));
-    }
+    });
 
     // ==== Stale nodes (§8.4) =====================================================================================================
 
     [Fact]
-    public async Task T18_RefusedRename_FreshRead_RemovesP_WhileQStaysSelected()
+    public Task T18_RefusedRename_FreshRead_RemovesP_WhileQStaysSelected() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -1092,7 +1127,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         _dialogs.OnWorkspaceNameEditor = editor =>
         {
             editor.Name = "P2";
-            editor.SaveCommand.ExecuteAsync().GetAwaiter().GetResult();
+            _dialogs.WaitModal(editor.SaveCommand.ExecuteAsync(), TimeSpan.FromSeconds(10)); // a modal dialog keeps dispatching
             Assert.Equal("This project is in the Trash.", editor.Error);
             return false; // the dialog kept its values; the user closes it
         };
@@ -1111,10 +1146,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Same(qNode, area.SelectedNode);
         Assert.Same(qView, area.SelectedContent);
         Assert.Equal("This project is in the Trash.", area.BannerMessage);
-    }
+    });
 
     [Fact]
-    public async Task T19_FreshReadOlderThanANewerCompletion_IsDiscarded()
+    public Task T19_FreshReadOlderThanANewerCompletion_IsDiscarded() => InContext(async () =>
     {
         var p = await Project("P");
         var area = await Area();
@@ -1129,10 +1164,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
 
         Assert.Single(Placements(area, p));
         Assert.Equal("P", area.SelectedNode!.Name);
-    }
+    });
 
     [Fact]
-    public async Task T20_CreateRefusedBecauseTheParentWasRemoved_RemovesThatFolderById()
+    public Task T20_CreateRefusedBecauseTheParentWasRemoved_RemovesThatFolderById() => InContext(async () =>
     {
         var e = await Folder("E");
         await Folder("Keep");
@@ -1142,7 +1177,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         _dialogs.OnWorkspaceNameEditor = editor =>
         {
             editor.Name = "Child";
-            editor.SaveCommand.ExecuteAsync().GetAwaiter().GetResult();
+            _dialogs.WaitModal(editor.SaveCommand.ExecuteAsync(), TimeSpan.FromSeconds(10)); // a modal dialog keeps dispatching
             Assert.Equal(WorkspaceFailure.ParentNotFound, editor.Refusal);
             return false;
         };
@@ -1153,10 +1188,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(["Keep"], Names(area.Roots));
         Assert.Null(area.SelectedNode);
         Assert.Equal("The destination folder no longer exists. Nothing was created.", area.BannerMessage);
-    }
+    });
 
     [Fact]
-    public async Task T21_DetailsReportTrashed_RemovesTheSelectedProject_StaleDetailsForAnOlderSelectionIgnored()
+    public Task T21_DetailsReportTrashed_RemovesTheSelectedProject_StaleDetailsForAnOlderSelectionIgnored() => InContext(async () =>
     {
         var p = await Project("P");
         var q = await Project("Q");
@@ -1181,12 +1216,12 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         listing.Release(); // its view was deactivated by the selection change: nothing is observed
 
         Assert.Single(Placements(area, q)); // ignored; reconciled when it is next read
-    }
+    });
 
     // ==== Content views, note editor and search ====================================================================================
 
     [Fact]
-    public async Task ContentViewObservingProjectTrashed_RemovesTheNodeById()
+    public Task ContentViewObservingProjectTrashed_RemovesTheNodeById() => InContext(async () =>
     {
         var p = await Project("P");
         await Project("Q");
@@ -1194,6 +1229,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         area.SelectedNode = Node(area.Roots, "P");
         var view = area.SelectedContent!;
         await view.CurrentLoad;
+        await area.CurrentDetailsLoad; // Phase 11: else this selection's details read can observe the Trash first (a controlled reproduction showed it)
         await _other.TrashProjectAsync(p);
 
         await view.NavigateAsync(null); // the next load reports the Project in the Trash
@@ -1202,10 +1238,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal("This project is in the Trash.", view.ContainerMessage);
         Assert.Empty(Placements(area, p));
         Assert.True(view.IsDeactivated);
-    }
+    });
 
     [Fact]
-    public async Task NoteEditor_ProjectTrashedElsewhere_KeepsTheDraft_CopyDraftOnly()
+    public Task NoteEditor_ProjectTrashedElsewhere_KeepsTheDraft_CopyDraftOnly() => InContext(async () =>
     {
         var p = await Project("P");
         await _otherContent.CreateNoteAsync(p, null, new ProjectNoteDraft("Kickoff", "v1"));
@@ -1218,8 +1254,8 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         _dialogs.OnNoteEditor = editor =>
         {
             editor.Content = "my draft";
-            _other.TrashProjectAsync(p).GetAwaiter().GetResult();
-            editor.SaveCommand.ExecuteAsync().GetAwaiter().GetResult();
+            _dialogs.WaitModal(_other.TrashProjectAsync(p), TimeSpan.FromSeconds(10));
+            _dialogs.WaitModal(editor.SaveCommand.ExecuteAsync(), TimeSpan.FromSeconds(10)); // a modal dialog keeps dispatching
 
             Assert.Equal("This project is in the Trash. Your text is unchanged here.", editor.GeneralError);
             Assert.Equal("my draft", editor.Content);
@@ -1239,10 +1275,10 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal("Kickoff\r\n\r\nmy draft", _dialogs.Clipboard);
         using var connection = _root.Open();
         Assert.Equal("v1", Db.ScalarString(connection, "SELECT Content FROM ProjectNotes;"));
-    }
+    });
 
     [Fact]
-    public async Task Search_TrashRemovesTheProjectsHit_StaleContentHitReportsItsProjectInTheTrash()
+    public Task Search_TrashRemovesTheProjectsHit_StaleContentHitReportsItsProjectInTheTrash() => InContext(async () =>
     {
         var p = await Project("Alpha Portal");
         var note = (await _otherContent.CreateNoteAsync(p, null, new ProjectNoteDraft("Alpha kickoff", "x"))).Note!.Id;
@@ -1263,5 +1299,5 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Empty(search.Results);
         Assert.NotEqual(0, other);
         Assert.NotEqual(0, note);
-    }
+    });
 }

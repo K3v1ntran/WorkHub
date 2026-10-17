@@ -16,7 +16,7 @@ public sealed class BackupValidatorTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        BackupKit.ClearPoolsUnder(_dir);
         Directory.Delete(_dir, recursive: true);
     }
 
@@ -78,7 +78,7 @@ public sealed class BackupValidatorTests : IDisposable
         var file = WalHeaderCopy();
         using (var connection = BackupKit.Open(file, SqliteOpenMode.ReadOnly))
             BackupKit.Scalar(connection, "SELECT count(*) FROM sqlite_schema;");
-        SqliteConnection.ClearAllPools();
+        BackupKit.ClearPools(file);
 
         Assert.NotEmpty(BackupKit.Sidecars(file));
     }
@@ -211,7 +211,7 @@ public sealed class BackupValidatorTests : IDisposable
             rootPage = (long)BackupKit.Scalar(c, "SELECT rootpage FROM sqlite_schema WHERE name = 'IX_SystemRepositories_RepositoryType';")!;
         }
 
-        SqliteConnection.ClearAllPools();
+        BackupKit.ClearPools(file);
         var bytes = File.ReadAllBytes(file);
         var pageSize = (bytes[16] << 8) | bytes[17];
         var start = (int)(rootPage - 1) * pageSize;
@@ -251,7 +251,8 @@ public sealed class BackupValidatorTests : IDisposable
             s.BackupDatabase(t); // a plain copy of a WAL source is a WAL-mode file
         }
 
-        SqliteConnection.ClearAllPools();
+        BackupKit.ClearPools(source);
+        BackupKit.ClearPools(target);
         return target;
     }
 

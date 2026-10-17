@@ -12,13 +12,27 @@ namespace WorkHub.Tests.TestSupport;
 internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceStore
 {
     private readonly ConcurrentDictionary<string, StoreGate> _gates = new();
+    private readonly ConcurrentQueue<StoreGate> _issued = new();
     private readonly ConcurrentDictionary<string, int> _calls = new();
 
     /// <summary>Holds the next call for <paramref name="key"/>.</summary>
-    public StoreGate Hold(string key) => _gates[key] = new StoreGate();
+    public StoreGate Hold(string key) => Issue(_gates[key] = new StoreGate());
 
     /// <summary>Holds only the RESULT of the next write for <paramref name="key"/>: the write itself commits when called.</summary>
-    public StoreGate HoldCommitted(string key) => _gates[key] = new StoreGate { CommitFirst = true };
+    public StoreGate HoldCommitted(string key) => Issue(_gates[key] = new StoreGate { CommitFirst = true });
+
+    /// <summary>Teardown: releases every gate this store handed out that is still held.</summary>
+    public void ReleaseAll()
+    {
+        foreach (var gate in _issued)
+            gate.TryRelease();
+    }
+
+    private StoreGate Issue(StoreGate gate)
+    {
+        _issued.Enqueue(gate);
+        return gate;
+    }
 
     public int Calls(string key) => _calls.GetValueOrDefault(key);
 
@@ -100,5 +114,10 @@ internal sealed class StoreGate
 
     public void Fail(Exception exception) => _release.SetResult(exception);
 
-    public void WaitEntered() => Assert.True(Entered.Wait(TimeSpan.FromSeconds(10)), "the store call was never made");
+    /// <summary>Releases the gate if nobody has (teardown: a failed assertion never leaves a store call parked).</summary>
+    public void TryRelease() => _release.TrySetResult(null);
+
+    /// <summary>Blocks, or pumps when called on a <see cref="SingleThreadContext"/> (a held call may need the pump to be made).</summary>
+    public void WaitEntered() =>
+        Assert.True(SingleThreadContext.WaitOrPump(() => Entered.IsSet, Entered.Wait, TimeSpan.FromSeconds(10)), "the store call was never made");
 }

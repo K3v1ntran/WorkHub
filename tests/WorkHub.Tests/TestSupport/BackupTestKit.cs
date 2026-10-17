@@ -229,6 +229,25 @@ internal static class BackupKit
         return connection;
     }
 
+    /// <summary>
+    /// Releases the pooled connections WorkHub's factories may hold for <paramref name="file"/> (default and search-store
+    /// connection strings). Never <c>ClearAllPools</c>: other test classes run in parallel and own pools in use.
+    /// </summary>
+    public static void ClearPools(string file)
+    {
+        new SqliteConnectionFactory(file).ClearPools();
+        new SqliteConnectionFactory(file, SqliteWorkspaceSearchStore.BusyTimeoutSeconds).ClearPools();
+    }
+
+    /// <summary><see cref="ClearPools(string)"/> for every database file a test created under <paramref name="directory"/>.</summary>
+    public static void ClearPoolsUnder(string directory)
+    {
+        if (!Directory.Exists(directory))
+            return;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.db", SearchOption.AllDirectories))
+            ClearPools(file);
+    }
+
     public static void Exec(SqliteConnection connection, string sql, SqliteTransaction? transaction = null)
     {
         using var command = connection.CreateCommand();

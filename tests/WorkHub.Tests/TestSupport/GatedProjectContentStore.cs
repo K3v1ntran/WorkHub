@@ -12,8 +12,21 @@ namespace WorkHub.Tests.TestSupport;
 internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IProjectContentStore
 {
     private readonly ConcurrentDictionary<string, StoreGate> _gates = new();
+    private readonly ConcurrentQueue<StoreGate> _issued = new();
 
-    public StoreGate Hold(string key) => _gates[key] = new StoreGate();
+    public StoreGate Hold(string key)
+    {
+        var gate = _gates[key] = new StoreGate();
+        _issued.Enqueue(gate);
+        return gate;
+    }
+
+    /// <summary>Teardown: releases every gate this store handed out that is still held.</summary>
+    public void ReleaseAll()
+    {
+        foreach (var gate in _issued)
+            gate.TryRelease();
+    }
 
     public static string List(long? folderId) => folderId is { } id ? $"list:{id}" : "list:root";
 

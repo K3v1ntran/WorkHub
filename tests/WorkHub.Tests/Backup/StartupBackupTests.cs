@@ -307,7 +307,7 @@ public sealed class MigrationBackupTests : IDisposable
             rootPage = (long)BackupKit.Scalar(c, "SELECT rootpage FROM sqlite_schema WHERE name = 'IX_SystemRepositories_RepositoryType';")!;
         }
 
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        BackupKit.ClearPools(file);
         var bytes = File.ReadAllBytes(file);
         var pageSize = (bytes[16] << 8) | bytes[17];
         var start = (int)(rootPage - 1) * pageSize;

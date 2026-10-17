@@ -191,6 +191,39 @@ dotnet test WorkHub.sln
 
 Requires the .NET 10 SDK on Windows.
 
+## Developer launches
+
+While developing or testing, never start `src\WorkHub.App\bin\…\WorkHub.exe` directly (Explorer, IDE, shell): without
+arguments it opens the real profile, `%LOCALAPPDATA%\WorkHub`. Use the reviewed script instead; agents use it too and
+do not write their own launch helpers.
+
+```powershell
+New-Item -ItemType Directory C:\WorkHubTest11\roots -Force | Out-Null
+tools\dev\Start-WorkHubIsolated.ps1 -DataRoot C:\WorkHubTest11\roots\try-1            # Release build
+tools\dev\Start-WorkHubIsolated.ps1 -DataRoot C:\WorkHubTest11\roots\try-1 -Configuration Debug
+```
+
+- Every check runs before a process is created; a refusal starts nothing. The data root must be explicit, a strict
+  child of `C:\WorkHubTest11\roots`, with an existing parent, and must not overlap the real profile after junctions,
+  symbolic links, `subst` drives and 8.3 names are resolved. The executable is always this repository's build.
+- After the start the script compares the process command line with the plan and reports `verified`, `MISMATCH` or
+  `not independently verified` (inspection unavailable), recorded in `%TEMP%\WorkHubDev\launches.log`. This is
+  verification only; it never stops the process. Report anything other than `verified` as such.
+- Script tests: `powershell.exe -NoProfile -File tools\dev\tests\WorkHubDevLaunch.Tests.ps1` (fake repository, sandbox
+  and profile under `%TEMP%`; nothing is launched).
+
+Before and after a session that builds or launches the app, take a metadata snapshot of the real profile and compare:
+
+```powershell
+tools\dev\Get-ProfileSnapshot.ps1 -OutFile $env:TEMP\WorkHubDev\before.tsv
+tools\dev\Get-ProfileSnapshot.ps1 -OutFile $env:TEMP\WorkHubDev\after.tsv
+tools\dev\Get-ProfileSnapshot.ps1 -Compare $env:TEMP\WorkHubDev\before.tsv -With $env:TEMP\WorkHubDev\after.tsv
+```
+
+The snapshot lists names, sizes and timestamps only; it never reads contents or opens SQLite. **Equal metadata does not
+prove equal content.** Say "untouched" only on the basis of a snapshot taken after the session's last activity, and only
+as "no metadata change".
+
 ## Local data
 
 On every start WorkHub ensures `%LOCALAPPDATA%\WorkHub\` contains:

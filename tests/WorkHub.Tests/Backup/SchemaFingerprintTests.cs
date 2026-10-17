@@ -20,7 +20,7 @@ public sealed class SchemaFingerprintTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        BackupKit.ClearPoolsUnder(_dir);
         Directory.Delete(_dir, recursive: true);
     }
 

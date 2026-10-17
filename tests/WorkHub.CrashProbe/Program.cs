@@ -31,6 +31,13 @@ if (args.Length < 2)
     return 2;
 }
 
+// Phase 11: every mode takes a data root or a database file as args[1]; none may touch the real profile.
+if (OverlapsDefaultProfile(args[1]))
+{
+    Console.Error.WriteLine("refusing: the path is, contains or is inside the real WorkHub profile");
+    return 3;
+}
+
 switch (args[0])
 {
     case "stage":
@@ -162,6 +169,17 @@ switch (args[0])
     default:
         Console.Error.WriteLine($"unknown mode {args[0]}");
         return 2;
+}
+
+// Same overlap rule as StartupOptions (segment-wise, case-insensitive): equal, inside, or containing.
+static bool OverlapsDefaultProfile(string path)
+{
+    var real = Path.TrimEndingDirectorySeparator(Path.GetFullPath(WorkHubPaths.ForCurrentUser().Root));
+    var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    return string.Equals(full, real, StringComparison.OrdinalIgnoreCase) || IsInside(full, real) || IsInside(real, full);
+
+    static bool IsInside(string path, string folder) =>
+        path.StartsWith(Path.EndsInDirectorySeparator(folder) ? folder : folder + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 }
 
 static void Ready()

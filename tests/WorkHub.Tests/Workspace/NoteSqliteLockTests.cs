@@ -97,8 +97,58 @@ public sealed class NoteSqliteLockTests : IDisposable
         Assert.Equal(("v2", 2L), (after.Content, after.Revision));
     }
 
+    /// <summary>
+    /// Phase 11 B4a: the pending state and its guards, with no SQLite contention and no deadline. The gated store holds the
+    /// save BEFORE the real store is called, until the assertions are done (released in finally). This test makes no claim
+    /// about SQLite locking; the next test covers the real lock.
+    /// </summary>
     [Fact]
-    public async Task EditorSave_UnderARealLock_StaysPendingAndGuarded_KeepsTheDraft_ThenRetrySucceedsAfterRelease()
+    public async Task EditorSave_WhileTheStoreCallIsHeld_StaysPendingAndGuarded_ThenCompletes()
+    {
+        var note = (await _other.CreateNoteAsync(_alpha, null, new ProjectNoteDraft("Kickoff", "v1"))).Note!;
+        var before = Row(note.Id);
+        var store = new GatedProjectContentStore(new SqliteProjectContentStore(_shortTimeout));
+        var content = new ProjectContentService(store, new ProcessProjectLinkLauncher(new RecordingProcessStarter(), _ => true, _ => true));
+        var closes = 0;
+        var editor = NoteEditorViewModel.ForEdit(content, _dialogs, note, "Alpha");
+        editor.CloseRequested += (_, _) => closes++;
+        editor.Content = "my draft";
+        var gate = store.Hold("saveNote");
+
+        var save = editor.SaveCommand.ExecuteAsync();
+        try
+        {
+            gate.WaitEntered();                                                // the save reached the store and is parked there
+            Assert.False(save.IsCompleted);
+            Assert.Equal(NoteEditorState.Saving, editor.State);
+            Assert.True(editor.IsReadOnly);
+            editor.RequestClose();                                             // close guard: ignored while pending
+            Assert.False(editor.RequestCloseCommand.CanExecute(null));
+            Assert.Equal(0, _dialogs.UnsavedChangesPrompts);
+            Assert.Equal(0, closes);
+            Assert.Equal(before, Row(note.Id));                                // nothing written while held
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+
+        await save;
+
+        Assert.Equal(0, closes);
+        Assert.Null(editor.GeneralError);
+        Assert.False(editor.IsDirty);
+        Assert.Equal(NoteEditorState.Editing, editor.State);
+        var saved = Row(note.Id);
+        Assert.Equal(("Kickoff", "my draft", 2L), (saved.Title, saved.Content, saved.Revision));
+    }
+
+    /// <summary>
+    /// Phase 11 B4b: a REAL write lock held by another connection. The save is awaited while the lock is held, with no
+    /// assertion between its start and its completion (the busy timeout ends it), then retried after release.
+    /// </summary>
+    [Fact]
+    public async Task EditorSave_UnderARealWriteLock_FailsAfterTheBusyTimeout_KeepsTheDraft_ThenRetrySucceeds()
     {
         var note = (await _other.CreateNoteAsync(_alpha, null, new ProjectNoteDraft("Kickoff", "v1"))).Note!;
         var before = Row(note.Id);
@@ -107,22 +157,14 @@ public sealed class NoteSqliteLockTests : IDisposable
         editor.CloseRequested += (_, _) => closes++;
         editor.Content = "my draft";
 
-        Task save;
         using (new HeldWriteLock(_root.Paths.DatabaseFile))
         {
-            save = editor.SaveCommand.ExecuteAsync();
-            await Task.Delay(TimeSpan.FromSeconds(BusyTimeoutSeconds / 2.0)); // well inside the busy wait
-            Assert.False(save.IsCompleted);                                    // really blocked by the other writer
-            Assert.Equal(NoteEditorState.Saving, editor.State);
-            Assert.True(editor.IsReadOnly);
-            editor.RequestClose();                                             // close guard: ignored while pending
-            Assert.False(editor.RequestCloseCommand.CanExecute(null));
-            Assert.Equal(0, _dialogs.UnsavedChangesPrompts);
-            await save;                                                        // the busy timeout expires
+            await editor.SaveCommand.ExecuteAsync();                           // ends when the busy timeout expires
             Assert.Equal(before, Row(note.Id));                                // no partial update while locked
         }
 
         Assert.Equal(0, closes);
+        Assert.Equal(0, _dialogs.UnsavedChangesPrompts);
         Assert.Equal(NoteEditorState.Editing, editor.State);
         Assert.Contains("database is locked", editor.GeneralError);
         Assert.Equal("my draft", editor.Content);

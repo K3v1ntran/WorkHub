@@ -11,13 +11,27 @@ namespace WorkHub.Tests.TestSupport;
 internal sealed class GatedSearchStore(IWorkspaceSearchStore inner) : IWorkspaceSearchStore
 {
     private readonly ConcurrentDictionary<string, SearchGate> _gates = new();
+    private readonly ConcurrentQueue<SearchGate> _issued = new();
     private int _searches;
     private int _resolves;
 
-    public SearchGate Hold(string key) => _gates[key] = new SearchGate();
+    public SearchGate Hold(string key) => Issue(_gates[key] = new SearchGate());
 
     /// <summary>Holds the next search after it reported one busy (locked) attempt, as the real store does before retrying.</summary>
-    public SearchGate HoldBusy() => _gates["search"] = new SearchGate { ReportBusy = true };
+    public SearchGate HoldBusy() => Issue(_gates["search"] = new SearchGate { ReportBusy = true });
+
+    /// <summary>Teardown: releases every gate this store handed out that is still held.</summary>
+    public void ReleaseAll()
+    {
+        foreach (var gate in _issued)
+            gate.TryRelease();
+    }
+
+    private SearchGate Issue(SearchGate gate)
+    {
+        _issued.Enqueue(gate);
+        return gate;
+    }
 
     public int Searches => Volatile.Read(ref _searches);
 
@@ -68,5 +82,10 @@ internal sealed class SearchGate
 
     public void Fail(Exception exception) => _release.SetResult(exception);
 
-    public void WaitEntered() => Assert.True(Entered.Wait(TimeSpan.FromSeconds(10)), "the search store call was never made");
+    /// <summary>Releases the gate if nobody has (teardown).</summary>
+    public void TryRelease() => _release.TrySetResult(null);
+
+    /// <summary>Blocks, or pumps when called on a <see cref="SingleThreadContext"/>.</summary>
+    public void WaitEntered() =>
+        Assert.True(SingleThreadContext.WaitOrPump(() => Entered.IsSet, Entered.Wait, TimeSpan.FromSeconds(10)), "the search store call was never made");
 }

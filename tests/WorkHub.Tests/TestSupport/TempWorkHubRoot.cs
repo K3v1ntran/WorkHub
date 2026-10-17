@@ -16,6 +16,7 @@ public sealed class TempWorkHubRoot : IDisposable
     public TempWorkHubRoot()
     {
         Paths = new WorkHubPaths(Path.Combine(Path.GetTempPath(), "WorkHubTests", Guid.NewGuid().ToString("N"), "WorkHub"));
+        DefaultProfileGuard.EnsureIsolated(Paths.Root);
     }
 
     public WorkHubPaths Paths { get; }

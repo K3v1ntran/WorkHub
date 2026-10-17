@@ -20,6 +20,20 @@ internal sealed class FakeDialogs : IDialogService
 
     public string? Clipboard { get; private set; }
 
+    /// <summary>
+    /// Waits inside a dialog callback the way a WPF modal dialog does: on a <see cref="SingleThreadContext"/> it keeps
+    /// dispatching (nested pump) until the condition holds; elsewhere it is the plain blocking wait tests always used.
+    /// </summary>
+    public bool PumpWhileModal(Func<bool> condition, TimeSpan timeout) =>
+        SingleThreadContext.WaitOrPump(condition, t => SpinWait.SpinUntil(condition, t), timeout);
+
+    /// <summary>Completes <paramref name="task"/> from inside a dialog callback (see <see cref="PumpWhileModal"/>) and rethrows its fault.</summary>
+    public void WaitModal(Task task, TimeSpan timeout)
+    {
+        Assert.True(PumpWhileModal(() => task.IsCompleted, timeout), "the operation started inside the dialog did not complete");
+        task.GetAwaiter().GetResult();
+    }
+
     public bool ShowSystemEditor(SystemEditorViewModel viewModel) => OnSystemEditor(viewModel);
 
     public Func<SettingsViewModel, bool> OnSettings { get; set; } = _ => false;
