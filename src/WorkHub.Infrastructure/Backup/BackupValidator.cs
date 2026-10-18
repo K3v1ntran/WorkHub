@@ -157,7 +157,7 @@ internal sealed class BackupValidator(SchemaReference references, IBackupFileOps
 
         if (rules.RequireReferenceIdentity)
         {
-            var differences = SchemaFingerprint.Read(connection).DifferencesFrom(references.For(version));
+            var differences = references.DifferencesFrom(version, SchemaFingerprint.Read(connection));
             if (differences.Count > 0)
                 return new BackupCheckResult(BackupStatus.SchemaMismatch, version, string.Join("; ", differences));
         }
@@ -183,7 +183,7 @@ internal sealed class BackupValidator(SchemaReference references, IBackupFileOps
         if (version != source.Version)
             return NotEqual(version, $"schema v{version}, source v{source.Version}");
 
-        if (SchemaFingerprint.Read(connection).Hash() != source.Fingerprint.Hash())
+        if (SchemaFingerprint.Read(connection).ExactHash() != source.Fingerprint.ExactHash()) // exact fidelity: never the reference tolerance
             return NotEqual(version, "schema differs from the source");
 
         var counts = SqliteSnapshotter.RowCounts(connection, null);

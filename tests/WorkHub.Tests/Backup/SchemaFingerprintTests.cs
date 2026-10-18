@@ -32,14 +32,19 @@ public sealed class SchemaFingerprintTests : IDisposable
         var checkedCount = 0;
         for (var version = 1; version <= SchemaMigrations.LatestVersion; version++)
         {
-            var expected = SchemaReference.Frozen.For(version).Hash();
+            var expected = SchemaReference.Frozen.For(version).ExactHash();
             for (var mask = 0; mask < 1 << (version - 1); mask++)
             {
                 var file = Path.Combine(_dir, $"v{version}-{mask}.db");
                 var stops = Enumerable.Range(1, version - 1).Where(i => (mask & (1 << (i - 1))) != 0).ToHashSet();
                 BuildWithRestarts(file, version, stops);
                 using (var connection = BackupKit.Open(file, SqliteOpenMode.ReadOnly))
-                    Assert.True(expected == SchemaFingerprint.Read(connection).Hash(), $"v{version} restart pattern {mask} differs");
+                {
+                    var actual = SchemaFingerprint.Read(connection);
+                    Assert.True(SchemaReference.Frozen.DifferencesFrom(version, actual).Count == 0, $"v{version} restart pattern {mask} differs from the reference");
+                    Assert.True(expected == actual.ExactHash(), $"v{version} restart pattern {mask}: same build, different bytes");
+                }
+
                 checkedCount++;
                 File.Delete(file);
             }
@@ -63,7 +68,7 @@ public sealed class SchemaFingerprintTests : IDisposable
         root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
 
         using var upgraded = BackupKit.Open(root.Paths.DatabaseFile, SqliteOpenMode.ReadOnly);
-        Assert.Empty(SchemaFingerprint.Read(upgraded).DifferencesFrom(SchemaReference.Frozen.For(7)));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(7, SchemaFingerprint.Read(upgraded)));
     }
 
     [Fact]
@@ -72,20 +77,46 @@ public sealed class SchemaFingerprintTests : IDisposable
         var file = Path.Combine(_dir, "file.db");
         BackupKit.BuildSchema(file, SchemaMigrations.LatestVersion);
         using var connection = BackupKit.Open(file, SqliteOpenMode.ReadOnly);
-        Assert.Equal(SchemaReference.Frozen.For(SchemaMigrations.LatestVersion).Hash(), SchemaFingerprint.Read(connection).Hash());
+        Assert.Equal(SchemaReference.Frozen.For(SchemaMigrations.LatestVersion).ExactHash(), SchemaFingerprint.Read(connection).ExactHash());
     }
 
     /// <summary>
     /// Guards package/runtime upgrades: if SQLite ever stores the migrations' schema text differently, existing user
     /// databases would no longer match. Update the fixture only together with an explicit compatibility decision.
+    /// Pins the CANONICAL reference contract (LE-D2): the same values for LF, CRLF and mixed checkouts. Exact hashes are
+    /// checkout-dependent by nature and are covered by <see cref="CanonicalHashesAgreeAcrossCheckouts_ExactHashesDoNot"/>.
     /// </summary>
     [Fact]
     public void GoldenFingerprintHashes_EqualTheRuntimeBuiltReferences()
     {
         var golden = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(GoldenPath))!;
-        var actual = Enumerable.Range(1, SchemaMigrations.LatestVersion).ToDictionary(v => v.ToString(), v => SchemaReference.Frozen.For(v).Hash());
+        var actual = Enumerable.Range(1, SchemaMigrations.LatestVersion).ToDictionary(v => v.ToString(), v => SchemaReference.Frozen.CanonicalHash(v));
         Assert.True(golden.Count == actual.Count && actual.All(kv => golden.TryGetValue(kv.Key, out var g) && g == kv.Value),
             "Runtime references differ from the golden hashes: " + JsonSerializer.Serialize(actual));
+    }
+
+    /// <summary>LE-7: the same frozen SQL compiled from LF, CRLF and mixed checkouts.</summary>
+    [Fact]
+    public void CanonicalHashesAgreeAcrossCheckouts_ExactHashesDoNot()
+    {
+        var lf = new SchemaReference(LineEndingMigrations.For(Checkout.Lf));
+        var crlf = new SchemaReference(LineEndingMigrations.For(Checkout.Crlf));
+        var mixed = new SchemaReference(LineEndingMigrations.For(Checkout.Mixed));
+
+        for (var v = 1; v <= SchemaMigrations.LatestVersion; v++)
+        {
+            Assert.Equal(lf.CanonicalHash(v), crlf.CanonicalHash(v));
+            Assert.Equal(lf.CanonicalHash(v), mixed.CanonicalHash(v));
+            Assert.Equal(lf.CanonicalHash(v), SchemaReference.Frozen.CanonicalHash(v));
+            Assert.NotEqual(lf.For(v).ExactHash(), crlf.For(v).ExactHash());
+            Assert.Empty(crlf.DifferencesFrom(v, lf.For(v)));
+            Assert.Empty(lf.DifferencesFrom(v, mixed.For(v)));
+        }
+
+        // V001 is LF in the mixed checkout, so v1 alone is byte-identical between LF and mixed; from v2 on they differ.
+        Assert.Equal(lf.For(1).ExactHash(), mixed.For(1).ExactHash());
+        Assert.NotEqual(lf.For(2).ExactHash(), mixed.For(2).ExactHash());
+        Assert.NotEqual(crlf.For(1).ExactHash(), mixed.For(1).ExactHash());
     }
 
     public static TheoryData<string, string, bool, string> Tampers => new()
@@ -144,7 +175,7 @@ public sealed class SchemaFingerprintTests : IDisposable
             Assert.Equal("ok", BackupKit.Scalar(connection, "PRAGMA integrity_check;"));
             Assert.Equal(0L, BackupKit.Scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check;"));
             Assert.Equal(7L, BackupKit.Scalar(connection, "PRAGMA user_version;"));
-            Assert.Contains(expectedDifference, SchemaFingerprint.Read(connection).DifferencesFrom(SchemaReference.Frozen.For(7)));
+            Assert.Contains(expectedDifference, SchemaReference.Frozen.DifferencesFrom(7, SchemaFingerprint.Read(connection)));
         }
 
         var result = BackupKit.Validator().Check(file, BackupCheckLevel.Full);
@@ -173,7 +204,7 @@ public sealed class SchemaFingerprintTests : IDisposable
         var file = TamperedCopy(string.Join(' ', Enumerable.Range(1, 15).Select(i => $"CREATE INDEX IX_Extra{i} ON Systems (SystemName);")), false);
         using var connection = BackupKit.Open(file, SqliteOpenMode.ReadOnly);
 
-        var differences = SchemaFingerprint.Read(connection).DifferencesFrom(SchemaReference.Frozen.For(7));
+        var differences = SchemaReference.Frozen.DifferencesFrom(7, SchemaFingerprint.Read(connection));
 
         Assert.Equal(11, differences.Count);
         Assert.StartsWith("…", differences[^1]);

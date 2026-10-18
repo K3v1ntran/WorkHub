@@ -128,7 +128,7 @@ internal sealed class SqliteSnapshotter(SchemaReference references, IBackupFileO
         var fingerprint = SchemaFingerprint.Read(source, pin);
         if (version >= 1 && version <= references.LatestVersion)
         {
-            var differences = fingerprint.DifferencesFrom(references.For(version));
+            var differences = references.DifferencesFrom(version, fingerprint);
             if (differences.Count > 0)
             {
                 var message = $"schema structure differs from WorkHub v{version}: {string.Join("; ", differences)}";

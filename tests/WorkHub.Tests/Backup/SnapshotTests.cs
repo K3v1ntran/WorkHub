@@ -34,7 +34,7 @@ public sealed class SnapshotTests : IDisposable
         Assert.Equal(before, BackupKit.Dump(backup));
         Assert.Equal(before, BackupKit.Dump(_root.Paths.DatabaseFile)); // source unchanged
         using var connection = BackupKit.Open(backup, SqliteOpenMode.ReadOnly);
-        Assert.Empty(SchemaFingerprint.Read(connection).DifferencesFrom(SchemaReference.Frozen.For(7)));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(7, SchemaFingerprint.Read(connection)));
         Assert.True((long)BackupKit.Scalar(connection, "SELECT count(*) FROM sqlite_sequence;")! > 0);
     }
 

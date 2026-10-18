@@ -57,7 +57,7 @@ internal sealed class CurrentDataClassifier(SchemaReference references, int busy
                 return new DataClassification(CurrentDataClass.Degraded, DegradedKind.Foreign, version);
             if (version > references.LatestVersion)
                 return new DataClassification(CurrentDataClass.Degraded, DegradedKind.Newer, version);
-            if (SchemaFingerprint.Read(connection, pin).DifferencesFrom(references.For(version)).Count > 0)
+            if (references.DifferencesFrom(version, SchemaFingerprint.Read(connection, pin)).Count > 0)
                 return new DataClassification(CurrentDataClass.Degraded, DegradedKind.StructureDiffers, version);
             if (BackupValidator.ForeignKeyViolations(connection, pin) > 0)
                 return new DataClassification(CurrentDataClass.Degraded, DegradedKind.ForeignKeys, version);
