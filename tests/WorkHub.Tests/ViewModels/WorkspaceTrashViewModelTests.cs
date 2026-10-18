@@ -699,6 +699,136 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal(new ContentRef(ContentKind.Note, note), area.SelectedContent!.SelectedItem!.Ref);
     });
 
+    /// <summary>
+    /// N2 regression R1 (Workspace_Reveal_N2_Investigation §6): selecting a Project starts the activation load L1; a reveal
+    /// into it starts L2. L1's store read is held, released, and the reveal begins before L1's continuation can run (the
+    /// context runs posted work only when the body yields). L1 must discard itself: one set of rows, no duplicate.
+    /// </summary>
+    [Fact]
+    public Task N2_R1_ActivationLoadReleasedBeforeReveal_IsDiscarded_RowsStayUnique() => InContext(async () =>
+    {
+        var (area, log, alpha, beta) = await ProjectWithTwoNotes();
+        var gate = _contentStore.Hold(GatedProjectContentStore.List(null));
+        try
+        {
+            area.SelectedNode = Node(area.Roots, "P"); // UpdateContent -> ActivateAsync -> L1
+            gate.WaitEntered();
+            var content = log.Content!;
+            var l1 = content.CurrentLoad;
+
+            gate.Release();
+            Assert.True(gate.Released.IsCompleted);
+            Assert.False(l1.IsCompleted); // its continuation is queued on the context, not run
+
+            log.Mark("reveal");
+            var reveal = content.RevealAsync(null, ProjectContentItemKind.Note, beta);
+            var l2 = content.CurrentLoad;
+            Assert.NotSame(l1, l2);
+            Assert.False(l1.IsCompleted); // still not applied: the reveal's navigation ran first
+
+            Assert.Equal(ContentRevealOutcome.Selected, await reveal);
+            await l1; // L1 completed without fault and without appending
+
+            Assert.Equal(new ContentRef(ContentKind.Note, beta), content.SelectedItem!.Ref);
+            Assert.Equal([$"Note:{alpha}", $"Note:{beta}"], content.Items.Select(i => $"{i.Kind}:{i.Id}"));
+            Assert.Equal(["Reset", "@reveal", "Reset", $"Add Note:{alpha}", $"Add Note:{beta}"], log.Entries);
+            log.AssertAllOnContextThread();
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+    });
+
+    /// <summary>N2 regression R2: the activation load L1 lands first; the reveal's load then replaces its rows.</summary>
+    [Fact]
+    public Task N2_R2_ActivationLoadCompletedBeforeReveal_IsReplaced_RowsStayUnique() => InContext(async () =>
+    {
+        var (area, log, alpha, beta) = await ProjectWithTwoNotes();
+        var gate = _contentStore.Hold(GatedProjectContentStore.List(null));
+        try
+        {
+            area.SelectedNode = Node(area.Roots, "P");
+            gate.WaitEntered();
+            var content = log.Content!;
+            var l1 = content.CurrentLoad;
+
+            gate.Release();
+            await l1;
+            Assert.Equal(["Reset", $"Add Note:{alpha}", $"Add Note:{beta}"], log.Entries);
+
+            log.Mark("reveal");
+            var reveal = content.RevealAsync(null, ProjectContentItemKind.Note, beta);
+            Assert.NotSame(l1, content.CurrentLoad);
+            Assert.Equal(ContentRevealOutcome.Selected, await reveal);
+
+            Assert.Equal(new ContentRef(ContentKind.Note, beta), content.SelectedItem!.Ref);
+            Assert.Equal([$"Note:{alpha}", $"Note:{beta}"], content.Items.Select(i => $"{i.Kind}:{i.Id}"));
+            Assert.Equal(["Reset", $"Add Note:{alpha}", $"Add Note:{beta}", "@reveal", "Reset", $"Add Note:{alpha}", $"Add Note:{beta}"], log.Entries);
+            log.AssertAllOnContextThread();
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+    });
+
+    /// <summary>Project "P" with notes Alpha and Beta (rows sort by name), an area, and an Items recorder for its content view.</summary>
+    private async Task<(WorkspaceAreaViewModel Area, ItemsMutationLog Log, long Alpha, long Beta)> ProjectWithTwoNotes()
+    {
+        var p = await Project("P");
+        var alpha = (await _otherContent.CreateNoteAsync(p, null, new ProjectNoteDraft("Alpha", "x"))).Note!.Id;
+        var beta = (await _otherContent.CreateNoteAsync(p, null, new ProjectNoteDraft("Beta", "x"))).Note!.Id;
+        var area = await Area();
+        return (area, ItemsMutationLog.Attach(area), alpha, beta);
+    }
+
+    /// <summary>
+    /// N2 regression R3: records every Items mutation of the next content view the area creates — action, kinds and ids,
+    /// and the thread (never names or note content) — so each case can assert all of them ran on the context thread.
+    /// </summary>
+    private sealed class ItemsMutationLog
+    {
+        private readonly int _contextThread = Environment.CurrentManagedThreadId;
+        private readonly List<int> _threads = [];
+
+        private ItemsMutationLog()
+        {
+            Assert.IsType<SingleThreadContext>(SynchronizationContext.Current); // created on the context thread
+        }
+
+        public List<string> Entries { get; } = [];
+
+        public ProjectContentViewModel? Content { get; private set; }
+
+        public static ItemsMutationLog Attach(WorkspaceAreaViewModel area)
+        {
+            var log = new ItemsMutationLog();
+            area.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName != nameof(WorkspaceAreaViewModel.SelectedContent) || log.Content is not null || area.SelectedContent is not { } content)
+                    return;
+                log.Content = content; // raised before ActivateAsync, so the activation load's mutations are recorded too
+                content.Items.CollectionChanged += (_, args) =>
+                {
+                    log._threads.Add(Environment.CurrentManagedThreadId);
+                    log.Entries.Add(args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset
+                        ? "Reset"
+                        : $"{args.Action} {string.Join(",", args.NewItems!.Cast<ProjectContentItemViewModel>().Select(i => $"{i.Kind}:{i.Id}"))}");
+                };
+            };
+            return log;
+        }
+
+        public void Mark(string label) => Entries.Add("@" + label);
+
+        public void AssertAllOnContextThread()
+        {
+            Assert.NotEmpty(_threads);
+            Assert.All(_threads, thread => Assert.Equal(_contextThread, thread));
+        }
+    }
+
     [Fact]
     public Task N3_TwoConsecutiveInvalidatedResolutions_FirstNegative_ReturnWorkspaceChanged_NothingApplied() => InContext(async () =>
     {
