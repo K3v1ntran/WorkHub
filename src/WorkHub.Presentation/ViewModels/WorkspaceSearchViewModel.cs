@@ -17,6 +17,12 @@ public enum WorkspaceRevealOutcome
     /// <summary>The content item's Project is in the Workspace Trash; it is not revealed.</summary>
     ProjectTrashed,
 
+    /// <summary>The Project (or the content item's Project) is archived: its row is selected in the Archived projects panel.</summary>
+    Archived,
+
+    /// <summary>It was archived when found, but the Archived projects panel no longer lists the Project; nothing was selected.</summary>
+    NoLongerArchived,
+
     MovedMeanwhile,
     ContainerMissing,
     WorkspaceChanged,
@@ -41,15 +47,31 @@ public enum ContentRevealOutcome
 }
 
 /// <summary>One result row.</summary>
-public sealed class WorkspaceSearchHitViewModel(WorkspaceSearchHit hit)
+public sealed class WorkspaceSearchHitViewModel(WorkspaceSearchHit hit) : ObservableObject
 {
+    private bool _isArchived = hit.InArchivedProject;
+
     public WorkspaceSearchHit Hit { get; } = hit;
 
     public SearchItemRef Item => Hit.Item;
 
     public string Name => Hit.Name;
 
-    public string Location => Hit.Location;
+    /// <summary>The Project, or the item's Project, is archived (marked when found; re-marked by Archive/Unarchive here and by reveal).</summary>
+    public bool IsArchived
+    {
+        get => _isArchived;
+        internal set
+        {
+            if (!SetProperty(ref _isArchived, value))
+                return;
+            OnPropertyChanged(nameof(Location));
+            OnPropertyChanged(nameof(AccessibleName));
+        }
+    }
+
+    /// <summary>"Archived · Clients / Tokyo" for archived hits.</summary>
+    public string Location => IsArchived ? $"Archived · {Hit.Location}" : Hit.Location;
 
     public string KindText => Hit.Item.Kind switch
     {
@@ -309,6 +331,13 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
             Results.Remove(listed);
     }
 
+    /// <summary>Re-marks the shown hits of this Project (the Project itself and its content) after an Archive, Unarchive or Undo here.</summary>
+    internal void MarkArchived(long projectNodeId, bool archived)
+    {
+        foreach (var hit in Results.Where(r => r.Hit.ProjectNodeId == projectNodeId))
+            hit.IsArchived = archived;
+    }
+
     private void Activate(WorkspaceSearchHitViewModel? hit)
     {
         if (hit is null)
@@ -336,6 +365,16 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
             case WorkspaceRevealOutcome.ProjectTrashed:
                 RemoveResult(hit.Item);
                 NoticeText = "This item's project is in the Trash.";
+                break;
+            case WorkspaceRevealOutcome.Archived:
+                // The hit stays: it still exists; its Project's row is selected in the Archived projects panel.
+                hit.IsArchived = true;
+                NoticeText = hit.Item.Kind == SearchResultKind.Project
+                    ? "This project is archived — it is selected under Archived projects."
+                    : "This item's project is archived — it is selected under Archived projects.";
+                break;
+            case WorkspaceRevealOutcome.NoLongerArchived:
+                NoticeText = "This project is no longer archived. Search again.";
                 break;
             case WorkspaceRevealOutcome.MovedMeanwhile:
                 NoticeText = "The item was moved meanwhile. Search again.";

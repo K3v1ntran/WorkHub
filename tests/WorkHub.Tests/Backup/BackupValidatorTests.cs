@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Data.Sqlite;
 using WorkHub.Core.Backup;
 using WorkHub.Infrastructure.Backup;
+using WorkHub.Infrastructure.Persistence.Migrations;
 using WorkHub.Tests.TestSupport;
 
 namespace WorkHub.Tests.Backup;
@@ -130,7 +131,7 @@ public sealed class BackupValidatorTests : IDisposable
 
         var newer = V7();
         using (var c = BackupKit.Open(newer))
-            BackupKit.Exec(c, "CREATE TABLE Future(x); PRAGMA user_version = 8;");
+            BackupKit.Exec(c, $"CREATE TABLE Future(x); PRAGMA user_version = {SchemaMigrations.LatestVersion + 1};");
         var newerResult = _validator.Check(newer, BackupCheckLevel.Full);
         Assert.Equal(BackupStatus.NewerSchema, newerResult.Status);
         Assert.Equal(BackupCompatibility.Newer, newerResult.CompatibilityWith(7));
@@ -196,13 +197,13 @@ public sealed class BackupValidatorTests : IDisposable
     }
 
     /// <summary>
-    /// A v7 database whose IX_SystemRepositories_RepositoryType entry no longer matches its table row (the text inside the
+    /// A current-schema database whose IX_SystemRepositories_RepositoryType entry no longer matches its table row (the text inside the
     /// index page is changed in place). Structure and order stay valid, so quick_check passes and integrity_check fails.
     /// </summary>
     internal static string WithDamagedIndex(string directory, string? name = null)
     {
         var file = Path.Combine(directory, name ?? Guid.NewGuid().ToString("N") + ".db");
-        BackupKit.BuildSchema(file, 7);
+        BackupKit.BuildSchema(file, SchemaMigrations.LatestVersion);
         long rootPage;
         using (var c = BackupKit.Open(file))
         {

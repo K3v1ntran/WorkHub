@@ -58,6 +58,17 @@ internal sealed class FakeDialogs : IDialogService
 
     public bool ShowWorkspaceMove(WorkspaceMoveViewModel viewModel) => OnWorkspaceMove(viewModel);
 
+    /// <summary>Plays the Unarchive dialog: by default it confirms with the preselected status (Completed).</summary>
+    public Func<UnarchiveProjectViewModel, bool> OnUnarchive { get; set; } = _ => true;
+
+    public List<UnarchiveProjectViewModel> Unarchives { get; } = [];
+
+    public bool ShowUnarchive(UnarchiveProjectViewModel viewModel)
+    {
+        Unarchives.Add(viewModel);
+        return OnUnarchive(viewModel);
+    }
+
     public Func<ProjectFolderNameEditorViewModel, bool> OnProjectFolderNameEditor { get; set; } = _ => false;
 
     public Func<ProjectLinkEditorViewModel, bool> OnProjectLinkEditor { get; set; } = _ => false;

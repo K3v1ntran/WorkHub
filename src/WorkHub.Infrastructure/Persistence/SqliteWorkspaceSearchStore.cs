@@ -210,7 +210,12 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                 var excerpt = c.Field is SearchField.Description or SearchField.Target or SearchField.Content
                     ? WorkspaceSearchText.Excerpt(excerptSource, terms)
                     : null;
-                return c.Hit(Location(c, nodes, folders)) with { Excerpt = excerpt };
+                var owner = c.Item.Kind == SearchResultKind.Project ? c.Item.Id : c.ProjectNodeId;
+                return c.Hit(Location(c, nodes, folders)) with
+                {
+                    Excerpt = excerpt,
+                    InArchivedProject = owner is { } projectId && nodes.TryGetValue(projectId, out var project) && project.Archived,
+                };
             }).ToList();
 
             transaction.Commit();
@@ -274,7 +279,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT n.Id, n.ParentId, n.NodeType, n.Name, n.NameKey, p.Owner, p.ProjectManager, p.Description
+            SELECT n.Id, n.ParentId, n.NodeType, n.Name, n.NameKey, p.Owner, p.ProjectManager, p.Description, p.Status IS 'Archived'
             FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id
             WHERE n.TrashedAt IS NULL;
             """;
@@ -291,7 +296,10 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                 reader.GetString(4),
                 NullableString(reader, 5),
                 NullableString(reader, 6),
-                NullableString(reader, 7));
+                NullableString(reader, 7))
+            {
+                Archived = reader.GetInt64(8) == 1, // archived Projects stay searchable (marked); trashed ones are excluded above
+            };
             nodes[row.Id] = row;
         }
 
@@ -349,6 +357,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                         return RevealResolution.NotFound;
                     if (Scalar(connection, transaction, "SELECT TrashedAt IS NOT NULL FROM WorkspaceNodes WHERE Id = $id;", item.Id) is 1L)
                         return RevealResolution.Trashed; // a Project in the Workspace Trash is never revealed
+                    if (item.Kind == SearchResultKind.Project && IsArchived(connection, transaction, item.Id))
+                        return RevealResolution.Archived(item.Id); // shown in the Archived panel; no snapshot is read
                     workspaceNodeId = item.Id;
                     break;
                 }
@@ -374,6 +384,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                         return RevealResolution.ProjectTrashed; // content of a Project in the Workspace Trash is never revealed
                     if (reader.GetInt64(2) == 1)
                         return RevealResolution.Trashed; // never revealed; the hit is removed by (Kind, Id)
+                    if (IsArchived(connection, transaction, reader.GetInt64(0)))
+                        return RevealResolution.ProjectArchived(reader.GetInt64(0)); // its Project is shown in the Archived panel
                     workspaceNodeId = reader.GetInt64(0);
                     content = new ContentRevealTarget(workspaceNodeId, NullableInt64(reader, 1), item.Kind, item.Id);
                     break;
@@ -426,7 +438,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"{NodeSelect} WHERE n.ParentId IS $parent AND n.TrashedAt IS NULL LIMIT $limit;";
+        command.CommandText = $"{NodeSelect} WHERE n.ParentId IS $parent AND {SqliteWorkspaceStore.Visible("n")} LIMIT $limit;";
         command.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
         command.Parameters.AddWithValue("$limit", _maxRowsPerLevel + 1);
         var children = ReadWorkspaceNodes(command);
@@ -447,11 +459,15 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
         return new WorkspaceBranchSnapshot(parentId, children, complete);
     }
 
-    private const string NodeSelect = """
+    /// <summary>Branch rows exactly as the tree lists them (<see cref="SqliteWorkspaceStore.ListChildrenAsync"/>): visible children only.</summary>
+    private static readonly string NodeSelect = $"""
         SELECT n.Id, n.ParentId, n.NodeType, n.Name,
-               EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND c.TrashedAt IS NULL) AS HasChildren
+               EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND {SqliteWorkspaceStore.Visible("c")}) AS HasChildren
         FROM WorkspaceNodes AS n
         """;
+
+    private static bool IsArchived(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId) =>
+        Scalar(connection, transaction, "SELECT Status = 'Archived' FROM Projects WHERE NodeId = $id;", projectNodeId) is 1L;
 
     private static List<WorkspaceNode> ReadWorkspaceNodes(SqliteCommand command)
     {
@@ -530,7 +546,10 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
             }
         }, cancellationToken);
 
-    private sealed record NodeRow(long Id, long? ParentId, WorkspaceNodeType Type, string Name, string NameKey, string? Owner, string? ProjectManager, string? Description);
+    private sealed record NodeRow(long Id, long? ParentId, WorkspaceNodeType Type, string Name, string NameKey, string? Owner, string? ProjectManager, string? Description)
+    {
+        public bool Archived { get; init; }
+    }
 
     private sealed record FolderRow(long Id, long ProjectNodeId, long? ParentFolderId, string Name, string NameKey);
 

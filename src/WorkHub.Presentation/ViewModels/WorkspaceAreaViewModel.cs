@@ -65,9 +65,13 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     private int _selectionVersion;
     private UndoOffer? _undo;
     private bool _isTrashOpen;
+    private bool _isArchivedOpen;
 
-    /// <summary>The Undo of the latest Move to Trash, bound to the Workspace visit in which that Trash started.</summary>
-    private sealed record UndoOffer(long NodeId, string Name, int Visit, string Message);
+    /// <summary>
+    /// The Undo of the latest Move to Trash or Archive, bound to the Workspace visit in which it started. An Archive's Undo
+    /// carries its committed <see cref="ArchiveEvent"/>: it applies to exactly that archive event (Phase 12 A10).
+    /// </summary>
+    private sealed record UndoOffer(long NodeId, string Name, int Visit, string Message, ArchiveEvent? Archive = null);
 
     /// <param name="content">Project content (ProjectFolders and Links); null leaves the content view out.</param>
     /// <param name="checker">The application-wide manual link checker.</param>
@@ -105,6 +109,14 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         OpenTrashCommand = new AsyncRelayCommand(OpenTrashAsync, () => IsActivated && !IsTrashOpen, onError);
         CloseTrashCommand = new RelayCommand(CloseTrash, () => IsTrashOpen);
         Trash = new WorkspaceTrashViewModel(this);
+        ArchiveProjectCommand = new AsyncRelayCommand(ArchiveSelectedProjectAsync, () => CanWrite() && SelectedNode?.IsProject == true, onError);
+        OpenArchivedCommand = new AsyncRelayCommand(OpenArchivedAsync, () => IsActivated && !IsArchivedOpen, onError);
+        CloseArchivedCommand = new RelayCommand(() =>
+        {
+            InvalidateReveal(); // Back is the user's own action: a navigation still resolving never reopens the panel
+            CloseArchived();
+        }, () => IsArchivedOpen);
+        Archived = new ArchivedProjectsViewModel(this);
         RetryLoadCommand = new AsyncRelayCommand(RetryLoadAsync, () => RootLoadError is not null && !IsLoadingRoots, onError);
         DismissBannerCommand = new RelayCommand(() => BannerMessage = null);
         Roots.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
@@ -145,6 +157,33 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
     public WorkspaceTrashViewModel Trash { get; }
 
+    /// <summary>Archive the selected Project (confirmed; Phase 12). Toolbar and context menu only: no keyboard shortcut (A13).</summary>
+    public AsyncRelayCommand ArchiveProjectCommand { get; }
+
+    /// <summary>Opens the Archived projects panel ("Archived projects (n)") in the right pane (A4).</summary>
+    public AsyncRelayCommand OpenArchivedCommand { get; }
+
+    /// <summary>Back: closes the Archived projects panel and shows the unchanged selection again.</summary>
+    public RelayCommand CloseArchivedCommand { get; }
+
+    public ArchivedProjectsViewModel Archived { get; }
+
+    public bool IsArchivedOpen
+    {
+        get => _isArchivedOpen;
+        private set
+        {
+            if (!SetProperty(ref _isArchivedOpen, value))
+                return;
+            OpenArchivedCommand.RaiseCanExecuteChanged();
+            CloseArchivedCommand.RaiseCanExecuteChanged();
+            OnPropertyChanged(nameof(IsPanelOpen));
+        }
+    }
+
+    /// <summary>The Workspace Trash or the Archived projects panel replaces the details and content (one at a time).</summary>
+    public bool IsPanelOpen => IsTrashOpen || IsArchivedOpen;
+
     public bool IsTrashOpen
     {
         get => _isTrashOpen;
@@ -154,6 +193,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                 return;
             OpenTrashCommand.RaiseCanExecuteChanged();
             CloseTrashCommand.RaiseCanExecuteChanged();
+            OnPropertyChanged(nameof(IsPanelOpen));
         }
     }
 
@@ -167,6 +207,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                 return;
             RaiseWriteCommands();
             Trash.RaiseCommands();
+            Archived.RaiseCommands();
         }
     }
 
@@ -221,6 +262,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             OnPropertyChanged(nameof(IsEmpty));
             RaiseWriteCommands();
             OpenTrashCommand.RaiseCanExecuteChanged();
+            OpenArchivedCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -257,6 +299,8 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                 InvalidateReveal(); // a manual selection wins over a reveal still resolving
             if (value is not null && IsTrashOpen)
                 CloseTrash(); // selecting a tree node shows that node instead of the Workspace Trash
+            if (value is not null && IsArchivedOpen)
+                CloseArchived(); // ... or instead of the Archived projects panel
 
             _selectionVersion++;
             var previous = _selectedNode;
@@ -300,6 +344,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         var content = new ProjectContentViewModel(_content, _checker, _dialogs, _log, _checkCache, project.Id, project.Name);
         var projectId = project.Id;
         content.ProjectTrashedObserved = () => _ = ReconcileNodeAsync(projectId); // trashed by another window
+        content.ProjectArchivedObserved = () => _ = ReconcileNodeAsync(projectId); // archived by another window (its listing says so)
         SelectedContent = content;
         _ = content.ActivateAsync();
     }
@@ -362,6 +407,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             ReplaceChildren(Roots, null, roots, _revealSequence);
             IsActivated = true;
             _ = Trash.RefreshCount();
+            _ = Archived.RefreshCount();
         }
         catch (Exception ex)
         {
@@ -533,6 +579,12 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                 ApplyRemoved(nodeId);
                 BannerMessage = WorkspaceService.ProjectInTrash;
             }
+            else if (details.IsArchived)
+            {
+                // Archived by another window: the same by-Id removal (Phase 12 §8.3).
+                ApplyRemoved(nodeId);
+                BannerMessage = ProjectArchivedNotice;
+            }
             else
             {
                 SelectedProject = details;
@@ -589,6 +641,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         EditProjectCommand.RaiseCanExecuteChanged();
         MoveCommand.RaiseCanExecuteChanged();
         TrashProjectCommand.RaiseCanExecuteChanged();
+        ArchiveProjectCommand.RaiseCanExecuteChanged();
         RemoveFolderCommand.RaiseCanExecuteChanged();
         DeleteCommand.RaiseCanExecuteChanged();
         UndoCommand.RaiseCanExecuteChanged();
@@ -634,7 +687,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             if (ReferenceEquals(SelectedNode, node) && node.IsProject)
                 StartDetailsLoad(); // name and UpdatedAt changed
         }
-        else if (editor.Refusal is WorkspaceFailure.ProjectTrashed or WorkspaceFailure.NodeNotFound)
+        else if (editor.Refusal is WorkspaceFailure.ProjectTrashed or WorkspaceFailure.ProjectArchived or WorkspaceFailure.NodeNotFound)
         {
             await ReconcileNodeAsync(node.Id); // the dialog kept its values; now a fresh typed read decides
         }
@@ -661,13 +714,20 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             return;
         }
 
+        if (current.IsArchived)
+        {
+            ApplyRemoved(node.Id); // archived by another window: never open the editor on an archived Project
+            BannerMessage = ProjectArchivedNotice;
+            return;
+        }
+
         var editor = ProjectEditorViewModel.ForEdit(_workspace, current, node.Parent?.Path);
         if (_dialogs.ShowProjectEditor(editor) && editor.SavedDetails is { } saved)
         {
             ApplyName(node, saved.Name);
             ShowSavedDetails(saved);
         }
-        else if (editor.Refusal is WorkspaceFailure.ProjectTrashed or WorkspaceFailure.NodeNotFound)
+        else if (editor.Refusal is WorkspaceFailure.ProjectTrashed or WorkspaceFailure.ProjectArchived or WorkspaceFailure.NodeNotFound)
         {
             await ReconcileNodeAsync(node.Id);
         }
@@ -684,7 +744,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         var editor = new WorkspaceMoveViewModel(_workspace, node.Id, node.Name, node.Parent?.Id, targets);
         if (_dialogs.ShowWorkspaceMove(editor) && editor.Moved)
             await ApplyMovedAsync(node, editor.MovedTo);
-        else if (editor.Refusal is WorkspaceFailure.ProjectTrashed or WorkspaceFailure.NodeNotFound)
+        else if (editor.Refusal is WorkspaceFailure.ProjectTrashed or WorkspaceFailure.ProjectArchived or WorkspaceFailure.NodeNotFound)
             await ReconcileNodeAsync(node.Id);
         else if (editor.Refusal == WorkspaceFailure.ParentNotFound && editor.RefusedDestinationId is { } destination)
             await ReconcileNodeAsync(destination, "The destination folder no longer exists. Nothing was moved.");
@@ -751,6 +811,10 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                     ApplyRemoved(id);
                     BannerMessage = "This project no longer exists.";
                     break;
+                case ProjectTrashOutcome.Archived:
+                    ApplyRemoved(id); // archived by another window: it leaves this tree as well
+                    BannerMessage = "This project is archived. Unarchive it first.";
+                    break;
                 default:
                     BannerMessage = "Only projects can be moved to the Trash.";
                     break;
@@ -764,11 +828,11 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         }
     }
 
-    private Task UndoAsync() => CurrentLifecycleOperation = UndoCoreAsync();
+    private Task UndoAsync() => CurrentLifecycleOperation = _undo?.Archive is not null ? UndoArchiveCoreAsync() : UndoCoreAsync();
 
     private async Task UndoCoreAsync()
     {
-        if (IsLifecycleBusy || _undo is not { } undo || undo.Visit != _visit)
+        if (IsLifecycleBusy || _undo is not { Archive: null } undo || undo.Visit != _visit)
             return;
 
         var (visit, selection) = (_visit, _selectionVersion); // captured at the Undo click
@@ -828,6 +892,13 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         string notice;
         switch (result.Outcome)
         {
+            case ProjectRestoreOutcome.Restored when result.Restored!.IsArchived:
+                // Archived and trashed by an earlier build: it comes back archived, so the tree does not show it (§10.6).
+                Touch(nodeId);
+                notice = $"Restored “{result.Restored.Node.Name}”. It is archived: find it under Archived projects.";
+                Trash.RemoveEntry(nodeId);
+                _ = Archived.RefreshCount();
+                break;
             case ProjectRestoreOutcome.Restored:
                 placed = await ApplyRestoredAsync(result.Restored!.Node);
                 notice = $"Restored “{result.Restored.Node.Name}” to {result.Restored.ParentPath ?? "Workspace (top level)"}.";
@@ -850,6 +921,207 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         Trash.OnLifecycleCompleted();
         return (notice, placed);
+    }
+
+    // ---- Project Archive (Phase 12 proposal revision 3 §3, §6, §8) ---------------------------------------------------------
+    //
+    // Same timing as the Trash: nothing in the UI changes before the store commits, and the committed result is applied by Id.
+    // Archive takes the node out of the tree; the content view current at that moment is deactivated only if it belongs to the
+    // Project. Note editors are never closed and the Project's content stays writable (A3). Undo applies to exactly the
+    // archive event it was offered for (its ArchiveSerial); Unarchive from the panel is a separate, confirmed, state-based write.
+
+    public const string ProjectArchivedNotice = "This project is archived.";
+
+    private Task ArchiveSelectedProjectAsync() => CurrentLifecycleOperation = ArchiveProjectCoreAsync();
+
+    private async Task ArchiveProjectCoreAsync()
+    {
+        if (!CanWrite() || SelectedNode is not { IsProject: true } node)
+            return; // direct invocations while a lifecycle write is pending issue no second store call
+
+        var (id, name, visit) = (node.Id, node.Name, _visit); // the visit is captured when the command starts
+        BeginWorkspaceWrite();
+        if (!_dialogs.Confirm("Archive project",
+                $"Archive project “{name}”? It leaves the tree and is listed under Archived projects. Its details, folders, links and notes are kept exactly as they are; open note editors stay open. Nothing on disk is touched.",
+                "Archive"))
+            return;
+
+        IsLifecycleBusy = true;
+        BannerMessage = $"Archiving “{name}”…";
+        try
+        {
+            ProjectArchiveResult result;
+            try
+            {
+                result = await _workspace.ArchiveProjectAsync(id);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Archive project failed.", ex); // operation only; no names
+                BannerMessage = $"Could not archive “{name}”. Nothing was changed.";
+                return; // nothing was suspended, so nothing needs restoring
+            }
+
+            switch (result.Outcome)
+            {
+                case ProjectArchiveOutcome.Archived:
+                    ApplyRemoved(id);
+                    Search?.MarkArchived(id, archived: true);
+                    BannerMessage = $"Archived “{name}”.";
+                    if (visit == _visit)
+                        OfferUndo(new UndoOffer(id, name, visit, BannerMessage!, result.Event)); // never for an Archive started in an ended visit
+                    break;
+                case ProjectArchiveOutcome.AlreadyArchived:
+                    ApplyRemoved(id);
+                    BannerMessage = "This project is already archived.";
+                    break;
+                case ProjectArchiveOutcome.ProjectTrashed:
+                    ApplyRemoved(id);
+                    BannerMessage = WorkspaceService.ProjectInTrash;
+                    break;
+                case ProjectArchiveOutcome.NotFound:
+                    ApplyRemoved(id);
+                    BannerMessage = "This project no longer exists.";
+                    break;
+                default:
+                    BannerMessage = "Only projects can be archived.";
+                    break;
+            }
+
+            Archived.OnLifecycleCompleted();
+        }
+        finally
+        {
+            IsLifecycleBusy = false;
+        }
+    }
+
+    /// <summary>Undo of an Archive: restores the exact previous status only while it is still that archive event (§6.4).</summary>
+    private async Task UndoArchiveCoreAsync()
+    {
+        if (IsLifecycleBusy || _undo is not { Archive: { } archiveEvent } undo || undo.Visit != _visit)
+            return;
+
+        var (visit, selection) = (_visit, _selectionVersion); // captured at the Undo click
+        BeginWorkspaceWrite(); // also withdraws this Undo: it is offered once
+        IsLifecycleBusy = true;
+        BannerMessage = $"Restoring “{undo.Name}”…";
+        try
+        {
+            ArchiveUndoResult result;
+            try
+            {
+                result = await _workspace.UndoArchiveAsync(archiveEvent);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Undo archive failed.", ex);
+                BannerMessage = $"Could not restore “{undo.Name}”. It is still archived.";
+                return;
+            }
+
+            switch (result.Outcome)
+            {
+                case ArchiveUndoOutcome.Undone:
+                    var placed = await ApplyRestoredAsync(result.Restored!.Node);
+                    Archived.RemoveEntry(undo.NodeId);
+                    Search?.MarkArchived(undo.NodeId, archived: false);
+                    BannerMessage = $"Restored “{result.Restored.Node.Name}” to {result.Restored.ParentPath ?? "Workspace (top level)"}.";
+                    // Selected only while the Undo's visit is current and the user has not selected anything since the click.
+                    if (placed is not null && visit == _visit && selection == _selectionVersion && _nodes.TryGetValue(undo.NodeId, out var restored) && ReferenceEquals(restored, placed))
+                        SelectedNode = placed;
+                    break;
+                case ArchiveUndoOutcome.NotArchived:
+                    Touch(undo.NodeId); // reads that started earlier are re-read; the tree shows it with the next load of its parent
+                    BannerMessage = $"“{undo.Name}” is no longer archived.";
+                    break;
+                case ArchiveUndoOutcome.ArchivedAgain:
+                    BannerMessage = $"“{undo.Name}” was archived again elsewhere. Undo is no longer available; use Archived projects to unarchive it.";
+                    break;
+                case ArchiveUndoOutcome.ProjectTrashed:
+                    _ = Trash.RefreshCount();
+                    BannerMessage = WorkspaceService.ProjectInTrash;
+                    break;
+                default:
+                    BannerMessage = "This project no longer exists.";
+                    break;
+            }
+
+            Archived.OnLifecycleCompleted();
+        }
+        finally
+        {
+            IsLifecycleBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Unarchive from the Archived projects panel: asks for the status (A8), then a state-based Unarchive in the lifecycle
+    /// slot. Never changes the selection.
+    /// </summary>
+    /// <returns>The notice for the panel; null when the dialog was cancelled or the slot was taken.</returns>
+    internal async Task<string?> UnarchiveFromPanelAsync(ArchivedProjectEntry entry)
+    {
+        if (IsLifecycleBusy)
+            return null;
+
+        BeginWorkspaceWrite();
+        var dialog = new UnarchiveProjectViewModel(entry.Name, entry.ParentPath);
+        if (!_dialogs.ShowUnarchive(dialog) || IsLifecycleBusy)
+            return null;
+
+        IsLifecycleBusy = true;
+        try
+        {
+            var operation = UnarchiveCoreAsync(entry.NodeId, entry.Name, dialog.Status.Status);
+            CurrentLifecycleOperation = operation;
+            return await operation;
+        }
+        finally
+        {
+            IsLifecycleBusy = false;
+        }
+    }
+
+    private async Task<string> UnarchiveCoreAsync(long nodeId, string name, ProjectStatus status)
+    {
+        ProjectUnarchiveResult result;
+        try
+        {
+            result = await _workspace.UnarchiveProjectAsync(nodeId, status);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Unarchive project failed.", ex); // operation only; no names
+            return $"Could not unarchive “{name}”. It is still archived.";
+        }
+
+        string notice;
+        switch (result.Outcome)
+        {
+            case ProjectUnarchiveOutcome.Unarchived:
+                await ApplyRestoredAsync(result.Unarchived!.Node);
+                Search?.MarkArchived(nodeId, archived: false);
+                notice = $"Unarchived “{result.Unarchived.Node.Name}” to {result.Unarchived.ParentPath ?? "Workspace (top level)"}.";
+                break;
+            case ProjectUnarchiveOutcome.NotArchived:
+                Touch(nodeId); // unarchived elsewhere: the tree shows it with the next load of its parent
+                notice = $"“{name}” is no longer archived.";
+                break;
+            case ProjectUnarchiveOutcome.ProjectTrashed:
+                Touch(nodeId);
+                _ = Trash.RefreshCount();
+                notice = "This project is in the Trash. Restore it first.";
+                break;
+            default:
+                ApplyRemoved(nodeId);
+                notice = "This project no longer exists.";
+                break;
+        }
+
+        Archived.RemoveEntry(nodeId);
+        Archived.OnLifecycleCompleted();
+        return notice;
     }
 
     private Task RemoveSelectedFolderAsync() => CurrentLifecycleOperation = RemoveFolderCoreAsync();
@@ -885,9 +1157,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             return;
         }
 
-        if (state.ActiveChildren + state.TrashedChildren > 0)
+        if (state.ActiveChildren + state.ArchivedChildren + state.TrashedChildren > 0)
         {
-            BannerMessage = NotEmptyText(name, state.ActiveChildren, state.TrashedChildren);
+            BannerMessage = NotEmptyText(name, state.ActiveChildren, state.ArchivedChildren, state.TrashedChildren);
             return;
         }
 
@@ -921,7 +1193,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                 case FolderRemoveOutcome.NotEmpty:
                     if (_nodes.TryGetValue(id, out var folder))
                         folder.SetHasChildren(true);
-                    BannerMessage = NotEmptyText(name, result.ActiveChildren, result.TrashedProjects);
+                    BannerMessage = NotEmptyText(name, result.ActiveChildren, result.ArchivedProjects, result.TrashedProjects);
                     break;
                 case FolderRemoveOutcome.NotFound:
                     ApplyRemoved(id);
@@ -938,9 +1210,14 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         }
     }
 
-    private static string NotEmptyText(string name, int active, int trashed) => active > 0
-        ? $"“{name}” is not empty ({(active == 1 ? "1 item" : $"{active} items")}). Move or remove them first."
-        : $"“{name}” still holds {(trashed == 1 ? "1 project" : $"{trashed} projects")} in the Trash. Restore {(trashed == 1 ? "it" : "them")} and move {(trashed == 1 ? "it" : "them")} elsewhere first.";
+    private static string NotEmptyText(string name, int active, int archived, int trashed)
+    {
+        if (active > 0)
+            return $"“{name}” is not empty ({(active == 1 ? "1 item" : $"{active} items")}). Move or remove them first.";
+        if (archived > 0) // hidden from the tree, so the message says what holds the folder (A11)
+            return $"“{name}” still holds {(archived == 1 ? "1 archived project" : $"{archived} archived projects")}. Unarchive {(archived == 1 ? "it" : "them")} and move {(archived == 1 ? "it" : "them")} elsewhere first.";
+        return $"“{name}” still holds {(trashed == 1 ? "1 project" : $"{trashed} projects")} in the Trash. Restore {(trashed == 1 ? "it" : "them")} and move {(trashed == 1 ? "it" : "them")} elsewhere first.";
+    }
 
     /// <summary>
     /// The completion boundary (§8.3.1): marks the node so lazy loads that started earlier skip it, and counts a lifecycle
@@ -963,6 +1240,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     {
         Touch(nodeId);
         _ = Trash.RefreshCount(); // a Project may have entered the Trash (here or in another window)
+        _ = Archived.RefreshCount(); // ... or may have been archived
         if (!_nodes.TryGetValue(nodeId, out var node))
             return;
         if (ReferenceEquals(SelectedNode, node))
@@ -1033,10 +1311,10 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         if (IsTouchedSince(nodeId, sequence))
             return; // a newer lifecycle result or reveal already applied a fresher state
-        if (state is null || state.Trashed)
+        if (state is null || state.Trashed || state.Archived)
         {
             ApplyRemoved(nodeId);
-            BannerMessage = state is null ? missingMessage ?? "This item no longer exists." : WorkspaceService.ProjectInTrash;
+            BannerMessage = state is null ? missingMessage ?? "This item no longer exists." : state.Trashed ? WorkspaceService.ProjectInTrash : ProjectArchivedNotice;
             return;
         }
 
@@ -1082,8 +1360,28 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     {
         if (!IsActivated || IsTrashOpen)
             return Task.CompletedTask;
+        InvalidateReveal(); // opening a panel is the user's own action: a reveal still in flight never overrides it
+        CloseArchived(); // one panel at a time
         IsTrashOpen = true; // the selection and its content view stay as they are, hidden behind the panel
         return Trash.Open();
+    }
+
+    private Task OpenArchivedAsync()
+    {
+        if (!IsActivated || IsArchivedOpen)
+            return Task.CompletedTask;
+        InvalidateReveal(); // opening a panel is the user's own action: a reveal still in flight never overrides it
+        CloseTrash(); // one panel at a time
+        IsArchivedOpen = true; // the selection and its content view stay as they are, hidden behind the panel
+        return Archived.Open();
+    }
+
+    private void CloseArchived()
+    {
+        if (!IsArchivedOpen)
+            return;
+        Archived.Close();
+        IsArchivedOpen = false;
     }
 
     private void CloseTrash()
@@ -1148,6 +1446,8 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                 // resolve started (e.g. a Restore): it counts as the detected change and uses the same bounded retry.
                 if (_lifecycleCompletions != stamps.Completions)
                     continue;
+                if (outcome.Value.Status is RevealResolveStatus.Archived or RevealResolveStatus.ProjectArchived)
+                    return await RevealInArchivedAsync(outcome.Value.ArchivedProjectNodeId!.Value, version);
                 return outcome.Value.Status switch
                 {
                     RevealResolveStatus.Trashed => WorkspaceRevealOutcome.Trashed,
@@ -1198,6 +1498,33 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             ContentRevealOutcome.LoadFailed => WorkspaceRevealOutcome.Failed,
             _ => WorkspaceRevealOutcome.Superseded,
         };
+    }
+
+    /// <summary>
+    /// Typed archived-search navigation (§8.4): opens the Archived projects panel and selects the row of the archived Project,
+    /// by node Id, from a panel read that started AFTER the resolve (never a list already shown or in flight; a lifecycle
+    /// completion during the read means one re-read). Gives up (Superseded) when the reveal version moved on (new reveal,
+    /// manual selection, tab leave, Retry, Workspace write) or the user selected a row, pressed Back or closed the panel.
+    /// </summary>
+    private async Task<WorkspaceRevealOutcome> RevealInArchivedAsync(long projectNodeId, int version)
+    {
+        CloseTrash();
+        IsArchivedOpen = true; // the tree selection and its content view stay as they are, hidden behind the panel
+        var userSelection = Archived.UserSelectionVersion;
+        var read = Archived.ReloadForNavigation();
+        do
+        {
+            await Archived.CurrentLoad;
+            if (version != _revealVersion || !IsArchivedOpen || Archived.UserSelectionVersion != userSelection)
+                return WorkspaceRevealOutcome.Superseded; // the user's later action stands
+        }
+        while (Archived.IsLoading); // a completion during the read started one re-read: wait for that one
+
+        if (Archived.LoadError is not null)
+            return WorkspaceRevealOutcome.Failed;
+        if (Archived.AppliedVersion < read)
+            return WorkspaceRevealOutcome.Superseded;
+        return Archived.SelectByNodeId(projectNodeId) ? WorkspaceRevealOutcome.Archived : WorkspaceRevealOutcome.NoLongerArchived;
     }
 
     /// <summary>The roots stamp, every cached branch stamp and the lifecycle-completion count, taken BEFORE a resolve.</summary>

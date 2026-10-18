@@ -28,6 +28,7 @@ public static class SchemaMigrations
         new V005_ProjectNotes(),
         new V006_ProjectContentTrash(),
         new V007_WorkspaceProjectTrash(),
+        new V008_ProjectArchiveSerial(),
     ];
 
     public static int LatestVersion => All[^1].Version;

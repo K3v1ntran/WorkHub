@@ -7,7 +7,10 @@ public enum WorkspaceNodeType
     Project,
 }
 
-/// <summary>Fixed Project status vocabulary. <see cref="Archived"/> is persisted vocabulary only in Phase 4.</summary>
+/// <summary>
+/// Fixed Project status vocabulary. <see cref="Archived"/> is the archived state (Phase 12): it is written only by Archive,
+/// Unarchive and Undo, never chosen in the Project editor.
+/// </summary>
 public enum ProjectStatus
 {
     Planning,
@@ -22,7 +25,7 @@ public static class ProjectStatuses
 {
     public const ProjectStatus Default = ProjectStatus.Active;
 
-    /// <summary>Statuses a user may choose. Archived is not selectable until Archive behavior exists.</summary>
+    /// <summary>Statuses a user may choose. Archived is reached only through Archive (and left through Unarchive or Undo).</summary>
     public static IReadOnlyList<ProjectStatus> Editable { get; } =
         [ProjectStatus.Planning, ProjectStatus.Active, ProjectStatus.Maintenance, ProjectStatus.OnHold, ProjectStatus.Completed];
 
@@ -72,6 +75,9 @@ public sealed record ProjectDetails(
 {
     /// <summary>The Project is in the Workspace Trash (read-only until restored).</summary>
     public bool IsTrashed { get; init; }
+
+    /// <summary>The Project is archived (Phase 12): hidden from the tree; its node is not renamed, edited, moved or trashed.</summary>
+    public bool IsArchived => Status == ProjectStatus.Archived;
 }
 
 /// <summary>User-editable Project fields. Owner/ProjectManager are free text, unrelated to Owner Manager.</summary>
@@ -94,6 +100,9 @@ public enum WorkspaceFailure
     NodeNotFound,
     MoveCycle,
     ProjectTrashed,
+
+    /// <summary>The Project is archived (Phase 12); nothing was written.</summary>
+    ProjectArchived,
 }
 
 /// <summary>

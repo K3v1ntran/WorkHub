@@ -6,6 +6,7 @@ using WorkHub.Core.Workspace.Content;
 using WorkHub.Infrastructure.Backup;
 using WorkHub.Infrastructure.Launching;
 using WorkHub.Infrastructure.Persistence;
+using WorkHub.Infrastructure.Persistence.Migrations;
 using WorkHub.Tests.TestSupport;
 
 namespace WorkHub.Tests.Backup;
@@ -34,7 +35,7 @@ public sealed class SnapshotTests : IDisposable
         Assert.Equal(before, BackupKit.Dump(backup));
         Assert.Equal(before, BackupKit.Dump(_root.Paths.DatabaseFile)); // source unchanged
         using var connection = BackupKit.Open(backup, SqliteOpenMode.ReadOnly);
-        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(7, SchemaFingerprint.Read(connection)));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(SchemaMigrations.LatestVersion, SchemaFingerprint.Read(connection)));
         Assert.True((long)BackupKit.Scalar(connection, "SELECT count(*) FROM sqlite_sequence;")! > 0);
     }
 

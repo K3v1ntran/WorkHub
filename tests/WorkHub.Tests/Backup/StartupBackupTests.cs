@@ -85,7 +85,7 @@ public sealed class StartupBackupTests : IDisposable
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Database.Outcome);
         var migrationBackup = Assert.Single(Directory.GetFiles(_root.Paths.MigrationBackupsDirectory));
         var hash = BackupKit.Hash(migrationBackup);
-        Assert.StartsWith("workhub_daily_20261013_v7_", result.DailyBackup!.FileName);
+        Assert.StartsWith($"workhub_daily_20261013_v{SchemaMigrations.LatestVersion}_", result.DailyBackup!.FileName);
 
         for (var day = 1; day <= 10; day++)
         {
@@ -159,8 +159,8 @@ public sealed class MigrationBackupTests : IDisposable
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Outcome);
         var file = Assert.Single(Directory.GetFiles(_root.Paths.MigrationBackupsDirectory));
         Assert.Equal(file, result.MigrationBackupFile);
-        Assert.Matches(@"^workhub_v6_before_v7_\d{8}-\d{9}\.db$", Path.GetFileName(file));
-        Assert.True(DailyBackupPolicy.TryParseMigration(Path.GetFileName(file), out var from, out var to, out _) && from == 6 && to == 7);
+        Assert.Matches($@"^workhub_v6_before_v{SchemaMigrations.LatestVersion}_\d{{8}}-\d{{9}}\.db$", Path.GetFileName(file));
+        Assert.True(DailyBackupPolicy.TryParseMigration(Path.GetFileName(file), out var from, out var to, out _) && from == 6 && to == SchemaMigrations.LatestVersion);
         Assert.Equal(((byte)1, (byte)1), BackupKit.Header(file));
         Assert.Empty(BackupKit.Sidecars(file));
         Assert.Equal(before, BackupKit.Dump(file));
@@ -245,7 +245,7 @@ public sealed class MigrationBackupTests : IDisposable
         V6WithData();
         var time = new SettableClock(new DateTimeOffset(2026, 10, 13, 1, 2, 3, 456, TimeSpan.Zero));
         Directory.CreateDirectory(_root.Paths.MigrationBackupsDirectory);
-        var existing = Path.Combine(_root.Paths.MigrationBackupsDirectory, "workhub_v6_before_v7_20261013-010203456.db");
+        var existing = Path.Combine(_root.Paths.MigrationBackupsDirectory, $"workhub_v6_before_v{SchemaMigrations.LatestVersion}_20261013-010203456.db");
         File.WriteAllText(existing, "existing");
 
         var ex = Assert.Throws<DatabaseStartupException>(() => Initializer(time: time).Initialize());
@@ -272,7 +272,7 @@ public sealed class MigrationBackupTests : IDisposable
         var result = Initializer(log).Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Outcome);
-        Assert.Equal(7, LiveVersion());
+        Assert.Equal(SchemaMigrations.LatestVersion, LiveVersion());
         Assert.Contains("logged only", log.All);
         Assert.Contains("extra index IX_Extra", log.All);
         Assert.Contains("foreign_key_check found rows", log.All);
@@ -293,7 +293,7 @@ public sealed class MigrationBackupTests : IDisposable
         Assert.Equal(((byte)1, (byte)1), BackupKit.Header(file));
         Assert.Empty(BackupKit.Sidecars(file));
         Assert.Equal(((byte)2, (byte)2), BackupKit.Header(_root.Paths.DatabaseFile));
-        Assert.Equal(7, LiveVersion());
+        Assert.Equal(SchemaMigrations.LatestVersion, LiveVersion());
     }
 
     /// <summary>Changes the text inside IX_SystemRepositories_RepositoryType's root page so it no longer matches its row.</summary>

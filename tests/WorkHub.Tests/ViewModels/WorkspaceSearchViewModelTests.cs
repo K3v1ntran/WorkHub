@@ -9,7 +9,16 @@ using WorkHub.Tests.TestSupport;
 
 namespace WorkHub.Tests.ViewModels;
 
-/// <summary>Search box behavior (Phase 6 proposal §3, §4.7, §5.2): debounce, bounded work, stale results, states, activation.</summary>
+/// <summary>
+/// Search box behavior (Phase 6 proposal §3, §4.7, §5.2): debounce, bounded work, stale results, states, activation.
+/// <para>
+/// Every test body runs on a <see cref="SingleThreadContext"/> (one thread, like the WPF Dispatcher), so the view models'
+/// continuations never run concurrently — the free-threaded harness let an activation load and a reveal load append to the
+/// same content view from two threads (the N2 mechanism). Waits that the view model completes by posting to its context
+/// pump instead of blocking. Teardown follows <see cref="ContextTeardown"/>: release gates, settle every tracked task on
+/// the context, confirm the stop, then delete the root (otherwise it is kept and reported).
+/// </para>
+/// </summary>
 public sealed class WorkspaceSearchViewModelTests : IDisposable
 {
     private readonly TempWorkHubRoot _root = new();
@@ -19,6 +28,11 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
     private readonly WorkspaceService _other;
     private readonly ProjectContentService _otherContent;
     private readonly RecordingLog _log = new();
+    private readonly List<WorkspaceAreaViewModel> _areas = [];
+    private readonly SingleThreadContext _context = new();
+
+    private static readonly TimeSpan BodyTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan TeardownBound = TimeSpan.FromSeconds(30);
 
     public WorkspaceSearchViewModelTests()
     {
@@ -29,20 +43,28 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         _otherContent = new ProjectContentService(new SqliteProjectContentStore(_connections), new ProcessProjectLinkLauncher(new RecordingProcessStarter(), _ => true, _ => true));
     }
 
-    private readonly List<WorkspaceAreaViewModel> _areas = [];
+    /// <summary>Every area is observed as its own tracked set, even when another faults (see <see cref="ContextTeardown"/>).</summary>
+    public void Dispose() =>
+        ContextTeardown.Run(_context, _store.ReleaseAll, _areas.Select((area, i) => (ContextTeardown.TrackedSet)(() => Tracked(area, $"area{i}."))).ToList(),
+            _root.Dispose, _root.Paths.Root, TeardownBound);
 
-    /// <summary>Background reads (searches, reveals, details, content) finish before the folder is deleted.</summary>
-    public void Dispose()
+    private Task InContext(Func<Task> body) => _context.RunAsync(body, BodyTimeout);
+
+    /// <summary>Searches, reveals, details, content, lifecycle and both panels: everything an area may still have running.</summary>
+    private static IReadOnlyList<(string Name, Task Task)> Tracked(WorkspaceAreaViewModel area, string prefix)
     {
-        foreach (var area in _areas)
+        var tasks = new List<(string Name, Task Task)>
         {
-            var pending = new List<Task> { area.CurrentDetailsLoad, area.CurrentReveal, area.Search!.CurrentSearch, area.Search.CurrentActivation };
-            if (area.SelectedContent is { } content)
-                pending.AddRange([content.CurrentLoad, content.CurrentPreviewLoad]);
-            Task.WhenAll(pending).ContinueWith(_ => { }).Wait(TimeSpan.FromSeconds(10));
-        }
-
-        _root.Dispose();
+            ("CurrentDetailsLoad", area.CurrentDetailsLoad), ("CurrentReveal", area.CurrentReveal),
+            ("CurrentLifecycleOperation", area.CurrentLifecycleOperation), ("CurrentReconciliation", area.CurrentReconciliation),
+            ("Trash.CurrentLoad", area.Trash.CurrentLoad), ("Trash.CurrentCount", area.Trash.CurrentCount), ("Trash.CurrentRestore", area.Trash.CurrentRestore),
+            ("Archived.CurrentLoad", area.Archived.CurrentLoad), ("Archived.CurrentCount", area.Archived.CurrentCount), ("Archived.CurrentUnarchive", area.Archived.CurrentUnarchive),
+            ("Search.CurrentSearch", area.Search!.CurrentSearch), ("Search.CurrentActivation", area.Search.CurrentActivation),
+        };
+        if (area.SelectedContent is { } content)
+            tasks.AddRange([("Content.CurrentLoad", content.CurrentLoad), ("Content.CurrentPreviewLoad", content.CurrentPreviewLoad),
+                ("Content.CurrentTrashOperation", content.CurrentTrashOperation), ("Content.CurrentReconciliation", content.CurrentReconciliation)]);
+        return tasks.Select(t => (prefix + t.Name, t.Task)).ToList();
     }
 
     private async Task<WorkspaceAreaViewModel> Area(int delayMs = 0)
@@ -65,7 +87,7 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
     }
 
     [Fact]
-    public async Task RapidTyping_IsDebounced_OneStoreCall_ForTheLastText()
+    public Task RapidTyping_IsDebounced_OneStoreCall_ForTheLastText() => InContext(async () =>
     {
         await Project("Kickoff");
         await Project("Kick");
@@ -80,31 +102,37 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         Assert.Equal(["Kickoff"], search.Results.Select(r => r.Name).ToList());
         Assert.Equal("1 result", search.StatusText);
         Assert.True(search.IsActive);
-    }
+    });
 
     [Fact]
-    public async Task ANewerQuery_SupersedesTheRunningOne_OnlyItsResultsAreShown_AndWorkIsBounded()
+    public Task ANewerQuery_SupersedesTheRunningOne_OnlyItsResultsAreShown_AndWorkIsBounded() => InContext(async () =>
     {
         await Project("Alpha");
         await Project("Beta");
         var search = (await Area()).Search!;
         var gate = _store.Hold("search");
+        try
+        {
+            search.SearchText = "alpha";
+            gate.WaitEntered();
+            search.SearchText = "gamma";
+            search.SearchText = "beta";   // replaces "gamma" as the one pending query
+            var latest = search.CurrentSearch;
+            Assert.Equal(1, search.StoreCallsStarted);
+            gate.Release();
+            await latest;
 
-        search.SearchText = "alpha";
-        gate.WaitEntered();
-        search.SearchText = "gamma";
-        search.SearchText = "beta";   // replaces "gamma" as the one pending query
-        var latest = search.CurrentSearch;
-        Assert.Equal(1, search.StoreCallsStarted);
-        gate.Release();
-        await latest;
-
-        Assert.Equal(["Beta"], search.Results.Select(r => r.Name).ToList());
-        Assert.Equal(2, search.StoreCallsStarted); // "alpha" (superseded) and "beta"; "gamma" never ran
-    }
+            Assert.Equal(["Beta"], search.Results.Select(r => r.Name).ToList());
+            Assert.Equal(2, search.StoreCallsStarted); // "alpha" (superseded) and "beta"; "gamma" never ran
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+    });
 
     [Fact]
-    public async Task Failure_ShowsAnErrorWithRetry_AndNeverLogsTheQueryText()
+    public Task Failure_ShowsAnErrorWithRetry_AndNeverLogsTheQueryText() => InContext(async () =>
     {
         await Project("Secret project");
         var search = (await Area()).Search!;
@@ -122,10 +150,10 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         await search.CurrentSearch;
         Assert.Null(search.ErrorText);
         Assert.Single(search.Results);
-    }
+    });
 
     [Fact]
-    public async Task Retry_RunsTheSameQueryAgain()
+    public Task Retry_RunsTheSameQueryAgain() => InContext(async () =>
     {
         await Project("Alpha");
         var search = (await Area()).Search!;
@@ -137,10 +165,10 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
 
         Assert.Null(search.ErrorText);
         Assert.Single(search.Results);
-    }
+    });
 
     [Fact]
-    public async Task BusyBudgetExhausted_IsReportedAsSuch()
+    public Task BusyBudgetExhausted_IsReportedAsSuch() => InContext(async () =>
     {
         var search = (await Area()).Search!;
         _store.Hold("search").Fail(new WorkspaceSearchBusyException(TimeSpan.FromSeconds(30)));
@@ -148,43 +176,57 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         await Type(search, "anything");
 
         Assert.StartsWith("The database stayed busy for 30 seconds", search.ErrorText);
-    }
+    });
 
     [Fact]
-    public async Task WaitingForTheDatabase_IsShownOnlyAfterTheStoreReportedABusyAttempt()
+    public Task WaitingForTheDatabase_IsShownOnlyAfterTheStoreReportedABusyAttempt() => InContext(async () =>
     {
         await Project("Alpha");
         var search = (await Area()).Search!;
         var gate = _store.HoldBusy();
+        try
+        {
+            search.SearchText = "alpha";
+            gate.WaitEntered();
+            // The busy notice is posted to the captured context: pump (never block the context thread) until it is shown.
+            Assert.True(SingleThreadContext.WaitOrPump(() => search.IsWaitingForDatabase,
+                t => SpinWait.SpinUntil(() => search.IsWaitingForDatabase, t), TimeSpan.FromSeconds(5)));
+            Assert.StartsWith("Waiting for the database", search.StatusText);
+            gate.Release();
+            await search.CurrentSearch;
 
-        search.SearchText = "alpha";
-        gate.WaitEntered();
-        Assert.True(SpinWait.SpinUntil(() => search.IsWaitingForDatabase, TimeSpan.FromSeconds(5))); // posted to the captured context
-        Assert.StartsWith("Waiting for the database", search.StatusText);
-        gate.Release();
-        await search.CurrentSearch;
-
-        Assert.False(search.IsWaitingForDatabase);
-        Assert.Equal("1 result", search.StatusText);
-    }
+            Assert.False(search.IsWaitingForDatabase);
+            Assert.Equal("1 result", search.StatusText);
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+    });
 
     [Fact]
-    public async Task SearchingWithoutContention_NeverClaimsToWaitForTheDatabase()
+    public Task SearchingWithoutContention_NeverClaimsToWaitForTheDatabase() => InContext(async () =>
     {
         await Project("Alpha");
         var search = (await Area()).Search!;
         var gate = _store.Hold("search");
-
-        search.SearchText = "alpha";
-        gate.WaitEntered();
-        Assert.False(search.IsWaitingForDatabase);
-        Assert.Equal("Searching…", search.StatusText);
-        gate.Release();
-        await search.CurrentSearch;
-    }
+        try
+        {
+            search.SearchText = "alpha";
+            gate.WaitEntered();
+            Assert.False(search.IsWaitingForDatabase);
+            Assert.Equal("Searching…", search.StatusText);
+            gate.Release();
+            await search.CurrentSearch;
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+    });
 
     [Fact]
-    public async Task Clear_RestoresTheTree_UntouchedWithItsSelection()
+    public Task Clear_RestoresTheTree_UntouchedWithItsSelection() => InContext(async () =>
     {
         await Project("Alpha");
         var area = await Area();
@@ -200,10 +242,10 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         Assert.Null(search.StatusText);
         Assert.Equal(roots, area.Roots.ToList());
         Assert.Same(roots[0], area.SelectedNode);
-    }
+    });
 
     [Fact]
-    public async Task NoResults_AndTruncation_AndShortenedQuery_AreDescribed()
+    public Task NoResults_AndTruncation_AndShortenedQuery_AreDescribed() => InContext(async () =>
     {
         var search = (await Area()).Search!;
         await Type(search, "nothing-matches");
@@ -224,10 +266,10 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
 
         await Type(search, "item a b c d e f g h");
         Assert.EndsWith("Only the first 8 words and 200 characters are used.", search.StatusText);
-    }
+    });
 
     [Fact]
-    public async Task Activation_RevealsOnly_AndNotFoundRemovesExactlyThatKindAndId()
+    public Task Activation_RevealsOnly_AndNotFoundRemovesExactlyThatKindAndId() => InContext(async () =>
     {
         var project = await Project("Alpha");
         using (var c = _root.Open())
@@ -258,10 +300,10 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         Assert.Null(search.NoticeText);
         Assert.Equal((ProjectContentItemKind.Link, 900L), (area.SelectedContent!.SelectedItem!.Kind, area.SelectedContent.SelectedItem.Id));
         Assert.True(search.IsActive); // results stay so the next one can be tried
-    }
+    });
 
     [Fact]
-    public async Task ActivatingAHitTrashedSinceTheSearch_ReportsTrashed_AndRemovesExactlyThatKindAndId()
+    public Task ActivatingAHitTrashedSinceTheSearch_ReportsTrashed_AndRemovesExactlyThatKindAndId() => InContext(async () =>
     {
         var project = await Project("Alpha");
         using (var c = _root.Open())
@@ -287,27 +329,34 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
 
         await Type(search, "twin"); // a new search no longer finds it
         Assert.Equal(new SearchItemRef(SearchResultKind.Link, 900), Assert.Single(search.Results).Item);
-    }
+    });
 
     [Fact]
-    public async Task TypingAgain_InvalidatesARevealInFlight()
+    public Task TypingAgain_InvalidatesARevealInFlight() => InContext(async () =>
     {
         var target = await Project("Target");
         var area = await Area();
         var search = area.Search!;
         await Type(search, "target");
         var gate = _store.Hold("resolve");
-        search.SelectedResult = search.Results[0];
-        search.ActivateSelectedCommand.Execute(null);
-        gate.WaitEntered();
+        try
+        {
+            search.SelectedResult = search.Results[0];
+            search.ActivateSelectedCommand.Execute(null);
+            gate.WaitEntered();
 
-        search.SearchText = "targe";
-        gate.Release();
-        await search.CurrentActivation;
+            search.SearchText = "targe";
+            gate.Release();
+            await search.CurrentActivation;
 
-        Assert.Equal(WorkspaceRevealOutcome.Superseded, await area.CurrentReveal);
-        Assert.NotEqual(target, area.SelectedNode?.Id);
-    }
+            Assert.Equal(WorkspaceRevealOutcome.Superseded, await area.CurrentReveal);
+            Assert.NotEqual(target, area.SelectedNode?.Id);
+        }
+        finally
+        {
+            gate.TryRelease();
+        }
+    });
 
     [Fact]
     public void HitText_DescribesKindLocationAndMatch()

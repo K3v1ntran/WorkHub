@@ -141,7 +141,9 @@ public sealed class ProjectEditorViewModel : ObservableObject
         _parentId = parentId;
         _existing = existing;
         _name = existing?.Name ?? string.Empty;
-        _status = Statuses.First(s => s.Status == (existing?.Status ?? ProjectStatuses.Default));
+        // An archived Project never reaches the editor (the area checks first); should one slip through, the editor shows the
+        // default status and the store still refuses the save (ProjectArchived) instead of the constructor failing.
+        _status = Statuses.FirstOrDefault(s => s.Status == existing?.Status) ?? Statuses.First(s => s.Status == ProjectStatuses.Default);
         _description = existing?.Description ?? string.Empty;
         _owner = existing?.Owner ?? string.Empty;
         _projectManager = existing?.ProjectManager ?? string.Empty;
@@ -164,7 +166,7 @@ public sealed class ProjectEditorViewModel : ObservableObject
 
     public string LocationText { get; }
 
-    /// <summary>Selectable statuses. Archived is not offered in this phase.</summary>
+    /// <summary>Selectable statuses. Archived is never offered: only Archive sets it (Phase 12).</summary>
     public IReadOnlyList<ProjectStatusOption> Statuses { get; } =
         ProjectStatuses.Editable.Select(s => new ProjectStatusOption(s, ProjectStatuses.DisplayName(s))).ToList();
 

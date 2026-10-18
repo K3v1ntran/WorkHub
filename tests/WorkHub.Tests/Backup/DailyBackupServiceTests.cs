@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using WorkHub.Core.Backup;
 using WorkHub.Infrastructure.Backup;
+using WorkHub.Infrastructure.Persistence.Migrations;
 using WorkHub.Tests.TestSupport;
 
 namespace WorkHub.Tests.Backup;
@@ -39,7 +40,7 @@ public sealed class DailyBackupServiceTests : IDisposable
         var first = Run();
         Assert.Equal(DailyBackupOutcome.Created, first.Outcome);
         Assert.True(first.BackedUpToday);
-        Assert.StartsWith("workhub_daily_20261013_v7_20261013T090000000", first.FileName);
+        Assert.StartsWith($"workhub_daily_20261013_v{SchemaMigrations.LatestVersion}_20261013T090000000", first.FileName);
         var after = Snapshot();
 
         _clock.Now = SettableClock.Tokyo(2026, 10, 13, 23, 59, 59, 999);

@@ -63,7 +63,7 @@ public sealed class NotesMigrationTests : IDisposable
     [Fact]
     public void V005_IsRegistered_AndOnlyAddsNotes()
     {
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], SchemaMigrations.All.Select(m => m.Version));
         Assert.Contains("CREATE TABLE ProjectNotes", V005_ProjectNotes.Sql);
         Assert.DoesNotContain("CASCADE", V005_ProjectNotes.Sql);
         Assert.DoesNotContain("ALTER TABLE", V005_ProjectNotes.Sql);

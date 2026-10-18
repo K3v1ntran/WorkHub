@@ -81,6 +81,12 @@ public sealed record ProjectContentListing(
 {
     /// <summary>How many entries the Project's Trash holds, from the same read snapshot (schema v6).</summary>
     public int TrashCount { get; init; }
+
+    /// <summary>
+    /// The Project is archived (schema v8), from the same read snapshot. Its content stays listable and writable (A3); the
+    /// Workspace area uses this to take the Project out of a stale tree.
+    /// </summary>
+    public bool ProjectArchived { get; init; }
 }
 
 public enum ContentContainerProblem

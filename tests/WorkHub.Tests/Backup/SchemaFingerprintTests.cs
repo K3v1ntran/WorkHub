@@ -50,7 +50,7 @@ public sealed class SchemaFingerprintTests : IDisposable
             }
         }
 
-        Assert.Equal(127, checkedCount);
+        Assert.Equal((1 << SchemaMigrations.LatestVersion) - 1, checkedCount); // every restart pattern of v1..v8
     }
 
     [Fact]
@@ -68,7 +68,7 @@ public sealed class SchemaFingerprintTests : IDisposable
         root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
 
         using var upgraded = BackupKit.Open(root.Paths.DatabaseFile, SqliteOpenMode.ReadOnly);
-        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(7, SchemaFingerprint.Read(upgraded)));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(SchemaMigrations.LatestVersion, SchemaFingerprint.Read(upgraded)));
     }
 
     [Fact]

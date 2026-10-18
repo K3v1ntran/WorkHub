@@ -1,0 +1,31 @@
+<Window x:Class="WorkHub.App.Views.UnarchiveProjectWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:UnarchiveProjectViewModel}"
+        Title="{Binding Title}"
+        Width="440" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=StatusBox}">
+    <DockPanel Margin="20,12,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Cancel" IsCancel="True" IsDefault="True" Command="{Binding CancelCommand}" AutomationProperties.AutomationId="UnarchiveCancel" />
+            <Button Content="Unarchive" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}" AutomationProperties.AutomationId="UnarchiveConfirm" />
+        </StackPanel>
+        <StackPanel>
+            <TextBlock TextWrapping="Wrap" Text="{Binding Message}" AutomationProperties.AutomationId="UnarchiveMessage" />
+            <TextBlock Style="{StaticResource FieldHint}" Margin="0,8,0,4" Text="{Binding LocationText}" TextTrimming="CharacterEllipsis"
+                       AutomationProperties.AutomationId="UnarchiveLocation" />
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Status" />
+            <ComboBox x:Name="StatusBox" ItemsSource="{Binding Statuses}" SelectedItem="{Binding Status}" DisplayMemberPath="DisplayName"
+                      AutomationProperties.Name="Status" AutomationProperties.AutomationId="UnarchiveStatus" />
+        </StackPanel>
+    </DockPanel>
+</Window>

@@ -170,8 +170,11 @@ public sealed class WorkspaceViewModelTests : IDisposable
     {
         var members = typeof(WorkspaceAreaViewModel).GetProperties().Select(p => p.Name).ToList();
 
-        // Phase 8 adds Project Trash and empty-folder removal (Delete = Del key); Archive and Tags stay deferred.
-        Assert.DoesNotContain(members, m => m.Contains("Archive") || m.Contains("Tag") || m.Contains("Link") || m.Contains("Note") || m.Contains("Purge"));
+        // Phase 8 adds Project Trash and empty-folder removal (Delete = Del key); Phase 12 adds single-Project Archive with its
+        // panel (bulk Archive is deferred, A9). Tags stay deferred.
+        Assert.Equal(["ArchiveProjectCommand", "Archived", "CloseArchivedCommand", "IsArchivedOpen", "OpenArchivedCommand"],
+            members.Where(m => m.Contains("Archive")).Order(StringComparer.Ordinal));
+        Assert.DoesNotContain(members, m => m.Contains("Tag") || m.Contains("Link") || m.Contains("Note") || m.Contains("Purge") || m.Contains("Bulk"));
         Assert.DoesNotContain(members, m => m.Contains("Delete") && m != nameof(WorkspaceAreaViewModel.DeleteCommand));
         Assert.DoesNotContain(ProjectEditorViewModel.ForCreate(_workspace, null, null).Statuses, s => s.Status == ProjectStatus.Archived);
     }

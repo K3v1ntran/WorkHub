@@ -93,6 +93,30 @@ is in the Trash. Nothing on disk is touched.
   because restoring needs its original folder. Workspace Folders are never trashed, and there is no Undo for removal.
 - Projects and their content are never permanently deleted; there is no Empty Trash or automatic cleanup.
 
+### Project Archive (schema v8)
+
+**Archive** (toolbar, context menu or the details pane; always confirmed; no keyboard shortcut) takes a finished
+Project out of the tree without trashing it. Only its status (Archived) and an internal archive counter change: its
+place, name, details, project folders, links, notes and project Trash entries stay exactly as they are. Nothing on disk
+is touched.
+
+- The project leaves the tree only once the archive is saved. If it is still selected then, its content pane closes; a
+  different selection, its content and any open note editor are never affected. Open note editors stay open and keep
+  saving: an archived project's content stays writable.
+- **Undo** (in the banner) restores the exact status it had, with the same rules as Undo after Move to Trash. It applies
+  only to that archive: if another window unarchived the project, or unarchived and archived it again, Undo changes
+  nothing and says so.
+- **Archived projects (n)** (above the tree) lists archived projects with the folder they are in. **Unarchive…** (or
+  Enter) asks for the status (Completed is preselected) and puts the project back into that folder, wherever it is now.
+  Unarchive never changes the selection; **Back** (or selecting a tree node) returns to it.
+- An archived project keeps its name: creating, renaming or moving something to the same name in that folder is refused
+  with "An archived project named … already exists here." A folder that holds an archived project cannot be removed.
+- An archived project cannot be renamed, edited, moved or moved to the Trash; unarchive it first. Search still finds
+  archived projects and their content, marked "Archived"; revealing one opens Archived projects with it selected.
+- **Older WorkHub versions.** Schema v8 makes WorkHub 1.0.0 (schema v7) refuse this data folder from the next time it
+  starts. A 1.0.0 window that is already open is not stopped by this, so close every WorkHub window before the first start
+  of this version.
+
 ### Project content (schema v4–v6)
 
 Selecting a Project shows its **Content** below the details: one container at a time (the Project root or one project
@@ -138,7 +162,7 @@ change: files, folders and web pages a link points to are never moved, renamed o
   works, and Save as new note saves next to the original only if that folder is not in the Trash.
 - There is no permanent delete, Empty Trash or automatic cleanup: the Trash keeps everything until it is restored.
 
-Not available yet: permanent delete of projects or content, Archive, tags, rich text, drag-and-drop, manual ordering,
+Not available yet: permanent delete of projects or content, bulk Archive, tags, rich text, drag-and-drop, manual ordering,
 autosave and moving content between projects.
 
 ### Workspace search
@@ -158,7 +182,8 @@ content. Systems and Owner Manager items are not included (the Repository tab ke
 - Results are a snapshot. Revealing always re-reads where the item is now: if it was moved, the reveal goes there; if it
   no longer exists, the result is removed. Items in the Trash — and everything in a project in the Workspace Trash — are
   never found; revealing one found earlier says "This item is in the Trash." (or "This item's project is in the Trash.")
-  and removes that result. A reveal updates only the folders on the item's path (including ones
+  and removes that result. Archived projects and their content are found and marked "Archived"; revealing one opens
+  **Archived projects** with that project selected (the tree selection does not change). A reveal updates only the folders on the item's path (including ones
   another window changed); other folders the tree already loaded are not re-read, and re-expanding a loaded folder does
   not refresh it either.
 - Search only reads. While another program or window holds the database for writing, the search retries for up to 30
@@ -248,7 +273,7 @@ WorkHub's own definition: a file at the current version that passes the quick ch
 ## Database backups
 
 **What is protected.** Only the database, `Data\workhub.db`: Systems and memberships, Owner groups and items, the
-Workspace tree, Projects (including those in the Workspace Trash), Project details, folders, links, notes (with their
+Workspace tree, Projects (including archived ones and those in the Workspace Trash), Project details, folders, links, notes (with their
 revisions) and Project Trash entries. **Not protected:** `Config\settings.json` (repository hosts and prefixes, the
 TortoiseProc path — recreated with defaults if lost), `Logs\`, and the files, folders and web pages that links and Owner
 items point to (WorkHub stores only their paths and addresses).

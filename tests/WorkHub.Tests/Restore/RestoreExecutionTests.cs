@@ -3,6 +3,7 @@ using WorkHub.Core.Backup;
 using WorkHub.Core.Restore;
 using WorkHub.Core.Startup;
 using WorkHub.Infrastructure.Backup;
+using WorkHub.Infrastructure.Persistence.Migrations;
 using WorkHub.Infrastructure.Restore;
 using WorkHub.Tests.TestSupport;
 
@@ -55,12 +56,12 @@ public sealed class RestoreExecutionTests : RestoreTestBase
 
         var journal = RestoreKit.Journal(Root, op);
         Assert.Equal(RestoreState.Completed, journal.State);
-        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 7), journal.ExecutionClass);
+        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: SchemaMigrations.LatestVersion), journal.ExecutionClass);
         Assert.Equal(SafetyKind.Validated, journal.Safety!.Kind);
         var safety = Path.Combine(Root.Paths.PreRestoreBackupsDirectory, journal.Safety.FileName!);
-        Assert.StartsWith("workhub_prerestore_v7_", journal.Safety.FileName);
+        Assert.StartsWith($"workhub_prerestore_v{SchemaMigrations.LatestVersion}_", journal.Safety.FileName);
         Assert.Equal(currentDump, BackupKit.Dump(safety));
-        Assert.True(BackupKit.Validator().Check(safety, BackupCheckLevel.Full, 7).IsFullyValidated);
+        Assert.True(BackupKit.Validator().Check(safety, BackupCheckLevel.Full, SchemaMigrations.LatestVersion).IsFullyValidated);
         Assert.False(File.Exists(RestoreKit.Candidate(Root, op))); // renamed into Data\ at X9
         Assert.Equal(journal.Candidate!.FileId, RestoreKit.FileId(Db));
         Assert.Equal("Opened", journal.Completed!.Outcome);
@@ -80,19 +81,58 @@ public sealed class RestoreExecutionTests : RestoreTestBase
         Assert.Null(error);
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result!.Database.Outcome);
         Assert.Equal(6, result.Database.PreviousSchemaVersion);
-        Assert.Contains("upgraded from schema v6 to v7", result.RestoreNotice);
+        Assert.Contains($"upgraded from schema v6 to v{SchemaMigrations.LatestVersion}", result.RestoreNotice);
         Assert.NotNull(result.Database.MigrationBackupFile);
-        Assert.StartsWith("workhub_v6_before_v7_", Path.GetFileName(result.Database.MigrationBackupFile));
+        Assert.StartsWith($"workhub_v6_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(result.Database.MigrationBackupFile));
         RestoreKit.ClearPools(Root);
         using (var connection = BackupKit.Open(Db, SqliteOpenMode.ReadOnly))
         {
-            Assert.Equal(7L, BackupKit.Scalar(connection, "PRAGMA user_version;"));
+            Assert.Equal((long)SchemaMigrations.LatestVersion, BackupKit.Scalar(connection, "PRAGMA user_version;"));
             Assert.Equal(1L, BackupKit.Scalar(connection, "SELECT count(*) FROM Systems WHERE SystemCode = 'OLDV0001';"));
         }
 
         var journal = RestoreKit.Journal(Root, op);
-        Assert.Equal(new CompletionRecord("Migrated", 6, 7, Path.GetFileName(result.Database.MigrationBackupFile)), journal.Completed);
+        Assert.Equal(new CompletionRecord("Migrated", 6, SchemaMigrations.LatestVersion, Path.GetFileName(result.Database.MigrationBackupFile)), journal.Completed);
         Assert.Equal(BackupCompatibility.Older, journal.Candidate!.Compatibility);
+    }
+
+    /// <summary>
+    /// Phase 12 §10.6: a v7 backup holding an archived Project and an archived-plus-trashed one (states an earlier build or
+    /// raw SQL can leave) is staged as Older, restored, and migrated to v8 with its own pre-migration backup; both keep
+    /// their status and get serial 0.
+    /// </summary>
+    [Fact]
+    public async Task G_V7CandidateWithArchivedProjects_IsRestoredThenMigratedToV8_StatusKept_SerialZero()
+    {
+        BackupKit.CreateDatabase(Root);
+        var entry = RestoreKit.PlaceOlderDaily(Root, version: 7);
+        using (var connection = BackupKit.Open(BackupKit.Daily(Root, entry.FileName)))
+        {
+            var archived = TestSupport.Db.InsertNode(connection, null, "Project", "Archived one");
+            TestSupport.Db.InsertProjectDetails(connection, archived, "0000000000000000000000000000000a");
+            var trashed = TestSupport.Db.InsertNode(connection, null, "Project", "Archived and trashed");
+            TestSupport.Db.InsertProjectDetails(connection, trashed, "0000000000000000000000000000000b");
+            BackupKit.Exec(connection, "UPDATE Projects SET Status = 'Archived';");
+            BackupKit.Exec(connection, $"UPDATE WorkspaceNodes SET TrashedAt = '2026-02-01T00:00:00.000Z' WHERE Id = {trashed};");
+        }
+
+        var start = await RestoreKit.Requester(Root).BeginAsync(entry);
+        Assert.Equal(BackupCompatibility.Older, start.Request!.Facts.Compatibility);
+        var op = await start.Request.ConfirmAsync();
+        start.Request.Dispose();
+
+        var (result, _, error) = StartWithToken(op);
+
+        Assert.Null(error);
+        Assert.Equal(DatabaseInitializationOutcome.Migrated, result!.Database.Outcome);
+        Assert.Equal((7, 8), (result.Database.PreviousSchemaVersion, result.Database.SchemaVersion));
+        Assert.StartsWith("workhub_v7_before_v8_", Path.GetFileName(result.Database.MigrationBackupFile));
+        RestoreKit.ClearPools(Root);
+        using var restored = BackupKit.Open(Db, SqliteOpenMode.ReadOnly);
+        Assert.Equal(8L, BackupKit.Scalar(restored, "PRAGMA user_version;"));
+        Assert.Equal(2L, BackupKit.Scalar(restored, "SELECT count(*) FROM Projects WHERE Status = 'Archived' AND ArchiveSerial = 0;"));
+        Assert.Equal(1L, BackupKit.Scalar(restored, "SELECT count(*) FROM WorkspaceNodes WHERE TrashedAt IS NOT NULL;"));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(8, SchemaFingerprint.Read(restored)));
     }
 
     [Fact]
@@ -228,10 +268,10 @@ public sealed class RestoreExecutionTests : RestoreTestBase
 
     public static TheoryData<string, DegradedKind, int> DegradedCases() => new()
     {
-        { "PRAGMA user_version = 8;", DegradedKind.Newer, 8 },
+        { $"PRAGMA user_version = {SchemaMigrations.LatestVersion + 1};", DegradedKind.Newer, SchemaMigrations.LatestVersion + 1 },
         { "PRAGMA user_version = 0;", DegradedKind.Foreign, 0 },
-        { "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Name TEXT);", DegradedKind.StructureDiffers, 7 },
-        { "PRAGMA foreign_keys = OFF; INSERT INTO OwnerItems (GroupId, Name, ActionType, Target, SortOrder, CreatedAt, UpdatedAt) VALUES (9999, 'orphan', 'Web', 'https://x.test', 0, 'x', 'x');", DegradedKind.ForeignKeys, 7 },
+        { "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Name TEXT);", DegradedKind.StructureDiffers, SchemaMigrations.LatestVersion },
+        { "PRAGMA foreign_keys = OFF; INSERT INTO OwnerItems (GroupId, Name, ActionType, Target, SortOrder, CreatedAt, UpdatedAt) VALUES (9999, 'orphan', 'Web', 'https://x.test', 0, 'x', 'x');", DegradedKind.ForeignKeys, SchemaMigrations.LatestVersion },
     };
 
     [Theory]

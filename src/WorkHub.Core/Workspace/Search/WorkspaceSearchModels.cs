@@ -45,7 +45,11 @@ public sealed record WorkspaceSearchHit(
     string Name,
     string Location,
     SearchField MatchedField,
-    string? Excerpt);
+    string? Excerpt)
+{
+    /// <summary>The hit is an archived Project or content of one (schema v8): it is found, marked, and revealed in the Archived panel.</summary>
+    public bool InArchivedProject { get; init; }
+}
 
 /// <summary>At most <c>limit</c> hits in display order; <see cref="Truncated"/> = more matched than were returned.</summary>
 public sealed record WorkspaceSearchResult(IReadOnlyList<WorkspaceSearchHit> Hits, bool Truncated);
@@ -82,10 +86,32 @@ public enum RevealResolveStatus
 
     /// <summary>The content row's Project is in the Workspace Trash (schema v7); it is not revealed.</summary>
     ProjectTrashed,
+
+    /// <summary>
+    /// The Project itself is archived (schema v8). No snapshot is read: <see cref="RevealResolution.Target"/> is null and
+    /// <see cref="RevealResolution.ArchivedProjectNodeId"/> is the Project's node Id.
+    /// </summary>
+    Archived,
+
+    /// <summary>
+    /// The content row's Project is archived (schema v8). No container, ancestors or branches are read;
+    /// <see cref="RevealResolution.ArchivedProjectNodeId"/> is the owning Project's node Id.
+    /// </summary>
+    ProjectArchived,
 }
 
 public sealed record RevealResolution(RevealResolveStatus Status, SearchRevealTarget? Target)
 {
+    /// <summary><see cref="RevealResolveStatus.Archived"/>: the item's own node Id. <see cref="RevealResolveStatus.ProjectArchived"/>:
+    /// the owning Project's node Id. Otherwise null.</summary>
+    public long? ArchivedProjectNodeId { get; init; }
+
+    public static RevealResolution Archived(long projectNodeId) =>
+        new(RevealResolveStatus.Archived, null) { ArchivedProjectNodeId = projectNodeId };
+
+    public static RevealResolution ProjectArchived(long projectNodeId) =>
+        new(RevealResolveStatus.ProjectArchived, null) { ArchivedProjectNodeId = projectNodeId };
+
     public static RevealResolution NotFound { get; } = new(RevealResolveStatus.NotFound, null);
 
     public static RevealResolution Trashed { get; } = new(RevealResolveStatus.Trashed, null);

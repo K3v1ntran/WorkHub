@@ -25,7 +25,7 @@ public sealed class SchemaTests : IDisposable
     [Fact]
     public void SchemaVersion_IsStoredInUserVersion()
     {
-        Assert.Equal(7, SchemaMigrations.LatestVersion);
+        Assert.Equal(8, SchemaMigrations.LatestVersion);
         Assert.Equal(SchemaMigrations.LatestVersion, Db.ScalarLong(_connection, "PRAGMA user_version;"));
     }
 

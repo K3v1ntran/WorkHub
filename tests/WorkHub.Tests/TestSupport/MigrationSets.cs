@@ -14,4 +14,7 @@ internal static class MigrationSets
         new V001_InitialSchema(), new V002_OwnerManager(), new V003_Workspace(),
         new V004_ProjectContent(), new V005_ProjectNotes(), new V006_ProjectContentTrash(),
     ];
+
+    /// <summary>The schema v7 migrations (before V008's archive serial).</summary>
+    public static ISchemaMigration[] ThroughV007 => [.. ThroughV006, new V007_WorkspaceProjectTrash()];
 }

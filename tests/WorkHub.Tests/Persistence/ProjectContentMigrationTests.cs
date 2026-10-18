@@ -122,7 +122,7 @@ public sealed class ProjectContentMigrationTests : IDisposable
         Assert.Contains("CONSTRAINT FK_ProjectLinks_Folder", V004_ProjectContent.Sql);
         Assert.DoesNotContain("ProjectNotes", V004_ProjectContent.Sql);
         Assert.DoesNotContain("CASCADE", V004_ProjectContent.Sql);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], SchemaMigrations.All.Select(m => m.Version));
     }
 
     [Fact]

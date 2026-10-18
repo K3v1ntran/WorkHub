@@ -282,6 +282,14 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    private void ArchivedProjectsList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (Main is not { } main || e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
+            return;
+        main.Workspace.Archived.UnarchiveCommand.Execute(null);
+        e.Handled = true;
+    }
+
     private void OwnerMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(OwnerMoreButton);
 
     private void MoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(MoreButton);

@@ -32,6 +32,10 @@ public interface IDialogService
     /// <returns>True when the move was confirmed (see <see cref="WorkspaceMoveViewModel.Moved"/>).</returns>
     bool ShowWorkspaceMove(WorkspaceMoveViewModel viewModel);
 
+    /// <summary>Phase 12: the Unarchive confirmation with its status choice. Cancel is the default.</summary>
+    /// <returns>True when the user chose Unarchive (the status is <see cref="UnarchiveProjectViewModel.Status"/>).</returns>
+    bool ShowUnarchive(UnarchiveProjectViewModel viewModel);
+
     /// <returns>True when the ProjectFolder was created or renamed.</returns>
     bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel);
 

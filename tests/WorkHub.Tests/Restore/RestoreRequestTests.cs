@@ -1,5 +1,6 @@
 using WorkHub.Core.Backup;
 using WorkHub.Core.Restore;
+using WorkHub.Infrastructure.Persistence.Migrations;
 using WorkHub.Infrastructure.Restore;
 using WorkHub.Tests.TestSupport;
 
@@ -15,18 +16,23 @@ public sealed class RestoreRequestTests : RestoreTestBase
 
     // ---- A: candidate eligibility (never loosened) --------------------------------------------------------------------
 
-    public static TheoryData<string, string, string> RefusedCandidates() => new()
+    public static TheoryData<string, string, string> RefusedCandidates()
     {
-        // arrangement, file version in the name, expected refusal fragment
-        { "PRAGMA user_version = 8;", "8", "newer WorkHub version" },
-        { "PRAGMA user_version = 0;", "7", "not a WorkHub database" },
-        { "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Name TEXT);", "7", "structure differs" },
-        { "PRAGMA foreign_keys = OFF; INSERT INTO OwnerItems (GroupId, Name, ActionType, Target, SortOrder, CreatedAt, UpdatedAt) VALUES (9999, 'orphan', 'Web', 'https://x.test', 0, 'x', 'x');", "7", "foreign-key problems" },
-        { "PRAGMA user_version = 6;", "7", "structure differs" },
-        { "v6content", "7", "does not match its name" },
-        { "corrupt", "7", "damaged" },
-        { "sidecar", "7", "not standalone" },
-    };
+        var current = SchemaMigrations.LatestVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var newer = (SchemaMigrations.LatestVersion + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return new()
+        {
+            // arrangement, file version in the name, expected refusal fragment
+            { $"PRAGMA user_version = {newer};", newer, "newer WorkHub version" },
+            { "PRAGMA user_version = 0;", current, "not a WorkHub database" },
+            { "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Name TEXT);", current, "structure differs" },
+            { "PRAGMA foreign_keys = OFF; INSERT INTO OwnerItems (GroupId, Name, ActionType, Target, SortOrder, CreatedAt, UpdatedAt) VALUES (9999, 'orphan', 'Web', 'https://x.test', 0, 'x', 'x');", current, "foreign-key problems" },
+            { "PRAGMA user_version = 6;", current, "structure differs" },
+            { "v6content", current, "does not match its name" },
+            { "corrupt", current, "damaged" },
+            { "sidecar", current, "not standalone" },
+        };
+    }
 
     [Theory]
     [MemberData(nameof(RefusedCandidates))]
@@ -143,10 +149,10 @@ public sealed class RestoreRequestTests : RestoreTestBase
     {
         BackupKit.CreateDatabase(Root);
         Directory.CreateDirectory(Root.Paths.MigrationBackupsDirectory);
-        var migrationName = "workhub_v7_before_v8_20261001-010203004.db";
+        var migrationName = $"workhub_v{SchemaMigrations.LatestVersion}_before_v{SchemaMigrations.LatestVersion + 1}_20261001-010203004.db";
         BackupKit.SnapshotTo(Db, Path.Combine(Root.Paths.MigrationBackupsDirectory, migrationName));
         Directory.CreateDirectory(Root.Paths.PreRestoreBackupsDirectory);
-        var preRestoreName = PreRestoreNames.Validated(7, DateTimeOffset.UtcNow);
+        var preRestoreName = PreRestoreNames.Validated(SchemaMigrations.LatestVersion, DateTimeOffset.UtcNow);
         BackupKit.SnapshotTo(Db, Path.Combine(Root.Paths.PreRestoreBackupsDirectory, preRestoreName));
 
         var entries = await new WorkHub.Infrastructure.Backup.BackupCatalog(Root.Paths).ListAsync();
@@ -171,8 +177,8 @@ public sealed class RestoreRequestTests : RestoreTestBase
         var start = await RestoreKit.Requester(Root).BeginAsync(entry);
         using var request = start.Request!;
         var facts = request.Facts;
-        Assert.Equal(7, facts.SchemaVersion);
-        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 7), facts.RequestClass);
+        Assert.Equal(SchemaMigrations.LatestVersion, facts.SchemaVersion);
+        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: SchemaMigrations.LatestVersion), facts.RequestClass);
         Assert.Equal(1L, facts.Counts.ProjectsInTrash); // one Project in the Workspace Trash
         Assert.True(facts.Counts.Systems > 0 && facts.Counts.OwnerItems == 5 && facts.Counts.Notes >= 3 && facts.Counts.ProjectTrashItems == 2);
         var staged = RestoreKit.Journal(Root, facts.Op);

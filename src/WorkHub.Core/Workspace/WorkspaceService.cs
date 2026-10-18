@@ -25,9 +25,9 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         {
             return WorkspaceResult<WorkspaceNode>.Ok(await store.CreateFolderAsync(parentId, normalized, cancellationToken).ConfigureAwait(false));
         }
-        catch (DuplicateWorkspaceNameException)
+        catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (WorkspaceParentException ex)
         {
@@ -47,9 +47,9 @@ public sealed class WorkspaceService(IWorkspaceStore store)
             var node = await store.CreateProjectAsync(parentId, NewProjectId(), normalized, cancellationToken).ConfigureAwait(false);
             return WorkspaceResult<WorkspaceNode>.Ok(node);
         }
-        catch (DuplicateWorkspaceNameException)
+        catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized.Name!), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized.Name!, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (WorkspaceParentException ex)
         {
@@ -69,13 +69,17 @@ public sealed class WorkspaceService(IWorkspaceStore store)
                 ? WorkspaceResult<string>.Ok(normalized)
                 : WorkspaceResult<string>.Failed(NoLongerExists, failure: WorkspaceFailure.NodeNotFound);
         }
-        catch (DuplicateWorkspaceNameException)
+        catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<string>.Failed(DuplicateName(normalized), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<string>.Failed(DuplicateName(normalized, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (ProjectTrashedException)
         {
             return WorkspaceResult<string>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
+        }
+        catch (ProjectArchivedException)
+        {
+            return WorkspaceResult<string>.Failed(ProjectIsArchived, failure: WorkspaceFailure.ProjectArchived);
         }
     }
 
@@ -96,13 +100,17 @@ public sealed class WorkspaceService(IWorkspaceStore store)
                 ? WorkspaceResult<ProjectDetails>.Ok(saved)
                 : WorkspaceResult<ProjectDetails>.Failed(NoLongerExists, failure: WorkspaceFailure.NodeNotFound);
         }
-        catch (DuplicateWorkspaceNameException)
+        catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<ProjectDetails>.Failed(DuplicateName(normalized.Name!), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<ProjectDetails>.Failed(DuplicateName(normalized.Name!, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (ProjectTrashedException)
         {
             return WorkspaceResult<ProjectDetails>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
+        }
+        catch (ProjectArchivedException)
+        {
+            return WorkspaceResult<ProjectDetails>.Failed(ProjectIsArchived, failure: WorkspaceFailure.ProjectArchived);
         }
     }
 
@@ -135,11 +143,17 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<bool>.Failed($"The destination already contains a folder or project named '{ex.Name}'.", failure: WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<bool>.Failed(ex.BlockerArchived
+                ? $"The destination already contains an archived project named '{ex.Name}'. Unarchive or rename it first."
+                : $"The destination already contains a folder or project named '{ex.Name}'.", failure: WorkspaceFailure.DuplicateName);
         }
         catch (ProjectTrashedException)
         {
             return WorkspaceResult<bool>.Failed(ProjectInTrash, failure: WorkspaceFailure.ProjectTrashed);
+        }
+        catch (ProjectArchivedException)
+        {
+            return WorkspaceResult<bool>.Failed(ProjectIsArchived, failure: WorkspaceFailure.ProjectArchived);
         }
     }
 
@@ -169,14 +183,52 @@ public sealed class WorkspaceService(IWorkspaceStore store)
     public Task<WorkspaceNodeState?> GetNodeStateAsync(long nodeId, CancellationToken cancellationToken = default) =>
         store.GetNodeStateAsync(nodeId, cancellationToken);
 
+    // ---- Project Archive (schema v8) -----------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Archives a Project: only its status (→ Archived) and archive serial change. Its node, name, parent, details, folders,
+    /// links, notes and Project-level Trash stay exactly as they are; its content stays writable (A3). Nothing on disk is touched.
+    /// </summary>
+    public Task<ProjectArchiveResult> ArchiveProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        store.ArchiveProjectAsync(nodeId, cancellationToken);
+
+    /// <summary>State-based Unarchive to a status the user chose (one of <see cref="ProjectStatuses.Editable"/>).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">The status is not editable; nothing was called or written.</exception>
+    public Task<ProjectUnarchiveResult> UnarchiveProjectAsync(long nodeId, ProjectStatus status, CancellationToken cancellationToken = default)
+    {
+        if (!ProjectStatuses.IsEditable(status))
+            throw new ArgumentOutOfRangeException(nameof(status), status, "Unarchive needs an editable status.");
+        return store.UnarchiveProjectAsync(nodeId, status, cancellationToken);
+    }
+
+    /// <summary>Undoes exactly one archive event (its serial), restoring the status it had before.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not a committed archive event; nothing was called or written.</exception>
+    public Task<ArchiveUndoResult> UndoArchiveAsync(ArchiveEvent archiveEvent, CancellationToken cancellationToken = default)
+    {
+        if (archiveEvent.Serial < 1)
+            throw new ArgumentOutOfRangeException(nameof(archiveEvent), archiveEvent.Serial, "An archive event has a serial of 1 or more.");
+        if (!ProjectStatuses.IsEditable(archiveEvent.PreviousStatus))
+            throw new ArgumentOutOfRangeException(nameof(archiveEvent), archiveEvent.PreviousStatus, "The previous status must be editable.");
+        return store.UndoArchiveAsync(archiveEvent, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<ArchivedProjectEntry>> ListArchivedAsync(CancellationToken cancellationToken = default) =>
+        store.ListArchivedAsync(cancellationToken);
+
+    public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
+        store.CountArchivedAsync(cancellationToken);
+
     internal static string NewProjectId() => Guid.NewGuid().ToString("N");
 
     public const string ProjectInTrash = "This project is in the Trash.";
 
+    public const string ProjectIsArchived = "This project is archived. Nothing was changed.";
+
     private const string NoLongerExists = "This folder or project no longer exists.";
 
-    private static string DuplicateName(string name) =>
-        $"A folder or project named '{name}' already exists here (names are compared ignoring case and width).";
+    private static string DuplicateName(string name, bool blockerArchived) => blockerArchived
+        ? $"An archived project named '{name}' already exists here. Unarchive it or choose another name."
+        : $"A folder or project named '{name}' already exists here (names are compared ignoring case and width).";
 
     private static WorkspaceResult<T> ParentFailed<T>(WorkspaceParentProblem problem) => problem == WorkspaceParentProblem.NotFound
         ? WorkspaceResult<T>.Failed("The destination folder no longer exists.", failure: WorkspaceFailure.ParentNotFound)

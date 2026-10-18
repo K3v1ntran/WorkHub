@@ -46,20 +46,24 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         return cells;
     }
 
-    /// <summary>LE-14 (v7): the producer's database and daily backup, validated by the consumer's real paths.</summary>
+    /// <summary>The current schema version (v8: V008 Project archive serial).</summary>
+    private static readonly int Current = SchemaMigrations.LatestVersion;
+
+    /// <summary>LE-14 (current schema, v8): the producer's database and daily backup, validated by the consumer's real paths.</summary>
     [Theory]
     [MemberData(nameof(Cells))]
     public async Task CurrentSchema_IsAcceptedAcrossCheckouts(Checkout producer, Checkout consumer)
     {
-        var paths = Produce(producer, 7, "v7");
+        Assert.Equal(8, Current);
+        var paths = Produce(producer, Current, "current");
         var daily = Directory.GetFiles(paths.DailyBackupsDirectory, "*.db").Single();
         var build = Consumer(consumer, paths);
 
-        Assert.Equal(BackupStatus.FullyValidated, build.Validator.Check(daily, BackupCheckLevel.Full, 7).Status);
+        Assert.Equal(BackupStatus.FullyValidated, build.Validator.Check(daily, BackupCheckLevel.Full, Current).Status);
         var entry = (await build.Catalog.ListAsync()).Single(e => e.Kind == BackupKind.Daily);
         Assert.Equal(BackupStatus.FullyValidated, (await build.Catalog.CheckAsync(entry, BackupCheckLevel.Full)).Status);
-        Assert.Equal(BackupCompatibility.Current, build.Stage(daily, 7).Compatibility);
-        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 7), build.Classifier.ClassifyReadOnly(paths.DatabaseFile));
+        Assert.Equal(BackupCompatibility.Current, build.Stage(daily, Current).Compatibility);
+        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: Current), build.Classifier.ClassifyReadOnly(paths.DatabaseFile));
 
         Assert.Equal(DatabaseInitializationOutcome.Opened, build.Initializer.Initialize().Outcome);
         BackupKit.ClearPools(paths.DatabaseFile);
@@ -68,27 +72,41 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         Assert.True(next.Outcome == DailyBackupOutcome.Created, $"{producer}->{consumer}: {next}");
     }
 
-    /// <summary>LE-2 / LE-14 (v5): Older candidates, and the upgrade that leaves a cross-build hybrid.</summary>
-    [Theory]
-    [MemberData(nameof(Cells))]
-    public async Task OlderSchema_IsAcceptedAndUpgradedAcrossCheckouts_AndTheHybridIsAcceptedByEveryCheckout(Checkout producer, Checkout consumer)
+    public static TheoryData<Checkout, Checkout, int> OlderCells()
     {
-        var paths = Produce(producer, 5, "v5");
+        var cells = new TheoryData<Checkout, Checkout, int>();
+        foreach (var version in new[] { 5, 7 })
+            foreach (var producer in Enum.GetValues<Checkout>())
+                foreach (var consumer in Enum.GetValues<Checkout>())
+                    cells.Add(producer, consumer, version);
+        return cells;
+    }
+
+    /// <summary>
+    /// LE-2 / LE-14 (v5, and v7 — the schema every Phase 12 upgrade starts from): Older candidates, and the upgrade to v8
+    /// that leaves a cross-build hybrid.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(OlderCells))]
+    public async Task OlderSchema_IsAcceptedAndUpgradedAcrossCheckouts_AndTheHybridIsAcceptedByEveryCheckout(Checkout producer, Checkout consumer, int version)
+    {
+        var paths = Produce(producer, version, $"v{version}");
         var daily = Directory.GetFiles(paths.DailyBackupsDirectory, "*.db").Single();
         var build = Consumer(consumer, paths);
 
-        Assert.Equal(BackupStatus.FullyValidated, build.Validator.Check(daily, BackupCheckLevel.Full, 5).Status);
-        Assert.Equal(BackupCompatibility.Older, build.Stage(daily, 5).Compatibility);
-        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 5), build.Classifier.ClassifyReadOnly(paths.DatabaseFile));
+        Assert.Equal(BackupStatus.FullyValidated, build.Validator.Check(daily, BackupCheckLevel.Full, version).Status);
+        Assert.Equal(BackupCompatibility.Older, build.Stage(daily, version).Compatibility);
+        Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: version), build.Classifier.ClassifyReadOnly(paths.DatabaseFile));
 
         var upgrade = build.Initializer.Initialize();
         BackupKit.ClearPools(paths.DatabaseFile);
         Assert.Equal(DatabaseInitializationOutcome.Migrated, upgrade.Outcome);
+        Assert.Equal(Current, upgrade.SchemaVersion);
         var preMigration = (await build.Catalog.ListAsync()).Single(e => e.Kind == BackupKind.PreMigration);
         Assert.Equal(BackupStatus.FullyValidated, (await build.Catalog.CheckAsync(preMigration, BackupCheckLevel.Full)).Status);
 
         foreach (var other in Enum.GetValues<Checkout>())
-            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 7), new CurrentDataClassifier(Reference(other)).ClassifyReadOnly(paths.DatabaseFile));
+            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: Current), new CurrentDataClassifier(Reference(other)).ClassifyReadOnly(paths.DatabaseFile));
 
         _clock.Now = _clock.Now.AddDays(1);
         var next = build.Daily.Run();
@@ -105,7 +123,29 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         var sql = SqlOf(paths.DatabaseFile, "WorkspaceNodes");
         Assert.Contains("\r\n", sql);                                 // the V007 column spliced in by ALTER TABLE
         Assert.Contains("(\n", sql);                                  // the V003 text
-        Assert.Equal(BackupStatus.FullyValidated, BackupKit.Validator().Check(Snapshot(paths.DatabaseFile), BackupCheckLevel.Full, 7).Status);
+        Assert.Equal(BackupStatus.FullyValidated, BackupKit.Validator().Check(Snapshot(paths.DatabaseFile), BackupCheckLevel.Full, Current).Status);
+    }
+
+    /// <summary>V008 hybrids: a v7 database from one checkout upgraded by a v8 build from the other splices V008's column into the V003 table text.</summary>
+    [Theory]
+    [InlineData(Checkout.Lf, Checkout.Crlf, "\r\n", "(\n")]
+    [InlineData(Checkout.Crlf, Checkout.Lf, "ArchiveSerial INTEGER NOT NULL DEFAULT 0\n", "(\r\n")]
+    public void AV7ToV8UpgradeAcrossCheckouts_MixesLineEndingsInTheProjectsTable_AndIsAcceptedEverywhere(Checkout producer, Checkout upgrader, string fromV008, string fromV003)
+    {
+        var paths = Produce(producer, 7, $"hybrid-{producer}-{upgrader}");
+        var result = new DatabaseInitializer(paths, LineEndingMigrations.For(upgrader), _clock, NullAppLog.Instance).Initialize();
+        BackupKit.ClearPools(paths.DatabaseFile);
+        Assert.Equal((DatabaseInitializationOutcome.Migrated, 7, 8), (result.Outcome, result.PreviousSchemaVersion, result.SchemaVersion));
+
+        var sql = SqlOf(paths.DatabaseFile, "Projects");
+        Assert.Contains(fromV008, sql);
+        Assert.Contains(fromV003, sql);
+        var copy = Snapshot(paths.DatabaseFile);
+        foreach (var consumer in Enum.GetValues<Checkout>())
+        {
+            Assert.Equal(BackupStatus.FullyValidated, new BackupValidator(Reference(consumer), new BackupFileOps()).Check(copy, BackupCheckLevel.Full, Current).Status);
+            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: Current), new CurrentDataClassifier(Reference(consumer)).ClassifyReadOnly(paths.DatabaseFile));
+        }
     }
 
     public static TheoryData<string, string> LineEndingOnlyRewrites => new()
@@ -114,6 +154,9 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         { "one trigger", "name = 'TR_WorkspaceNodes_DeleteOnlyEmptyFolder'" },
         { "one partial index", "name = 'UX_WorkspaceNodes_ActiveChildName'" },
         { "one table", "name = 'Systems'" },
+        { "the V008 trigger", "name = 'TR_Projects_ArchiveSerialTransition'" },
+        { "the V008 partial index", "name = 'IX_Projects_Archived'" },
+        { "the altered Projects table", "name = 'Projects'" },
     };
 
     /// <summary>LE-1: a same-name rewrite that changes only line terminators passes every reference path.</summary>
@@ -129,9 +172,9 @@ public sealed class LineEndingCompatibilityTests : IDisposable
             Rewrite(root.DatabaseFile, $"UPDATE sqlite_schema SET sql = replace(replace(sql, char(13) || char(10), char(10)), char(10), {newLine}) WHERE sql IS NOT NULL AND {where};");
 
             var copy = Snapshot(root.DatabaseFile);
-            Assert.True(BackupKit.Validator().Check(copy, BackupCheckLevel.Full, 7).Status == BackupStatus.FullyValidated, $"{label} ({newLine})");
-            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 7), new CurrentDataClassifier(SchemaReference.Frozen).ClassifyReadOnly(root.DatabaseFile));
-            Assert.Equal(BackupCompatibility.Current, Consumer(Checkout.Mixed, root, SchemaReference.Frozen).Stage(copy, 7).Compatibility);
+            Assert.True(BackupKit.Validator().Check(copy, BackupCheckLevel.Full, Current).Status == BackupStatus.FullyValidated, $"{label} ({newLine})");
+            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: Current), new CurrentDataClassifier(SchemaReference.Frozen).ClassifyReadOnly(root.DatabaseFile));
+            Assert.Equal(BackupCompatibility.Current, Consumer(Checkout.Mixed, root, SchemaReference.Frozen).Stage(copy, Current).Compatibility);
             var daily = new DailyBackupService(root, NullAppLog.Instance, _clock, BackupKit.Tokyo, SchemaReference.Frozen, new BackupFileOps()).Run();
             Assert.True(daily.Outcome == DailyBackupOutcome.Created, $"{label} ({newLine}): {daily}");
             BackupKit.ClearPoolsUnder(root.Root);
@@ -246,8 +289,8 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         using var root = new TempWorkHubRoot();
         BackupKit.CreateDatabase(root);
         using (var connection = BackupKit.Open(root.Paths.DatabaseFile))
-            BackupKit.Exec(connection, "PRAGMA user_version = 8;");
-        var (candidate, facts) = PreservationCopy(root.Paths.DatabaseFile, 8);
+            BackupKit.Exec(connection, $"PRAGMA user_version = {Current + 1};");
+        var (candidate, facts) = PreservationCopy(root.Paths.DatabaseFile, Current + 1);
         var source = SqlOf(candidate, "Systems");
         Rewrite(candidate, "UPDATE sqlite_schema SET sql = replace(replace(sql, char(13) || char(10), char(10)), char(10), "
             + (source.Contains(Cr) ? "char(10)" : "char(13) || char(10)") + ") WHERE name = 'Systems';");
@@ -258,8 +301,8 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     /// <summary>LE-6: unchanged preservation copies of non-reference schemas, from LF- and CRLF-built sources, are preserved.</summary>
     [Theory]
     [InlineData("foreign v0 with multi-line literals", Checkout.Lf)]
-    [InlineData("newer v8", Checkout.Lf)]
-    [InlineData("newer v8", Checkout.Crlf)]
+    [InlineData("newer v9", Checkout.Lf)]
+    [InlineData("newer v9", Checkout.Crlf)]
     [InlineData("extra table", Checkout.Crlf)]
     [InlineData("extra table", Checkout.Mixed)]
     public void Preservation_OfAnUnchangedNonReferenceCopy_Succeeds(string kind, Checkout built)
@@ -272,11 +315,11 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         }
         else
         {
-            var paths = Produce(built, 7, Guid.NewGuid().ToString("N"), daily: false);
+            var paths = Produce(built, Current, Guid.NewGuid().ToString("N"), daily: false);
             source = paths.DatabaseFile;
-            version = kind == "newer v8" ? 8 : 7;
+            version = kind == "newer v9" ? Current + 1 : Current;
             using var connection = BackupKit.Open(source);
-            BackupKit.Exec(connection, kind == "newer v8" ? "PRAGMA user_version = 8;" : "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Note TEXT DEFAULT 'r\r\ns');");
+            BackupKit.Exec(connection, kind == "newer v9" ? $"PRAGMA user_version = {Current + 1};" : "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Note TEXT DEFAULT 'r\r\ns');");
         }
 
         var (candidate, facts) = PreservationCopy(source, version);

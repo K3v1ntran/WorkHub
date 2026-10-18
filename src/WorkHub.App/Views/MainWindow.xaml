@@ -668,10 +668,10 @@
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding DismissBannerCommand}"
                                     AutomationProperties.Name="Dismiss workspace message" Content="Dismiss" />
-                            <!-- Undo of the latest Move to Trash: offered only in the Workspace visit that started it. -->
+                            <!-- Undo of the latest Move to Trash or Archive: offered only in the Workspace visit that started it. -->
                             <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}" FontWeight="SemiBold"
                                     Visibility="{Binding IsUndoAvailable, Converter={StaticResource BoolToVisibility}}"
-                                    AutomationProperties.Name="Undo move project to Trash" Content="Undo" />
+                                    AutomationProperties.Name="Undo" ToolTip="Undo the move to the Trash or the archive shown in this message" Content="Undo" />
                             <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap"
                                        Text="{Binding BannerMessage}" AutomationProperties.AutomationId="WorkspaceBanner" />
                         </DockPanel>
@@ -702,6 +702,10 @@
                                     ToolTip="Move the project to the Trash (Del). Its content stays with it; nothing on disk is touched.">
                                 <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
                             </Button>
+                            <Button Style="{StaticResource ToolButton}" Command="{Binding ArchiveProjectCommand}" AutomationProperties.Name="Archive project"
+                                    ToolTip="Archive the project: it leaves the tree and is listed under Archived projects. Its content stays with it; nothing on disk is touched.">
+                                <TextBlock Style="{StaticResource Icon}" Text="&#xE7B8;" />
+                            </Button>
                             <Button Style="{StaticResource ToolButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove empty folder"
                                     ToolTip="Remove an empty folder (Del). Only the WorkHub folder is removed; nothing on disk is touched.">
                                 <TextBlock Style="{StaticResource Icon}" Text="&#xE8F8;" />
@@ -712,6 +716,11 @@
                                 Command="{Binding OpenTrashCommand}" Content="{Binding Trash.ButtonText}"
                                 AutomationProperties.Name="Trashed projects" AutomationProperties.AutomationId="OpenWorkspaceTrash"
                                 ToolTip="Projects in the Workspace Trash (restore them from here)" />
+                        <!-- Archived projects (hidden from the tree; unarchive them from here). -->
+                        <Button DockPanel.Dock="Top" HorizontalAlignment="Left" Margin="8,0,8,4" Style="{StaticResource ToolButton}"
+                                Command="{Binding OpenArchivedCommand}" Content="{Binding Archived.ButtonText}"
+                                AutomationProperties.Name="Archived projects" AutomationProperties.AutomationId="OpenArchivedProjects"
+                                ToolTip="Archived projects (unarchive them from here)" />
 
                         <!-- Search (Ctrl+F): the results replace the tree while the query is non-empty; Esc clears it. -->
                         <StackPanel DockPanel.Dock="Top" Margin="8,0,8,4" DataContext="{Binding Search}"
@@ -835,6 +844,7 @@
                                         <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
                                         <Separator />
                                         <MenuItem Header="Move to Trash…" InputGestureText="Del" Command="{Binding TrashProjectCommand}" />
+                                        <MenuItem Header="Archive…" Command="{Binding ArchiveProjectCommand}" />
                                         <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}" />
                                     </ContextMenu>
                                 </TreeView.ContextMenu>
@@ -929,7 +939,70 @@
                         </Grid>
                     </DockPanel>
 
-                    <Grid Grid.Row="1" Grid.Column="2" Visibility="{Binding IsTrashOpen, Converter={StaticResource InverseBoolToVisibility}}">
+                    <!--
+                        The Archived projects panel replaces the details and content while open (Phase 12 A4), exactly like the
+                        Workspace Trash: the selection and its content view stay behind it; Unarchive never selects.
+                    -->
+                    <DockPanel Grid.Row="1" Grid.Column="2" Margin="20,12,20,12" DataContext="{Binding Archived}"
+                               Visibility="{Binding IsOpen, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Archived projects">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DataContext.CloseArchivedCommand, ElementName=WorkspaceTree}"
+                                    AutomationProperties.Name="Back from Archived projects" ToolTip="Back to the selected folder or project">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE72B;" />
+                                    <TextBlock Margin="6,0,0,0" Text="Back" />
+                                </StackPanel>
+                            </Button>
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding UnarchiveCommand}" AutomationProperties.Name="Unarchive project"
+                                    ToolTip="Unarchive the selected project into its folder, with a status you choose (Enter)" Content="Unarchive…" />
+                            <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding ButtonText}" AutomationProperties.AutomationId="ArchivedProjectsTitle" />
+                        </DockPanel>
+                        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="ArchivedProjectsNotice"
+                                   Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
+                        <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
+                                   Text="Archived projects keep their folders, links and notes and their place and name. Nothing on disk was moved or deleted." />
+                        <Grid>
+                            <ListView x:Name="ArchivedProjectsList" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" BorderThickness="0" Background="Transparent"
+                                      AutomationProperties.Name="Archived projects list" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      PreviewKeyDown="ArchivedProjectsList_PreviewKeyDown">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
+                                        <Setter Property="Padding" Value="8,5" />
+                                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                                    </Style>
+                                </ListView.ItemContainerStyle>
+                                <ListView.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type vm:ArchivedProjectEntryViewModel}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="22" />
+                                                <ColumnDefinition Width="2*" MinWidth="80" />
+                                                <ColumnDefinition Width="3*" />
+                                                <ColumnDefinition Width="120" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Style="{StaticResource Icon}" Text="&#xE7B8;" Foreground="{StaticResource Brush.MutedText}" VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+                                            <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
+                                                       Text="{Binding LocationText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding LocationText}" />
+                                            <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding UpdatedText}" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                                <ListView.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Unarchive…" InputGestureText="Enter" Command="{Binding UnarchiveCommand}" />
+                                    </ContextMenu>
+                                </ListView.ContextMenu>
+                            </ListView>
+                            <TextBlock Style="{StaticResource EmptyState}" Text="No projects are archived." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
+                                       AutomationProperties.AutomationId="ArchivedProjectsEmpty" />
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Loading archived projects…" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
+                            <TextBlock Style="{StaticResource EmptyState}" Foreground="{StaticResource Brush.Error}" Text="{Binding LoadError}"
+                                       Visibility="{Binding LoadError, Converter={StaticResource NullToCollapsed}}" />
+                        </Grid>
+                    </DockPanel>
+
+                    <Grid Grid.Row="1" Grid.Column="2" Visibility="{Binding IsPanelOpen, Converter={StaticResource InverseBoolToVisibility}}">
                         <Grid.RowDefinitions>
                             <!-- Without Project content (Folder or nothing selected) the details take the whole pane. -->
                             <RowDefinition>
@@ -1046,6 +1119,7 @@
                                     <Button Content="Edit…" Style="{StaticResource PrimaryButton}" Command="{Binding EditProjectCommand}" AutomationProperties.Name="Edit Project" />
                                     <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
                                     <Button Margin="8,0,0,0" Content="Move to Trash…" Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash (details)" />
+                                    <Button Margin="8,0,0,0" Content="Archive…" Command="{Binding ArchiveProjectCommand}" AutomationProperties.Name="Archive project (details)" />
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>

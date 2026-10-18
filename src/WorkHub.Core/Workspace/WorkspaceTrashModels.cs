@@ -4,7 +4,11 @@ namespace WorkHub.Core.Workspace;
 /// A Project in the Workspace Trash. The entry is the node itself (its Id); <see cref="ParentId"/> is the original parent
 /// (never changed while trashed) and <see cref="ParentPath"/> its current path, null for the root.
 /// </summary>
-public sealed record WorkspaceTrashEntry(long NodeId, string Name, long? ParentId, string? ParentPath, DateTimeOffset TrashedAt);
+public sealed record WorkspaceTrashEntry(long NodeId, string Name, long? ParentId, string? ParentPath, DateTimeOffset TrashedAt)
+{
+    /// <summary>The Project is also archived (a state only an earlier build or raw SQL creates); Restore brings it back archived.</summary>
+    public bool IsArchived { get; init; }
+}
 
 public enum ProjectTrashOutcome
 {
@@ -13,6 +17,9 @@ public enum ProjectTrashOutcome
     /// <summary>The node is a Workspace Folder; folders are never trashed.</summary>
     NotAProject,
     AlreadyTrashed,
+
+    /// <summary>The Project is archived (Phase 12 A7: Unarchive it first); nothing was written.</summary>
+    Archived,
 }
 
 public sealed record ProjectTrashResult(ProjectTrashOutcome Outcome, WorkspaceTrashEntry? Entry)
@@ -31,7 +38,11 @@ public enum ProjectRestoreOutcome
 }
 
 /// <summary>The restored node as it now appears in the tree, and its parent's path (null for the root).</summary>
-public sealed record RestoredProject(WorkspaceNode Node, string? ParentPath);
+public sealed record RestoredProject(WorkspaceNode Node, string? ParentPath)
+{
+    /// <summary>The restored Project is archived (it was archived and trashed): it is not shown in the tree.</summary>
+    public bool IsArchived { get; init; }
+}
 
 public sealed record ProjectRestoreResult(ProjectRestoreOutcome Outcome, RestoredProject? Restored, string? BlockingName)
 {
@@ -47,8 +58,12 @@ public enum FolderRemoveOutcome
     NotEmpty,
 }
 
+/// <param name="ActiveChildren">Visible children (active nodes that are not archived Projects).</param>
 public sealed record FolderRemoveResult(FolderRemoveOutcome Outcome, int ActiveChildren, int TrashedProjects)
 {
+    /// <summary>Archived Projects directly in the folder (hidden from the tree; Phase 12 A11).</summary>
+    public int ArchivedProjects { get; init; }
+
     public static FolderRemoveResult Of(FolderRemoveOutcome outcome) => new(outcome, 0, 0);
 }
 
@@ -58,9 +73,16 @@ public sealed record FolderRemoveResult(FolderRemoveOutcome Outcome, int ActiveC
 /// </summary>
 public sealed record WorkspaceNodeState(long NodeId, WorkspaceNodeType Type, long? ParentId, bool Trashed)
 {
+    /// <summary>The Project is archived (Phase 12): it is not shown in the tree.</summary>
+    public bool Archived { get; init; }
+
+    /// <summary>Visible children: active nodes that are not archived Projects.</summary>
     public int ActiveChildren { get; init; }
 
     public int TrashedChildren { get; init; }
+
+    /// <summary>Archived Projects directly under the folder.</summary>
+    public int ArchivedChildren { get; init; }
 }
 
 /// <summary>The Project (or the Project owning the content) is in the Workspace Trash; nothing was written.</summary>

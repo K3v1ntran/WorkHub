@@ -74,12 +74,43 @@ public interface IWorkspaceStore
 
     /// <summary>The node's current state (trashed included); null when it no longer exists. Never writes.</summary>
     Task<WorkspaceNodeState?> GetNodeStateAsync(long nodeId, CancellationToken cancellationToken = default);
+
+    // ---- Project Archive (schema v8) -----------------------------------------------------------------------------------
+    // Listings above show VISIBLE nodes only (active, not archived). Rename, UpdateProject and Move of an archived Project
+    // throw ProjectArchivedException, and TrashProject refuses it, writing nothing. Archived Projects keep their sibling name.
+
+    /// <summary>
+    /// In ONE <c>BEGIN IMMEDIATE</c> transaction sets <c>Status = 'Archived'</c> and raises <c>ArchiveSerial</c> by one (nothing
+    /// else changes: not the node, its name, parent or UpdatedAt). Every non-Archived outcome writes nothing.
+    /// </summary>
+    Task<ProjectArchiveResult> ArchiveProjectAsync(long nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// State-based Unarchive: in ONE <c>BEGIN IMMEDIATE</c> transaction sets the given (editable) status on an archived
+    /// Project, wherever it is now; <c>ArchiveSerial</c> is unchanged. Every non-Unarchived outcome writes nothing.
+    /// </summary>
+    Task<ProjectUnarchiveResult> UnarchiveProjectAsync(long nodeId, ProjectStatus status, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Event-specific Undo: in ONE <c>BEGIN IMMEDIATE</c> transaction restores <see cref="ArchiveEvent.PreviousStatus"/> only if
+    /// the Project is still archived with exactly <see cref="ArchiveEvent.Serial"/>; <c>ArchiveSerial</c> is unchanged.
+    /// Every non-Undone outcome writes nothing.
+    /// </summary>
+    Task<ArchiveUndoResult> UndoArchiveAsync(ArchiveEvent archiveEvent, CancellationToken cancellationToken = default);
+
+    /// <summary>Archived Projects that are not in the Trash, by name, with their parents' current paths, from one read transaction.</summary>
+    Task<IReadOnlyList<ArchivedProjectEntry>> ListArchivedAsync(CancellationToken cancellationToken = default);
+
+    Task<int> CountArchivedAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class DuplicateWorkspaceNameException(string name, Exception? inner = null)
     : Exception($"'{name}' already exists in this location.", inner)
 {
     public string Name { get; } = name;
+
+    /// <summary>The sibling holding the name is an archived Project (hidden from the tree; Phase 12 A6).</summary>
+    public bool BlockerArchived { get; init; }
 }
 
 public enum WorkspaceParentProblem

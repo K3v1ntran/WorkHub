@@ -188,9 +188,13 @@ internal static class BackupKit
     public static string[] PublishedBackups(TempWorkHubRoot root) =>
         DailyFiles(root).Where(f => DailyBackupPolicy.TryParse(f, out _)).ToArray();
 
-    /// <summary>Name of a daily backup for a Tokyo day (stamp at 09:00:00.000 + <paramref name="ms"/> ms).</summary>
-    public static string NameFor(DateOnly day, int ms = 0, int version = 7) =>
-        DailyBackupPolicy.FileName(day, version, new DateTimeOffset(day.Year, day.Month, day.Day, 9, 0, 0, ms, TimeSpan.FromHours(9)));
+    /// <summary>
+    /// Name of a daily backup for a Tokyo day (stamp at 09:00:00.000 + <paramref name="ms"/> ms); the version defaults to
+    /// the current schema version.
+    /// </summary>
+    public static string NameFor(DateOnly day, int ms = 0, int? version = null) =>
+        DailyBackupPolicy.FileName(day, version ?? WorkHub.Infrastructure.Persistence.Migrations.SchemaMigrations.LatestVersion,
+            new DateTimeOffset(day.Year, day.Month, day.Day, 9, 0, 0, ms, TimeSpan.FromHours(9)));
 
     /// <summary>Places a standalone, fully valid copy of the current database under a daily name (SQLite backup API).</summary>
     public static string PlaceValidBackup(TempWorkHubRoot root, string fileName)

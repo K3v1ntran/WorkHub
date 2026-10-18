@@ -360,6 +360,13 @@ public sealed class ProjectContentViewModel : ObservableObject
             ProjectTrashedObserved?.Invoke();
     }
 
+    /// <summary>
+    /// Set by the Workspace area: called when a fresh listing says this view's Project is archived (archived by another
+    /// window). The content stays listed and writable (A3); the area decides by a fresh typed read. Never called after
+    /// deactivation.
+    /// </summary>
+    internal Action? ProjectArchivedObserved { get; set; }
+
     internal ProjectContentService Content => _content;
 
     internal IAppLog Log => _log;
@@ -468,6 +475,8 @@ public sealed class ProjectContentViewModel : ObservableObject
         _isLoaded = true;
         IsLoading = false;
         OnPropertyChanged(nameof(IsEmpty));
+        if (listing.ProjectArchived && !_isDeactivated)
+            ProjectArchivedObserved?.Invoke();
     }
 
     /// <summary>

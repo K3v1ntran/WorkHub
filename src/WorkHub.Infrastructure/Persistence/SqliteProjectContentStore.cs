@@ -113,8 +113,21 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
                 trashCount = (int)(long)command.ExecuteScalar()!;
             }
 
+            bool archived;
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "SELECT Status = 'Archived' FROM Projects WHERE NodeId = $project;";
+                command.Parameters.AddWithValue("$project", projectNodeId);
+                archived = (long)command.ExecuteScalar()! == 1;
+            }
+
             transaction.Commit();
-            return ProjectContentListResult.Ok(new ProjectContentListing(projectNodeId, folderId, breadcrumb, folders, links, notes) { TrashCount = trashCount });
+            return ProjectContentListResult.Ok(new ProjectContentListing(projectNodeId, folderId, breadcrumb, folders, links, notes)
+            {
+                TrashCount = trashCount,
+                ProjectArchived = archived,
+            });
         }, cancellationToken);
 
     public Task<ProjectFolder> CreateFolderAsync(long projectNodeId, long? parentFolderId, string name, CancellationToken cancellationToken = default) =>

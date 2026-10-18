@@ -13,8 +13,8 @@ public sealed class WorkspaceTrashEntryViewModel(WorkspaceTrashEntry entry)
 
     public string Name => Entry.Name;
 
-    /// <summary>"from Clients / Tokyo" (the original parent's CURRENT path) or the top level.</summary>
-    public string FromText => Entry.ParentPath is { } path ? $"from {path}" : "from Workspace (top level)";
+    /// <summary>"from Clients / Tokyo" (the original parent's CURRENT path) or the top level; "· archived" when it comes back archived.</summary>
+    public string FromText => (Entry.ParentPath is { } path ? $"from {path}" : "from Workspace (top level)") + (Entry.IsArchived ? " · archived" : string.Empty);
 
     public string TrashedAtText => $"{Entry.TrashedAt.LocalDateTime:yyyy-MM-dd HH:mm}";
 

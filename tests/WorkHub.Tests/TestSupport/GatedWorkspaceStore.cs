@@ -83,6 +83,24 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
     public Task<WorkspaceNodeState?> GetNodeStateAsync(long nodeId, CancellationToken cancellationToken = default) =>
         Gated("nodeState", () => inner.GetNodeStateAsync(nodeId, CancellationToken.None));
 
+    // ---- Project Archive: "archiveProject", "unarchiveProject", "undoArchive" (held writes run on release, or commit first with
+    // HoldCommitted); "listArchived", "countArchived" (held reads take their snapshot when called).
+
+    public Task<ProjectArchiveResult> ArchiveProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        Gated("archiveProject", () => inner.ArchiveProjectAsync(nodeId, cancellationToken), readFirst: false);
+
+    public Task<ProjectUnarchiveResult> UnarchiveProjectAsync(long nodeId, ProjectStatus status, CancellationToken cancellationToken = default) =>
+        Gated("unarchiveProject", () => inner.UnarchiveProjectAsync(nodeId, status, cancellationToken), readFirst: false);
+
+    public Task<ArchiveUndoResult> UndoArchiveAsync(ArchiveEvent archiveEvent, CancellationToken cancellationToken = default) =>
+        Gated("undoArchive", () => inner.UndoArchiveAsync(archiveEvent, cancellationToken), readFirst: false);
+
+    public Task<IReadOnlyList<ArchivedProjectEntry>> ListArchivedAsync(CancellationToken cancellationToken = default) =>
+        Gated("listArchived", () => inner.ListArchivedAsync(CancellationToken.None));
+
+    public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
+        Gated("countArchived", () => inner.CountArchivedAsync(CancellationToken.None));
+
     private async Task<T> Gated<T>(string key, Func<Task<T>> call, bool readFirst = true)
     {
         _calls.AddOrUpdate(key, 1, (_, n) => n + 1);
