@@ -49,6 +49,7 @@ public sealed class AppSettings
         Ui ??= new();
         Ui.LastPrimaryTab ??= UiSettings.DefaultPrimaryTab;
         Ui.Window ??= new();
+        Ui.Workspace ??= new();
         return this;
     }
 
@@ -67,6 +68,12 @@ public sealed class AppSettings
                 Width = Ui.Window.Width,
                 Height = Ui.Window.Height,
                 IsMaximized = Ui.Window.IsMaximized,
+            },
+            Workspace = new WorkspaceUiSettings
+            {
+                ShowTreeToolbar = Ui.Workspace.ShowTreeToolbar,
+                ShowSelectionToolbar = Ui.Workspace.ShowSelectionToolbar,
+                ShowContentToolbar = Ui.Workspace.ShowContentToolbar,
             },
         },
     };
@@ -195,6 +202,41 @@ public sealed class UiSettings
     public string LastPrimaryTab { get; set; } = DefaultPrimaryTab;
 
     public WindowPlacementSettings Window { get; set; } = new();
+
+    /// <summary>Phase 13A: Workspace preferences. A file without this section uses the defaults.</summary>
+    public WorkspaceUiSettings Workspace { get; set; } = new();
+}
+
+/// <summary>
+/// Phase 13A: each Workspace toolbar is shown or hidden on its own; a missing property means shown. Hiding a toolbar never
+/// hides search, the breadcrumb, the Status/Created/Updated facts, Info, More (⋯), LIBRARY, menus or keys.
+/// </summary>
+public sealed class WorkspaceUiSettings
+{
+    /// <summary>New Folder, New Project, Rename, Move, Archive, Trash and Remove above the tree (<c>showTreeToolbar</c>).</summary>
+    public bool ShowTreeToolbar { get; set; } = true;
+
+    /// <summary>Edit, Move, Archive and Trash beside the selection (<c>showSelectionToolbar</c>; meaning unchanged).</summary>
+    public bool ShowSelectionToolbar { get; set; } = true;
+
+    /// <summary>The selected Project's content actions beside the breadcrumb (<c>showContentToolbar</c>).</summary>
+    public bool ShowContentToolbar { get; set; } = true;
+
+    public bool IsShown(WorkspaceToolbar toolbar) => toolbar switch
+    {
+        WorkspaceToolbar.Tree => ShowTreeToolbar,
+        WorkspaceToolbar.Selection => ShowSelectionToolbar,
+        WorkspaceToolbar.Content => ShowContentToolbar,
+        _ => throw new ArgumentOutOfRangeException(nameof(toolbar)),
+    };
+}
+
+/// <summary>The three independently hideable Workspace toolbars.</summary>
+public enum WorkspaceToolbar
+{
+    Tree,
+    Selection,
+    Content,
 }
 
 public sealed class WindowPlacementSettings

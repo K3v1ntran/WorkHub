@@ -3,6 +3,13 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
+        <ResourceDictionary>
+        <ResourceDictionary.MergedDictionaries>
+            <!-- Phase 13A logo A (Hub tile): one vector master plus the 16 px variant; the .ico is rendered from this file. -->
+            <ResourceDictionary Source="Resources/Logo.xaml" />
+            <!-- Phase 13A graphical icons (style B): one Img.* DrawingImage per action or item kind. -->
+            <ResourceDictionary Source="Resources/Icons.xaml" />
+        </ResourceDictionary.MergedDictionaries>
         <SolidColorBrush x:Key="Brush.Background" Color="#FFF7F7F8" />
         <SolidColorBrush x:Key="Brush.Surface" Color="#FFFFFFFF" />
         <SolidColorBrush x:Key="Brush.Border" Color="#FFE1E3E8" />
@@ -18,6 +25,31 @@
         <SolidColorBrush x:Key="Brush.Warning" Color="#FF8A5A00" />
         <SolidColorBrush x:Key="Brush.WarningBackground" Color="#FFFFF8E6" />
         <SolidColorBrush x:Key="Brush.Tag" Color="#FFEEF1F5" />
+        <SolidColorBrush x:Key="Brush.AccentHover" Color="#FF0B55B3" />
+        <SolidColorBrush x:Key="Brush.AccentPressed" Color="#FF09479A" />
+        <SolidColorBrush x:Key="Brush.ControlBorder" Color="#FFC9CDD4" />
+        <SolidColorBrush x:Key="Brush.Pressed" Color="#FFE3E8EF" />
+        <!-- Overlays darken any chip tint for hover / pressed, so each tinted control keeps its own colour. -->
+        <SolidColorBrush x:Key="Brush.HoverOverlay" Color="#14000000" />
+        <SolidColorBrush x:Key="Brush.PressedOverlay" Color="#24000000" />
+        <SolidColorBrush x:Key="Brush.Strip" Color="#FFF7F8FA" />
+
+        <!-- Phase 13A pill chip. The graphical icons carry their own colour, so every pill uses this one neutral tint. -->
+        <SolidColorBrush x:Key="Icon.Neutral" Color="#FF424A53" />
+        <SolidColorBrush x:Key="Icon.Neutral.Chip" Color="#FFF0F3F7" />
+        <SolidColorBrush x:Key="Toggle.Chip" Color="#FFE3EEFD" />
+        <!-- The selected Project's status pill in the strip. -->
+        <SolidColorBrush x:Key="Status.Chip" Color="#FFE3EEFD" />
+        <SolidColorBrush x:Key="Status.Text" Color="#FF1474E0" />
+
+        <!-- A graphical icon (Img.* DrawingImage) at the 16 DIP size used in trees, lists, menus and toolbars. -->
+        <Style x:Key="IconImage" TargetType="Image">
+            <Setter Property="Width" Value="16" />
+            <Setter Property="Height" Value="16" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+        </Style>
 
         <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
 
@@ -70,9 +102,56 @@
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
 
+        <!--
+            Phase 13A shared button appearance. Every template has the same state model:
+            hover = HoverOverlay, pressed = PressedOverlay, keyboard focus = a separate 2 px accent FocusRing outside the
+            control (shown only by IsKeyboardFocused, never by hover), disabled = muted content without tint.
+        -->
         <Style TargetType="Button">
-            <Setter Property="Padding" Value="12,4" />
+            <Setter Property="Padding" Value="14,5" />
             <Setter Property="MinWidth" Value="72" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="Background" Value="{StaticResource Brush.Surface}" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+            <Setter Property="BorderBrush" Value="{StaticResource Brush.ControlBorder}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="FocusRing" Margin="-3" CornerRadius="17" BorderThickness="2"
+                                    BorderBrush="{StaticResource Brush.Accent}" Visibility="Collapsed" />
+                            <Border x:Name="Bd" CornerRadius="14" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                                <Grid>
+                                    <Border x:Name="Overlay" CornerRadius="13" Background="Transparent" />
+                                    <ContentPresenter Margin="{TemplateBinding Padding}" RecognizesAccessKey="True"
+                                                      HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource Brush.HoverOverlay}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource Brush.PressedOverlay}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{StaticResource Brush.MutedText}" />
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -81,24 +160,36 @@
             <Setter Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
         </Style>
 
-        <!-- Flat toolbar button (icon or text). -->
+        <!-- Flat toolbar button (icon or text), rounded: transparent until hovered. -->
         <Style x:Key="ToolButton" TargetType="ButtonBase">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
-            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Padding" Value="9,4" />
+            <Setter Property="MinHeight" Value="26" />
             <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ButtonBase">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
+                        <Grid>
+                            <Border x:Name="FocusRing" Margin="-2" CornerRadius="15" BorderThickness="2"
+                                    BorderBrush="{StaticResource Brush.Accent}" Visibility="Collapsed" />
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="13">
+                                <Grid>
+                                    <Border x:Name="Overlay" CornerRadius="13" Background="Transparent" />
+                                    <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource Brush.HoverOverlay}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource Brush.PressedOverlay}" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Hover}" />
+                                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.45" />
@@ -109,11 +200,36 @@
             </Setter>
         </Style>
 
-        <Style x:Key="Icon" TargetType="TextBlock">
-            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="VerticalAlignment" Value="Center" />
+        <!-- Round 28 px icon button on the neutral chip; its content is one IconImage. -->
+        <Style x:Key="IconPillButton" TargetType="ButtonBase" BasedOn="{StaticResource ToolButton}">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Background" Value="{StaticResource Icon.Neutral.Chip}" />
+            <Setter Property="Foreground" Value="{StaticResource Icon.Neutral}" />
         </Style>
+
+        <!-- Labelled pill on a tinted chip (New Folder / New Project / Info). -->
+        <Style x:Key="PillButton" TargetType="ButtonBase" BasedOn="{StaticResource ToolButton}">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="10,0,12,0" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Background" Value="{StaticResource Icon.Neutral.Chip}" />
+        </Style>
+
+        <!-- Toggle pill (Info): accent fill and white content while on. -->
+        <Style x:Key="TogglePillButton" TargetType="ToggleButton" BasedOn="{StaticResource PillButton}">
+            <Setter Property="Background" Value="{StaticResource Toggle.Chip}" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Background" Value="{StaticResource Brush.Accent}" />
+                    <Setter Property="Foreground" Value="{StaticResource Brush.AccentText}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
 
         <Style x:Key="Tag" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource Brush.Tag}" />
@@ -159,5 +275,6 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -36,6 +36,73 @@ public partial class MainWindow : Window
             WorkspaceSearchBox.SelectAll();
             e.Handled = true;
         }
+        else if (PrimaryTabs.SelectedItem == WorkspaceTab && PrimaryTabs.IsEnabled && Main?.Workspace is { } workspace
+                 && WorkspaceShortcut(e, workspace) is { } command)
+        {
+            // Phase 13A shortcuts (checked against every existing binding: no conflict). Same commands as the buttons.
+            if (command.CanExecute(null))
+                command.Execute(null);
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Ctrl+I (Info), Ctrl+Shift+A (Archived projects), Ctrl+Shift+T (Trashed projects) on the Workspace tab.</summary>
+    private static ICommand? WorkspaceShortcut(KeyEventArgs e, WorkspaceAreaViewModel workspace) => (e.Key, Keyboard.Modifiers) switch
+    {
+        (Key.I, ModifierKeys.Control) => workspace.ToggleInfoCommand,
+        (Key.A, ModifierKeys.Control | ModifierKeys.Shift) => workspace.OpenArchivedCommand,
+        (Key.T, ModifierKeys.Control | ModifierKeys.Shift) => workspace.OpenTrashCommand,
+        _ => null,
+    };
+
+    // ---- Workspace selection strip and Info drawer (view glue only) ------------------------------------------------------
+
+    private void SelectionMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(SelectionMoreButton);
+
+    private void TreeMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(TreeMoreButton);
+
+    private void ContentMoreButton_Click(object sender, RoutedEventArgs e) => ShowButtonMenu(ContentMoreButton);
+
+    private WorkspaceAreaViewModel? _observedWorkspace;
+
+    protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.Property != DataContextProperty)
+            return;
+        if (_observedWorkspace is not null)
+            _observedWorkspace.PropertyChanged -= OnWorkspacePropertyChanged;
+        _observedWorkspace = Main?.Workspace;
+        if (_observedWorkspace is not null)
+            _observedWorkspace.PropertyChanged += OnWorkspacePropertyChanged;
+    }
+
+    /// <summary>
+    /// Info focus (§5.4): opening moves focus into the drawer; closing returns it to the Info button, but only when focus was
+    /// inside the drawer (a selection change in the tree keeps focus in the tree).
+    /// </summary>
+    private void OnWorkspacePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(WorkspaceAreaViewModel.IsInfoOpen) || _observedWorkspace is not { } workspace)
+            return;
+        if (workspace.IsInfoOpen)
+        {
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => InfoCloseButton.Focus());
+        }
+        else if (_focusWasInInfo || InfoDrawer.IsKeyboardFocusWithin)
+        {
+            _focusWasInInfo = false;
+            Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () => InfoToggle.Focus());
+        }
+    }
+
+    private bool _focusWasInInfo;
+
+    /// <summary>Remembers whether focus is inside the drawer while it is open (collapsing it must not erase that fact).</summary>
+    private void InfoDrawer_IsKeyboardFocusWithinChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (_observedWorkspace?.IsInfoOpen == true)
+            _focusWasInInfo = (bool)e.NewValue;
     }
 
     // ---- Workspace search (view glue only; behavior lives in WorkspaceSearchViewModel) --------------------------------

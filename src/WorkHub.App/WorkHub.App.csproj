@@ -8,7 +8,14 @@
     <AssemblyName>WorkHub</AssemblyName>
     <RootNamespace>WorkHub.App</RootNamespace>
     <TieredPGO>true</TieredPGO>
+    <!-- Phase 13A logo A; rendered from Resources\Logo.xaml (16-256 px frames). -->
+    <ApplicationIcon>WorkHub.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The window icon (title bar / taskbar), from the same file as the executable icon. -->
+    <Resource Include="WorkHub.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WorkHub.Core\WorkHub.Core.csproj" />

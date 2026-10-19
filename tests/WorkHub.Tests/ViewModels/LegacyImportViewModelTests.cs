@@ -44,7 +44,7 @@ public sealed class LegacyImportViewModelTests : IDisposable
     {
         var vm = CreateSettings();
 
-        Assert.Equal(["REPOSITORY", "REPOSITORY", "DATA"], vm.Pages.Select(p => p.Group));
+        Assert.Equal(["REPOSITORY", "REPOSITORY", "WORKSPACE", "DATA"], vm.Pages.Select(p => p.Group)); // Phase 13A Workspace page
         vm.SelectedPage = vm.Pages.Single(p => p.Page == SettingsPage.LegacyImport);
 
         Assert.True(vm.IsLegacyImportSelected);

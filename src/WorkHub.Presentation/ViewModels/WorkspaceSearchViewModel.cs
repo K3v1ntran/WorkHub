@@ -82,15 +82,6 @@ public sealed class WorkspaceSearchHitViewModel(WorkspaceSearchHit hit) : Observ
         _ => "Note",
     };
 
-    public string Glyph => Hit.Item.Kind switch
-    {
-        SearchResultKind.WorkspaceFolder => "",
-        SearchResultKind.Project => "",
-        SearchResultKind.ProjectFolder => "",
-        SearchResultKind.Link => "",
-        _ => "",
-    };
-
     public string FieldText => Hit.MatchedField switch
     {
         SearchField.Name => Hit.Item.Kind == SearchResultKind.Note ? "title" : "name",

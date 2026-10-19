@@ -27,6 +27,10 @@ public sealed class SettingsViewModel : ObservableObject
     private IReadOnlyList<SettingsIssue> _issues = [];
     private string? _saveError;
     private bool _isSaving;
+    private readonly WorkspaceUiSettings _openedToolbars;
+    private bool _showTreeToolbar;
+    private bool _showSelectionToolbar;
+    private bool _showContentToolbar;
 
     public SettingsViewModel(
         SettingsService settings,
@@ -42,11 +46,19 @@ public sealed class SettingsViewModel : ObservableObject
         _dialogs = dialogs;
         _detectTortoise = detectTortoise;
         _draft = settings.CreateRepositoryDraft();
+        var opened = settings.Current.Ui.Workspace;
+        _openedToolbars = new WorkspaceUiSettings
+        {
+            ShowTreeToolbar = _showTreeToolbar = opened.ShowTreeToolbar,
+            ShowSelectionToolbar = _showSelectionToolbar = opened.ShowSelectionToolbar,
+            ShowContentToolbar = _showContentToolbar = opened.ShowContentToolbar,
+        };
         Backups = backups;
         Pages =
         [
             new SettingsPageItem(SettingsPage.Svn, "SVN", "REPOSITORY"),
             new SettingsPageItem(SettingsPage.Git, "Git", "REPOSITORY"),
+            new SettingsPageItem(SettingsPage.Workspace, "Workspace", "WORKSPACE"),
             new SettingsPageItem(SettingsPage.LegacyImport, "Import Legacy XML", "DATA"),
             .. backups is null ? Array.Empty<SettingsPageItem>() : [new SettingsPageItem(SettingsPage.Backups, "Backups", "DATA")],
         ];
@@ -109,6 +121,7 @@ public sealed class SettingsViewModel : ObservableObject
             OnPropertyChanged(nameof(IsGitSelected));
             OnPropertyChanged(nameof(IsLegacyImportSelected));
             OnPropertyChanged(nameof(IsBackupsSelected));
+            OnPropertyChanged(nameof(IsWorkspaceSelected));
             OnPropertyChanged(nameof(IsRepositoryPageSelected));
             if (IsBackupsSelected)
                 _ = Backups!.ActivateAsync();
@@ -129,6 +142,52 @@ public sealed class SettingsViewModel : ObservableObject
     public bool IsLegacyImportSelected => _selectedPage.Page == SettingsPage.LegacyImport;
 
     public bool IsBackupsSelected => _selectedPage.Page == SettingsPage.Backups;
+
+    public bool IsWorkspaceSelected => _selectedPage.Page == SettingsPage.Workspace;
+
+    /// <summary>Workspace page: "Show the tree toolbar" (draft; saved with Save).</summary>
+    public bool ShowTreeToolbar
+    {
+        get => _showTreeToolbar;
+        set
+        {
+            if (SetProperty(ref _showTreeToolbar, value))
+                SaveError = null;
+        }
+    }
+
+    /// <summary>Workspace page: "Show the selection toolbar" (draft; saved with Save).</summary>
+    public bool ShowSelectionToolbar
+    {
+        get => _showSelectionToolbar;
+        set
+        {
+            if (SetProperty(ref _showSelectionToolbar, value))
+                SaveError = null;
+        }
+    }
+
+    /// <summary>Workspace page: "Show the content toolbar" (draft; saved with Save).</summary>
+    public bool ShowContentToolbar
+    {
+        get => _showContentToolbar;
+        set
+        {
+            if (SetProperty(ref _showContentToolbar, value))
+                SaveError = null;
+        }
+    }
+
+    /// <summary>
+    /// The toolbar values to save: only those the user changed in this dialog (Phase 13A §6.1 S3), each on its own. An
+    /// unchanged toggle never overwrites a value saved meanwhile from a toolbar's menu in the main window.
+    /// </summary>
+    internal WorkspaceToolbarChanges ChangedToolbars => new()
+    {
+        Tree = _showTreeToolbar != _openedToolbars.ShowTreeToolbar ? _showTreeToolbar : null,
+        Selection = _showSelectionToolbar != _openedToolbars.ShowSelectionToolbar ? _showSelectionToolbar : null,
+        Content = _showContentToolbar != _openedToolbars.ShowContentToolbar ? _showContentToolbar : null,
+    };
 
     public bool IsRepositoryPageSelected => IsSvnSelected || IsGitSelected;
 
@@ -240,7 +299,7 @@ public sealed class SettingsViewModel : ObservableObject
         SetSaving(true);
         try
         {
-            result = await _settings.SaveRepositoryAsync(_draft, _usage);
+            result = await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars);
         }
         finally
         {
@@ -288,7 +347,7 @@ public sealed class SettingsViewModel : ObservableObject
             case UnsavedChangesChoice.Discard:
                 return true;
             case UnsavedChangesChoice.Save:
-                var result = await _settings.SaveRepositoryAsync(_draft, _usage);
+                var result = await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars);
                 if (result.Saved)
                     return true;
                 Issues = result.Issues;
@@ -322,6 +381,7 @@ public enum SettingsPage
 {
     Svn,
     Git,
+    Workspace,
     LegacyImport,
     Backups,
 }

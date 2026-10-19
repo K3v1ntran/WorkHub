@@ -9,6 +9,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
         Title="WorkHub"
+        Icon="pack://application:,,,/WorkHub;component/WorkHub.ico"
         Width="1100" Height="720" MinWidth="720" MinHeight="460"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource Brush.Background}"
@@ -21,6 +22,79 @@
             <Setter Property="Padding" Value="12,8" />
             <Setter Property="BorderThickness" Value="0,0,0,1" />
         </Style>
+
+        <!--
+            Phase 13A LIBRARY row (bottom navigation): full-width, rounded hover, accent bar and Selected background while its
+            panel is open (Tag="Selected"; the row's open command is then disabled, which must not look dimmed).
+        -->
+        <Style x:Key="LibraryRow" TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Margin" Value="6,1" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{StaticResource Brush.Text}" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="FocusRing" Margin="-2" CornerRadius="8" BorderThickness="2"
+                                    BorderBrush="{StaticResource Brush.Accent}" Visibility="Collapsed" />
+                            <Border x:Name="Bd" CornerRadius="6" Background="Transparent" BorderThickness="3,0,0,0" BorderBrush="Transparent">
+                                <Grid>
+                                    <Border x:Name="Overlay" CornerRadius="6" Background="Transparent" />
+                                    <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                      VerticalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource Brush.HoverOverlay}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource Brush.PressedOverlay}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="FocusRing" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                            <Trigger Property="Tag" Value="Selected">
+                                <Setter Property="Opacity" Value="1" />
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Brush.Selected}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Brush.Accent}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            The Workspace selection menu: ONE definition used by the tree's right-click menu and by the strip's More (⋯) button
+            (x:Shared=False gives each use its own instance). Same commands and CanExecute rules as the toolbars.
+        -->
+        <ContextMenu x:Key="WorkspaceSelectionMenu" x:Shared="False">
+            <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderAdd}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="New Project…" Command="{Binding NewProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.ProjectAdd}" /></MenuItem.Icon></MenuItem>
+            <Separator />
+            <MenuItem Header="Rename…" InputGestureText="F2" Command="{Binding RenameCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Rename}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Edit Project…" Command="{Binding EditProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Move to…" Command="{Binding MoveCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" /></MenuItem.Icon></MenuItem>
+            <Separator />
+            <MenuItem Header="Move to Trash…" InputGestureText="Del" Command="{Binding TrashProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Archive…" Command="{Binding ArchiveProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" /></MenuItem.Icon></MenuItem>
+            <Separator />
+            <MenuItem Header="Info" InputGestureText="Ctrl+I" Command="{Binding ToggleInfoCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Info}" /></MenuItem.Icon></MenuItem>
+        </ContextMenu>
+
+        <!-- Phase 13A: the selection pane switches to compact layouts below these content widths (strip folding, Info overlay). -->
+        <views:LessThanConverter x:Key="NarrowerThanInfoDrawer" Threshold="640" />
+        <views:LessThanConverter x:Key="NarrowerThanFullToolbar" Threshold="480" />
 
         <views:DepthToIndentConverter x:Key="WorkspaceIndent" Indent="18" />
         <views:FractionConverter x:Key="PreviewMaxHeight" Fraction="0.4" />
@@ -36,15 +110,25 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
                         <Border Background="Transparent">
-                            <TextBlock x:Name="Chevron" Style="{StaticResource Icon}" FontSize="10" HorizontalAlignment="Center"
-                                       Foreground="{StaticResource Brush.MutedText}" Text="&#xE76C;" />
+                            <!-- A drawn chevron (vector path, not a font character): › collapsed, rotated to ⌄ when expanded. -->
+                            <Path x:Name="Chevron" Data="M0,0 L3.5,3.5 L0,7" Width="5" Height="8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                  Stroke="{StaticResource Brush.MutedText}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                  StrokeLineJoin="Round" RenderTransformOrigin="0.5,0.5">
+                                <Path.RenderTransform>
+                                    <RotateTransform x:Name="ChevronRotation" Angle="0" />
+                                </Path.RenderTransform>
+                            </Path>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Chevron" Property="Text" Value="&#xE70D;" />
+                                <Setter TargetName="Chevron" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <RotateTransform Angle="90" />
+                                    </Setter.Value>
+                                </Setter>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Chevron" Property="Foreground" Value="{StaticResource Brush.Text}" />
+                                <Setter TargetName="Chevron" Property="Stroke" Value="{StaticResource Brush.Text}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -128,9 +212,29 @@
         <Border Grid.Row="0" Background="{StaticResource Brush.Surface}"
                 BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,0,0,1" Padding="16,8">
             <DockPanel LastChildFill="False">
-                <TextBlock DockPanel.Dock="Left" Text="WorkHub" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center"
-                           Foreground="{StaticResource Brush.MutedText}" Text="{Binding StatusText}" />
+                <!-- Phase 13A brand (logo A). Schema and backup details are in its tooltip and in Settings → Backups. -->
+                <StackPanel x:Name="Brand" DockPanel.Dock="Left" Orientation="Horizontal" Background="Transparent"
+                            ToolTip="{Binding BrandToolTip}">
+                    <!-- Panels are not exposed to UI Automation, so the accessible name and help text live on the Image. -->
+                    <Image Source="{StaticResource Logo.Small}" Width="20" Height="20" VerticalAlignment="Center"
+                           RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.AutomationId="Brand"
+                           AutomationProperties.Name="WorkHub" AutomationProperties.HelpText="{Binding BrandToolTip}" />
+                    <TextBlock Margin="8,0,0,0" Text="WorkHub" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+                <!-- Only non-routine states (Starting…, Startup failed, Closing): "Ready · schema …" is not shown. -->
+                <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center" Text="{Binding StatusText}"
+                           AutomationProperties.AutomationId="StatusText">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{StaticResource Brush.MutedText}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsReady}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
                 <TextBlock DockPanel.Dock="Left" Margin="16,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
                            Foreground="{StaticResource Brush.Warning}" AutomationProperties.AutomationId="CustomDataRoot"
                            Text="{Binding CustomDataRoot, StringFormat=Test data root: {0}}">
@@ -144,10 +248,10 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Settings" AutomationProperties.Name="Settings"
+                <Button DockPanel.Dock="Right" Style="{StaticResource PillButton}" ToolTip="Settings" AutomationProperties.Name="Settings"
                         Command="{Binding Repository.OpenSettingsCommand}">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource Icon}" Text="&#xE713;" />
+                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Settings}" />
                         <TextBlock Margin="6,0,0,0" Text="Settings" />
                     </StackPanel>
                 </Button>
@@ -272,7 +376,7 @@
                         <DockPanel DockPanel.Dock="Top" Margin="0,0,6,0">
                             <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="6,2" Margin="0,8,0,0"
                                     ToolTip="Add Owner group" AutomationProperties.Name="Add Owner group" Command="{Binding Owner.AddGroupCommand}">
-                                <TextBlock Style="{StaticResource Icon}" FontSize="11" Text="&#xE710;" />
+                                <Image Style="{StaticResource IconImage}" Width="12" Height="12" Source="{StaticResource Img.Add}" />
                             </Button>
                             <TextBlock Style="{StaticResource SectionHeader}" Text="OWNER" />
                         </DockPanel>
@@ -339,12 +443,12 @@
                             </StackPanel>
                             <Button Grid.Column="2" Style="{StaticResource ToolButton}" Command="{Binding AddItemCommand}" ToolTip="Add a launcher" AutomationProperties.Name="Add Item">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" />
+                                    <Image Style="{StaticResource IconImage}" Width="14" Height="14" Source="{StaticResource Img.Add}" />
                                     <TextBlock Margin="6,0,0,0" Text="Add Item" />
                                 </StackPanel>
                             </Button>
                             <Button x:Name="OwnerMoreButton" Grid.Column="3" Style="{StaticResource ToolButton}" ToolTip="More" AutomationProperties.Name="Owner more" Click="OwnerMoreButton_Click">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE712;" />
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.More}" />
                                 <Button.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Rename Group…" Command="{Binding RenameGroupCommand}" />
@@ -371,7 +475,7 @@
                             </Border.Style>
                             <DockPanel>
                                 <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Dismiss" AutomationProperties.Name="Dismiss owner message" Command="{Binding DismissBannerCommand}">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
+                                    <Image Style="{StaticResource IconImage}" Width="12" Height="12" Source="{StaticResource Img.Dismiss}" />
                                 </Button>
                                 <Button DockPanel.Dock="Right" Margin="8,0" Content="Edit" AutomationProperties.Name="Edit launcher" Command="{Binding EditFromBannerCommand}"
                                         Visibility="{Binding BannerCanEdit, Converter={StaticResource BoolToVisibility}}" />
@@ -501,16 +605,16 @@
                             </Grid>
 
                             <Button Grid.Column="3" Style="{StaticResource ToolButton}" ToolTip="Search (Ctrl+F)" AutomationProperties.Name="Search" Click="SearchButton_Click">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE721;" />
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Search}" />
                             </Button>
                             <Button Grid.Column="4" Style="{StaticResource ToolButton}" Command="{Binding AddSystemCommand}" ToolTip="Add a System" AutomationProperties.Name="Add System">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xE710;" />
+                                    <Image Style="{StaticResource IconImage}" Width="14" Height="14" Source="{StaticResource Img.Add}" />
                                     <TextBlock Margin="6,0,0,0" Text="Add System" />
                                 </StackPanel>
                             </Button>
                             <Button x:Name="MoreButton" Grid.Column="5" Style="{StaticResource ToolButton}" ToolTip="More" AutomationProperties.Name="More" Click="MoreButton_Click">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE712;" />
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.More}" />
                                 <Button.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Show inactive systems" IsCheckable="True" IsChecked="{Binding ShowInactive}" />
@@ -535,7 +639,7 @@
                             </Border.Style>
                             <DockPanel>
                                 <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" ToolTip="Dismiss" AutomationProperties.Name="Dismiss" Command="{Binding DismissBannerCommand}">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
+                                    <Image Style="{StaticResource IconImage}" Width="12" Height="12" Source="{StaticResource Img.Dismiss}" />
                                 </Button>
                                 <Button DockPanel.Dock="Right" Margin="8,0" Content="Fix Settings" Command="{Binding FixSettingsCommand}"
                                         Visibility="{Binding BannerCanFixSettings, Converter={StaticResource BoolToVisibility}}" />
@@ -679,88 +783,144 @@
 
                     <!-- Tree -->
                     <DockPanel Grid.Row="1" Grid.Column="0">
-                        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,8,8,4">
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewFolderCommand}" AutomationProperties.Name="New Folder" ToolTip="New folder (a WorkHub reference only)">
+                        <!-- The tree toolbar (Settings → Workspace → "Show the tree toolbar"). Right-click: hide only this toolbar. -->
+                        <WrapPanel x:Name="TreeToolbar" DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,8,8,6" AutomationProperties.Name="Tree toolbar"
+                                   Background="Transparent" Visibility="{Binding ShowTreeToolbar, Converter={StaticResource BoolToVisibility}}">
+                            <WrapPanel.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Hide tree toolbar" Command="{Binding Preferences.HideTreeToolbarCommand}" />
+                                </ContextMenu>
+                            </WrapPanel.ContextMenu>
+                            <Button Style="{StaticResource PillButton}" Command="{Binding NewFolderCommand}"
+                                    AutomationProperties.Name="New Folder" ToolTip="New folder (a WorkHub reference only)" Margin="2,2">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE8F4;" />
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderAdd}" />
                                     <TextBlock Margin="6,0,0,0" Text="Folder" />
                                 </StackPanel>
                             </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewProjectCommand}" AutomationProperties.Name="New Project" ToolTip="New project">
+                            <Button Style="{StaticResource PillButton}" Command="{Binding NewProjectCommand}"
+                                    AutomationProperties.Name="New Project" ToolTip="New project" Margin="2,2">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE710;" />
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.ProjectAdd}" />
                                     <TextBlock Margin="6,0,0,0" Text="Project" />
                                 </StackPanel>
                             </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding RenameCommand}" AutomationProperties.Name="Rename" ToolTip="Rename (F2)">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8AC;" />
+                            <Button Style="{StaticResource IconPillButton}" Command="{Binding RenameCommand}" AutomationProperties.Name="Rename" ToolTip="Rename (F2)" Margin="2,2">
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Rename}" />
                             </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move to" ToolTip="Move to…">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8DE;" />
+                            <Button Style="{StaticResource IconPillButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move to" ToolTip="Move to…" Margin="2,2">
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" />
                             </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash"
-                                    ToolTip="Move the project to the Trash (Del). Its content stays with it; nothing on disk is touched.">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
-                            </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding ArchiveProjectCommand}" AutomationProperties.Name="Archive project"
+                            <Button Style="{StaticResource IconPillButton}"
+                                    Command="{Binding ArchiveProjectCommand}" AutomationProperties.Name="Archive project" Margin="2,2"
                                     ToolTip="Archive the project: it leaves the tree and is listed under Archived projects. Its content stays with it; nothing on disk is touched.">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE7B8;" />
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
                             </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove empty folder"
+                            <Button Style="{StaticResource IconPillButton}"
+                                    Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash" Margin="2,2"
+                                    ToolTip="Move the project to the Trash (Del). Its content stays with it; nothing on disk is touched.">
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                            </Button>
+                            <Button Style="{StaticResource IconPillButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove empty folder" Margin="2,2"
                                     ToolTip="Remove an empty folder (Del). Only the WorkHub folder is removed; nothing on disk is touched.">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE8F8;" />
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" />
+                            </Button>
+                        </WrapPanel>
+
+                        <!--
+                            Phase 13A LIBRARY: docked at the BOTTOM and declared before the tree, so it keeps its height and a long
+                            tree (which fills the rest and scrolls) can never push it out of view. Same lower-section pattern as
+                            OWNER in Repository. Each row opens its panel and shows the selected state while that panel is open.
+                        -->
+                        <StackPanel x:Name="LibrarySection" DockPanel.Dock="Bottom" Margin="0,4,0,8" AutomationProperties.Name="Library">
+                            <Border Margin="12,0,12,0" BorderThickness="0,1,0,0" BorderBrush="{StaticResource Brush.Border}" />
+                            <TextBlock Style="{StaticResource SectionHeader}" Margin="12,10,12,4" Text="LIBRARY" />
+                            <Button Command="{Binding OpenArchivedCommand}" AutomationProperties.Name="Archived projects"
+                                    AutomationProperties.AutomationId="OpenArchivedProjects"
+                                    ToolTip="Archived projects (unarchive them from here) · Ctrl+Shift+A">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource LibraryRow}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsArchivedOpen}" Value="True">
+                                                <Setter Property="Tag" Value="Selected" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                                <DockPanel>
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
+                                    <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Text="{Binding Archived.ButtonText}" TextTrimming="CharacterEllipsis" />
+                                </DockPanel>
+                            </Button>
+                            <Button Command="{Binding OpenTrashCommand}" AutomationProperties.Name="Trashed projects"
+                                    AutomationProperties.AutomationId="OpenWorkspaceTrash"
+                                    ToolTip="Projects in the Workspace Trash (restore them from here) · Ctrl+Shift+T">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource LibraryRow}">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsTrashOpen}" Value="True">
+                                                <Setter Property="Tag" Value="Selected" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                                <DockPanel>
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                                    <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Text="{Binding Trash.ButtonText}" TextTrimming="CharacterEllipsis" />
+                                </DockPanel>
                             </Button>
                         </StackPanel>
-                        <!-- The Workspace Trash (trashed Projects); the content pane keeps its own per-Project "Trash (n)". -->
-                        <Button DockPanel.Dock="Top" HorizontalAlignment="Left" Margin="8,0,8,4" Style="{StaticResource ToolButton}"
-                                Command="{Binding OpenTrashCommand}" Content="{Binding Trash.ButtonText}"
-                                AutomationProperties.Name="Trashed projects" AutomationProperties.AutomationId="OpenWorkspaceTrash"
-                                ToolTip="Projects in the Workspace Trash (restore them from here)" />
-                        <!-- Archived projects (hidden from the tree; unarchive them from here). -->
-                        <Button DockPanel.Dock="Top" HorizontalAlignment="Left" Margin="8,0,8,4" Style="{StaticResource ToolButton}"
-                                Command="{Binding OpenArchivedCommand}" Content="{Binding Archived.ButtonText}"
-                                AutomationProperties.Name="Archived projects" AutomationProperties.AutomationId="OpenArchivedProjects"
-                                ToolTip="Archived projects (unarchive them from here)" />
 
-                        <!-- Search (Ctrl+F): the results replace the tree while the query is non-empty; Esc clears it. -->
-                        <StackPanel DockPanel.Dock="Top" Margin="8,0,8,4" DataContext="{Binding Search}"
-                                    Visibility="{Binding Converter={StaticResource NullToCollapsed}}">
-                            <Grid>
-                                <TextBox x:Name="WorkspaceSearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="22,3,24,3"
-                                         AutomationProperties.Name="Search workspace" PreviewKeyDown="WorkspaceSearchBox_PreviewKeyDown" />
-                                <TextBlock Style="{StaticResource Icon}" Margin="7,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False"
-                                           Foreground="{StaticResource Brush.MutedText}" Text="&#xE721;" />
-                                <TextBlock Margin="24,0,0,0" IsHitTestVisible="False" VerticalAlignment="Center"
-                                           Foreground="{StaticResource Brush.MutedText}" Text="Search workspace (Ctrl+F)">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility" Value="Collapsed" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding Text, ElementName=WorkspaceSearchBox}" Value="">
-                                                    <Setter Property="Visibility" Value="Visible" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                                <Button HorizontalAlignment="Right" Style="{StaticResource ToolButton}" Padding="4,0" Command="{Binding ClearCommand}"
-                                        Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}"
-                                        AutomationProperties.Name="Clear search" ToolTip="Clear search (Esc)">
-                                    <TextBlock Style="{StaticResource Icon}" FontSize="10" Text="&#xE711;" />
-                                </Button>
-                            </Grid>
-                            <TextBlock Margin="2,4,2,0" Foreground="{StaticResource Brush.MutedText}" TextWrapping="Wrap" Text="{Binding StatusText}"
-                                       AutomationProperties.AutomationId="WorkspaceSearchStatus"
-                                       Visibility="{Binding StatusText, Converter={StaticResource NullToCollapsed}}" />
-                            <DockPanel Margin="2,4,2,0" Visibility="{Binding ErrorText, Converter={StaticResource NullToCollapsed}}">
-                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Content="Retry" Command="{Binding RetryCommand}" AutomationProperties.Name="Retry search" />
-                                <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorText}"
-                                           AutomationProperties.AutomationId="WorkspaceSearchError" />
-                            </DockPanel>
-                            <TextBlock Margin="2,4,2,0" Foreground="{StaticResource Brush.Warning}" TextWrapping="Wrap" Text="{Binding NoticeText}"
-                                       AutomationProperties.AutomationId="WorkspaceSearchNotice"
-                                       Visibility="{Binding NoticeText, Converter={StaticResource NullToCollapsed}}" />
-                        </StackPanel>
+                        <!--
+                            Search (Ctrl+F): the results replace the tree while the query is non-empty; Esc clears it. With the tree
+                            toolbar hidden, a compact More (⋯) beside it opens the tree's menu (New Folder, New Project, …).
+                        -->
+                        <DockPanel DockPanel.Dock="Top">
+                            <Button x:Name="TreeMoreButton" DockPanel.Dock="Right" VerticalAlignment="Top" Style="{StaticResource IconPillButton}" Margin="0,0,8,4"
+                                    AutomationProperties.Name="More tree actions" ToolTip="Tree actions (the tree toolbar is hidden; show it in Settings → Workspace)"
+                                    Click="TreeMoreButton_Click" ContextMenu="{StaticResource WorkspaceSelectionMenu}"
+                                    Visibility="{Binding ShowTreeToolbar, Converter={StaticResource InverseBoolToVisibility}}">
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.More}" />
+                            </Button>
+                            <StackPanel Margin="8,0,8,4" DataContext="{Binding Search}"
+                                        Visibility="{Binding Converter={StaticResource NullToCollapsed}}">
+                                <Grid>
+                                    <TextBox x:Name="WorkspaceSearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="22,3,24,3"
+                                             AutomationProperties.Name="Search workspace" PreviewKeyDown="WorkspaceSearchBox_PreviewKeyDown" />
+                                    <Image Style="{StaticResource IconImage}" Width="14" Height="14" Margin="5,0,0,0" HorizontalAlignment="Left" IsHitTestVisible="False"
+                                           Source="{StaticResource Img.Search}" />
+                                    <TextBlock Margin="24,0,0,0" IsHitTestVisible="False" VerticalAlignment="Center"
+                                               Foreground="{StaticResource Brush.MutedText}" Text="Search workspace (Ctrl+F)">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=WorkspaceSearchBox}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <Button HorizontalAlignment="Right" Style="{StaticResource ToolButton}" Padding="4,0" Command="{Binding ClearCommand}"
+                                            Visibility="{Binding IsActive, Converter={StaticResource BoolToVisibility}}"
+                                            AutomationProperties.Name="Clear search" ToolTip="Clear search (Esc)">
+                                        <Image Style="{StaticResource IconImage}" Width="12" Height="12" Source="{StaticResource Img.Dismiss}" />
+                                    </Button>
+                                </Grid>
+                                <TextBlock Margin="2,4,2,0" Foreground="{StaticResource Brush.MutedText}" TextWrapping="Wrap" Text="{Binding StatusText}"
+                                           AutomationProperties.AutomationId="WorkspaceSearchStatus"
+                                           Visibility="{Binding StatusText, Converter={StaticResource NullToCollapsed}}" />
+                                <DockPanel Margin="2,4,2,0" Visibility="{Binding ErrorText, Converter={StaticResource NullToCollapsed}}">
+                                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Content="Retry" Command="{Binding RetryCommand}" AutomationProperties.Name="Retry search" />
+                                    <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap" Text="{Binding ErrorText}"
+                                               AutomationProperties.AutomationId="WorkspaceSearchError" />
+                                </DockPanel>
+                                <TextBlock Margin="2,4,2,0" Foreground="{StaticResource Brush.Warning}" TextWrapping="Wrap" Text="{Binding NoticeText}"
+                                           AutomationProperties.AutomationId="WorkspaceSearchNotice"
+                                           Visibility="{Binding NoticeText, Converter={StaticResource NullToCollapsed}}" />
+                            </StackPanel>
+                        </DockPanel>
 
                         <Grid>
                             <ListBox x:Name="WorkspaceSearchResults" DataContext="{Binding Search}" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
@@ -787,8 +947,8 @@
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type vm:WorkspaceSearchHitViewModel}">
                                         <DockPanel ToolTip="{Binding Location}">
-                                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Icon}" VerticalAlignment="Top" Margin="0,2,8,0"
-                                                       Foreground="{StaticResource Brush.Accent}" Text="{Binding Glyph}" />
+                                            <Image x:Name="Glyph" DockPanel.Dock="Left" Style="{StaticResource IconImage}" VerticalAlignment="Top" Margin="0,2,8,0"
+                                                   Source="{StaticResource Img.Folder}" />
                                             <StackPanel>
                                                 <TextBlock FontWeight="SemiBold" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Foreground="{StaticResource Brush.MutedText}" FontSize="11" TextTrimming="CharacterEllipsis">
@@ -797,6 +957,18 @@
                                                 <TextBlock Foreground="{StaticResource Brush.MutedText}" FontSize="11" TextTrimming="CharacterEllipsis" Text="{Binding MatchText}" />
                                             </StackPanel>
                                         </DockPanel>
+                                        <!-- The same icon per kind as in the tree and the content list. -->
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding KindText}" Value="Project">
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Project}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding KindText}" Value="Link">
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Link}" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding KindText}" Value="Note">
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Note}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
                             </ListBox>
@@ -819,13 +991,12 @@
                                 <TreeView.ItemTemplate>
                                     <HierarchicalDataTemplate DataType="{x:Type vm:WorkspaceNodeViewModel}" ItemsSource="{Binding Children}">
                                         <StackPanel Orientation="Horizontal">
-                                            <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" />
+                                            <Image x:Name="Glyph" Style="{StaticResource IconImage}" Source="{StaticResource Img.Folder}" />
                                             <TextBlock x:Name="Label" Margin="6,1,4,1" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                         <HierarchicalDataTemplate.Triggers>
                                             <DataTrigger Binding="{Binding IsProject}" Value="True">
-                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE8A5;" />
-                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Project}" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsPlaceholder}" Value="True">
                                                 <Setter TargetName="Glyph" Property="Visibility" Value="Collapsed" />
@@ -835,18 +1006,7 @@
                                     </HierarchicalDataTemplate>
                                 </TreeView.ItemTemplate>
                                 <TreeView.ContextMenu>
-                                    <ContextMenu>
-                                        <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}" />
-                                        <MenuItem Header="New Project…" Command="{Binding NewProjectCommand}" />
-                                        <Separator />
-                                        <MenuItem Header="Rename…" InputGestureText="F2" Command="{Binding RenameCommand}" />
-                                        <MenuItem Header="Edit Project…" Command="{Binding EditProjectCommand}" />
-                                        <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
-                                        <Separator />
-                                        <MenuItem Header="Move to Trash…" InputGestureText="Del" Command="{Binding TrashProjectCommand}" />
-                                        <MenuItem Header="Archive…" Command="{Binding ArchiveProjectCommand}" />
-                                        <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}" />
-                                    </ContextMenu>
+                                    <StaticResource ResourceKey="WorkspaceSelectionMenu" />
                                 </TreeView.ContextMenu>
                             </TreeView>
 
@@ -886,7 +1046,7 @@
                             <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DataContext.CloseTrashCommand, ElementName=WorkspaceTree}"
                                     AutomationProperties.Name="Back from Workspace Trash" ToolTip="Back to the selected folder or project">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE72B;" />
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Back}" />
                                     <TextBlock Margin="6,0,0,0" Text="Back" />
                                 </StackPanel>
                             </Button>
@@ -917,7 +1077,7 @@
                                                 <ColumnDefinition Width="3*" />
                                                 <ColumnDefinition Width="120" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Style="{StaticResource Icon}" Text="&#xE8A5;" Foreground="{StaticResource Brush.Accent}" VerticalAlignment="Center" />
+                                            <Image VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Project}" />
                                             <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
                                                        Text="{Binding FromText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding FromText}" />
@@ -949,7 +1109,7 @@
                             <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DataContext.CloseArchivedCommand, ElementName=WorkspaceTree}"
                                     AutomationProperties.Name="Back from Archived projects" ToolTip="Back to the selected folder or project">
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE72B;" />
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Back}" />
                                     <TextBlock Margin="6,0,0,0" Text="Back" />
                                 </StackPanel>
                             </Button>
@@ -980,7 +1140,7 @@
                                                 <ColumnDefinition Width="3*" />
                                                 <ColumnDefinition Width="120" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock Style="{StaticResource Icon}" Text="&#xE7B8;" Foreground="{StaticResource Brush.MutedText}" VerticalAlignment="Center" />
+                                            <Image VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
                                             <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
                                                        Text="{Binding LocationText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding LocationText}" />
@@ -1002,46 +1162,22 @@
                         </Grid>
                     </DockPanel>
 
-                    <Grid Grid.Row="1" Grid.Column="2" Visibility="{Binding IsPanelOpen, Converter={StaticResource InverseBoolToVisibility}}">
+                    <!--
+                        Phase 13A selection pane: a compact header (title, location, one strip with Status / Created / Updated,
+                        Info, the hideable selection toolbar and More) and below it the selected Project's Content, which takes
+                        all the remaining space. Info is a drawer to the right of Content (an overlay sheet when narrow).
+                    -->
+                    <Grid x:Name="SelectionPane" Grid.Row="1" Grid.Column="2" Visibility="{Binding IsPanelOpen, Converter={StaticResource InverseBoolToVisibility}}">
                         <Grid.RowDefinitions>
-                            <!-- Without Project content (Folder or nothing selected) the details take the whole pane. -->
-                            <RowDefinition>
-                                <RowDefinition.Style>
-                                    <Style TargetType="RowDefinition">
-                                        <Setter Property="Height" Value="Auto" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SelectedContent}" Value="{x:Null}">
-                                                <Setter Property="Height" Value="*" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </RowDefinition.Style>
-                            </RowDefinition>
-                            <RowDefinition>
-                                <RowDefinition.Style>
-                                    <Style TargetType="RowDefinition">
-                                        <Setter Property="Height" Value="*" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SelectedContent}" Value="{x:Null}">
-                                                <Setter Property="Height" Value="0" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </RowDefinition.Style>
-                            </RowDefinition>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
                         </Grid.RowDefinitions>
-                    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
-                        <ScrollViewer.Style>
-                            <Style TargetType="ScrollViewer">
-                                <Setter Property="MaxHeight" Value="300" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedContent}" Value="{x:Null}">
-                                        <Setter Property="MaxHeight" Value="Infinity" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </ScrollViewer.Style>
-                        <StackPanel Margin="20,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Margin="20,8,20,4">
                             <TextBlock HorizontalAlignment="Left" Margin="0" Text="Select a folder or project.">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock" BasedOn="{StaticResource EmptyState}">
@@ -1059,74 +1195,191 @@
                                 </TextBlock.Style>
                             </TextBlock>
 
-                            <!-- Folder -->
-                            <StackPanel Visibility="{Binding IsFolderSelected, Converter={StaticResource BoolToVisibility}}">
-                                <TextBlock Style="{StaticResource SectionHeader}" Margin="0" Text="FOLDER" />
-                                <TextBlock Margin="0,4,0,0" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedNode.Name}"
-                                           AutomationProperties.AutomationId="SelectedFolderName" />
-                                <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding SelectedNode.Path}" />
-                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                                    <Button Content="Rename…" Command="{Binding RenameCommand}" />
-                                    <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
-                                    <Button Margin="8,0,0,0" Content="Remove folder…" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove folder" />
-                                </StackPanel>
-                            </StackPanel>
+                            <!-- Title line: name and location (the location is muted and trims first). -->
+                            <DockPanel Visibility="{Binding SelectedNode, Converter={StaticResource NullToCollapsed}}">
+                                <TextBlock DockPanel.Dock="Left" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
+                                           Text="{Binding SelectedNode.Name}" ToolTip="{Binding SelectedNode.Name}" TextTrimming="CharacterEllipsis"
+                                           MaxWidth="{Binding ActualWidth, ElementName=SelectionPane}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="AutomationProperties.AutomationId" Value="SelectedProjectName" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsFolderSelected}" Value="True">
+                                                    <Setter Property="AutomationProperties.AutomationId" Value="SelectedFolderName" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
+                                           Text="{Binding SelectedLocation}" ToolTip="{Binding SelectedNode.Path}" TextTrimming="CharacterEllipsis"
+                                           AutomationProperties.AutomationId="SelectedLocation" />
+                            </DockPanel>
 
-                            <!-- Project -->
                             <TextBlock Style="{StaticResource FieldHint}" Text="Loading project…"
                                        Visibility="{Binding IsLoadingDetails, Converter={StaticResource BoolToVisibility}}" />
                             <TextBlock Style="{StaticResource FieldError}" FontSize="12" Text="{Binding DetailsMessage}" AutomationProperties.AutomationId="DetailsMessage" />
-                            <StackPanel>
-                                <StackPanel.Style>
-                                    <Style TargetType="StackPanel">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding SelectedProject}" Value="{x:Null}">
+
+                            <!--
+                                The strip (WrapPanel: wraps instead of trimming). Order: status pill, Created, Updated, Info, the
+                                hideable selection toolbar, busy indicator, More (always last, always visible). Right-click: show or
+                                hide the toolbar.
+                            -->
+                            <Border x:Name="SelectionStrip" Margin="0,4,0,0" Padding="6,1" CornerRadius="16" HorizontalAlignment="Left"
+                                    Background="{StaticResource Brush.Strip}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1"
+                                    AutomationProperties.Name="Selection strip" AutomationProperties.AutomationId="SelectionStrip"
+                                    Visibility="{Binding SelectedNode, Converter={StaticResource NullToCollapsed}}">
+                                <Border.ContextMenu>
+                                    <ContextMenu>
+                                        <MenuItem Header="Show selection toolbar" Command="{Binding Preferences.ShowSelectionToolbarCommand}" />
+                                        <MenuItem Header="Hide selection toolbar" Command="{Binding Preferences.HideSelectionToolbarCommand}" />
+                                    </ContextMenu>
+                                </Border.ContextMenu>
+                                <WrapPanel x:Name="StripItems" Orientation="Horizontal">
+                                    <!--
+                                        Project facts (once its details are loaded): THREE separate wrapping units, so each can move to the
+                                        next line on its own; a label never separates from its value.
+                                    -->
+                                    <Border x:Name="StripStatusUnit" CornerRadius="10" Padding="9,2" Margin="2,1,10,1" Height="24"
+                                            Background="{StaticResource Status.Chip}" VerticalAlignment="Center"
+                                            Visibility="{Binding SelectedProject, Converter={StaticResource NullToCollapsed}}">
+                                        <TextBlock Foreground="{StaticResource Status.Text}" FontWeight="SemiBold" Text="{Binding SelectedProjectStatus}" VerticalAlignment="Center"
+                                                   TextTrimming="None" TextWrapping="NoWrap" AutomationProperties.AutomationId="SelectedProjectStatus" />
+                                    </Border>
+                                    <StackPanel x:Name="StripCreatedUnit" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,1,12,1" Height="24"
+                                                Visibility="{Binding SelectedProject, Converter={StaticResource NullToCollapsed}}">
+                                        <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="Created" />
+                                        <TextBlock x:Name="StripCreated" Margin="5,0,0,0" VerticalAlignment="Center" TextTrimming="None" TextWrapping="NoWrap"
+                                                   Text="{Binding SelectedProject.CreatedAt.LocalDateTime, StringFormat='yyyy-MM-dd'}"
+                                                   ToolTip="{Binding SelectedProject.CreatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}"
+                                                   AutomationProperties.AutomationId="SelectedProjectCreated" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="StripUpdatedUnit" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,1,12,1" Height="24"
+                                                Visibility="{Binding SelectedProject, Converter={StaticResource NullToCollapsed}}">
+                                        <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="Updated" />
+                                        <TextBlock x:Name="StripUpdated" Margin="5,0,0,0" VerticalAlignment="Center" TextTrimming="None" TextWrapping="NoWrap"
+                                                   Text="{Binding SelectedProject.UpdatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}"
+                                                   ToolTip="{Binding SelectedProject.UpdatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}"
+                                                   AutomationProperties.AutomationId="SelectedProjectUpdated" />
+                                    </StackPanel>
+
+                                    <ToggleButton x:Name="InfoToggle" Margin="2,1"
+                                                  IsChecked="{Binding IsInfoOpen, Mode=TwoWay}" IsEnabled="{Binding CanOpenInfo}"
+                                                  ToolTip="Show the selected project's or folder's details (Ctrl+I)">
+                                        <ToggleButton.Style>
+                                            <Style TargetType="ToggleButton" BasedOn="{StaticResource TogglePillButton}">
+                                                <Setter Property="AutomationProperties.Name" Value="Project info" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsFolderSelected}" Value="True">
+                                                        <Setter Property="AutomationProperties.Name" Value="Folder info" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </ToggleButton.Style>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Info}" />
+                                            <TextBlock Margin="6,0,0,0" Text="Info" />
+                                        </StackPanel>
+                                    </ToggleButton>
+
+                                    <!-- The hideable selection toolbar (Settings → Workspace). Project actions: -->
+                                    <StackPanel x:Name="ProjectSelectionToolbar" Orientation="Horizontal" Margin="6,1,0,1" AutomationProperties.Name="Selection toolbar">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
                                                 <Setter Property="Visibility" Value="Collapsed" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </StackPanel.Style>
-                                <TextBlock Style="{StaticResource SectionHeader}" Margin="0" Text="PROJECT" />
-                                <TextBlock Margin="0,4,0,0" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedProject.Name}"
-                                           AutomationProperties.AutomationId="SelectedProjectName" />
-                                <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding SelectedNode.Path}" />
-                                <Border Style="{StaticResource Tag}" HorizontalAlignment="Left" Margin="0,8,0,0">
-                                    <TextBlock Text="{Binding SelectedProjectStatus}" AutomationProperties.AutomationId="SelectedProjectStatus" />
-                                </Border>
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding ShowSelectionToolbar}" Value="True" />
+                                                            <Condition Binding="{Binding SelectedNode.IsProject}" Value="True" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <Button Style="{StaticResource IconPillButton}"
+                                                Command="{Binding EditProjectCommand}" AutomationProperties.Name="Edit Project" ToolTip="Edit project…">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" />
+                                        </Button>
+                                        <Button Command="{Binding MoveCommand}" AutomationProperties.Name="Move project" ToolTip="Move to…">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource IconPillButton}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ActualWidth, ElementName=SelectionPane, Converter={StaticResource NarrowerThanFullToolbar}}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" />
+                                        </Button>
+                                        <Button Style="{StaticResource IconPillButton}"
+                                                Command="{Binding ArchiveProjectCommand}" AutomationProperties.Name="Archive project (details)" ToolTip="Archive…">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
+                                        </Button>
+                                        <Button Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash (details)" ToolTip="Move to Trash… (Del)">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource IconPillButton}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ActualWidth, ElementName=SelectionPane, Converter={StaticResource NarrowerThanFullToolbar}}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                                        </Button>
+                                    </StackPanel>
+                                    <!-- ... and Folder actions (same setting). -->
+                                    <StackPanel x:Name="FolderSelectionToolbar" Orientation="Horizontal" Margin="6,1,0,1" AutomationProperties.Name="Folder toolbar">
+                                        <StackPanel.Style>
+                                            <Style TargetType="StackPanel">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding ShowSelectionToolbar}" Value="True" />
+                                                            <Condition Binding="{Binding IsFolderSelected}" Value="True" />
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </StackPanel.Style>
+                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding RenameCommand}" AutomationProperties.Name="Rename folder" ToolTip="Rename… (F2)">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Rename}" />
+                                        </Button>
+                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move folder" ToolTip="Move to…">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" />
+                                        </Button>
+                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove folder" ToolTip="Remove empty folder… (Del)">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" />
+                                        </Button>
+                                    </StackPanel>
 
-                                <Grid Margin="0,12,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="130" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Grid.RowDefinitions>
-                                        <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
-                                    </Grid.RowDefinitions>
-                                    <TextBlock Grid.Row="0" Foreground="{StaticResource Brush.MutedText}" Text="Owner" />
-                                    <TextBlock Grid.Row="0" Grid.Column="1" TextWrapping="Wrap" Text="{Binding SelectedProject.Owner, TargetNullValue=—}" AutomationProperties.AutomationId="SelectedProjectOwner" />
-                                    <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="{StaticResource Brush.MutedText}" Text="Project manager" />
-                                    <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SelectedProject.ProjectManager, TargetNullValue=—}" AutomationProperties.AutomationId="SelectedProjectManager" />
-                                    <TextBlock Grid.Row="2" Margin="0,4,0,0" Foreground="{StaticResource Brush.MutedText}" Text="Created" />
-                                    <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,4,0,0" Text="{Binding SelectedProject.CreatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}" />
-                                    <TextBlock Grid.Row="3" Margin="0,4,0,0" Foreground="{StaticResource Brush.MutedText}" Text="Updated" />
-                                    <TextBlock Grid.Row="3" Grid.Column="1" Margin="0,4,0,0" Text="{Binding SelectedProject.UpdatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}" />
-                                </Grid>
+                                    <!-- Busy: a lifecycle write is pending (its commands are disabled meanwhile). -->
+                                    <TextBlock Margin="8,0,4,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="Working…"
+                                               AutomationProperties.AutomationId="WorkspaceBusy"
+                                               Visibility="{Binding IsLifecycleBusy, Converter={StaticResource BoolToVisibility}}" />
 
-                                <TextBlock Margin="0,12,0,2" Foreground="{StaticResource Brush.MutedText}" Text="Description" />
-                                <TextBlock TextWrapping="Wrap" Text="{Binding SelectedProject.Description, TargetNullValue=—}" AutomationProperties.AutomationId="SelectedProjectDescription" />
-
-                                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                    <Button Content="Edit…" Style="{StaticResource PrimaryButton}" Command="{Binding EditProjectCommand}" AutomationProperties.Name="Edit Project" />
-                                    <Button Margin="8,0,0,0" Content="Move to…" Command="{Binding MoveCommand}" />
-                                    <Button Margin="8,0,0,0" Content="Move to Trash…" Command="{Binding TrashProjectCommand}" AutomationProperties.Name="Move project to Trash (details)" />
-                                    <Button Margin="8,0,0,0" Content="Archive…" Command="{Binding ArchiveProjectCommand}" AutomationProperties.Name="Archive project (details)" />
-                                </StackPanel>
-                            </StackPanel>
+                                    <!-- More (⋯): always visible; the same menu as the tree's right-click menu. -->
+                                    <Button x:Name="SelectionMoreButton" Style="{StaticResource IconPillButton}" Margin="6,1,2,1"
+                                            AutomationProperties.Name="More actions" ToolTip="More actions" Click="SelectionMoreButton_Click"
+                                            ContextMenu="{StaticResource WorkspaceSelectionMenu}">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.More}" />
+                                    </Button>
+                                </WrapPanel>
+                            </Border>
                         </StackPanel>
-                    </ScrollViewer>
+
+                        <!-- A folder (or nothing) selected: the hint below the strip. -->
+                        <TextBlock Grid.Row="1" Grid.Column="0" Margin="20,8,20,12" HorizontalAlignment="Left" VerticalAlignment="Top" TextWrapping="Wrap"
+                                   Style="{StaticResource FieldHint}" Text="Folders are WorkHub references only. Select a project to see its content."
+                                   Visibility="{Binding IsFolderSelected, Converter={StaticResource BoolToVisibility}}" />
 
                     <!-- Project content: ProjectFolders and Links of one container at a time (never shown in the tree). -->
-                    <DockPanel Grid.Row="1" Margin="20,0,20,12" DataContext="{Binding SelectedContent}">
+                    <DockPanel Grid.Row="1" Grid.Column="0" Margin="20,0,20,12" DataContext="{Binding SelectedContent}">
                         <DockPanel.Style>
                             <Style TargetType="DockPanel">
                                 <Style.Triggers>
@@ -1137,11 +1390,23 @@
                             </Style>
                         </DockPanel.Style>
 
-                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0" Padding="0,10,0,0" Margin="0,4,0,0">
-                            <StackPanel>
-                                <TextBlock Style="{StaticResource SectionHeader}" Margin="0" Text="CONTENT" />
-                                <ItemsControl Margin="0,4,0,0" ItemsSource="{Binding Breadcrumb}" AutomationProperties.Name="Content location"
-                                              Focusable="False">
+                        <!--
+                            Phase 13A content header: ONE wrapping row with the breadcrumb and the content actions (they wrap to a
+                            second line only when the pane is too narrow). Actions without a label keep their accessible name and
+                            tooltip; keys and the content right-click menu are unchanged.
+                        -->
+                        <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Brush.Border}" BorderThickness="0,1,0,0" Padding="0,3,0,0"
+                                Background="Transparent" Tag="{Binding DataContext, ElementName=WorkspaceTree}">
+                            <!-- Right-click: show or hide only the content toolbar (the breadcrumb always stays). -->
+                            <Border.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Show content toolbar" Command="{Binding PlacementTarget.Tag.Preferences.ShowContentToolbarCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                    <MenuItem Header="Hide content toolbar" Command="{Binding PlacementTarget.Tag.Preferences.HideContentToolbarCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                </ContextMenu>
+                            </Border.ContextMenu>
+                            <WrapPanel x:Name="ContentHeaderRow">
+                                <ItemsControl x:Name="ContentBreadcrumb" Margin="0,1,12,1" VerticalAlignment="Center" ItemsSource="{Binding Breadcrumb}"
+                                              AutomationProperties.Name="Content location" Focusable="False">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <WrapPanel />
@@ -1162,49 +1427,115 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                            </StackPanel>
-                        </Border>
 
-                        <WrapPanel DockPanel.Dock="Top" Margin="0,4,0,4" Visibility="{Binding IsTrashOpen, Converter={StaticResource InverseBoolToVisibility}}">
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding GoUpCommand}" AutomationProperties.Name="Up one level" ToolTip="Up one level (Backspace)">
-                                <TextBlock Style="{StaticResource Icon}" Text="&#xE74A;" />
-                            </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewFolderCommand}" AutomationProperties.Name="New content folder" ToolTip="New folder (a WorkHub reference only)">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE8F4;" />
-                                    <TextBlock Margin="6,0,0,0" Text="Folder" />
-                                </StackPanel>
-                            </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewLinkCommand}" AutomationProperties.Name="New link" ToolTip="New link to a folder, file or web page">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE71B;" />
-                                    <TextBlock Margin="6,0,0,0" Text="Link" />
-                                </StackPanel>
-                            </Button>
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding NewNoteCommand}" AutomationProperties.Name="New note" ToolTip="New plain-text note">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE70B;" />
-                                    <TextBlock Margin="6,0,0,0" Text="Note" />
-                                </StackPanel>
-                            </Button>
-                            <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}" AutomationProperties.Name="Open" ToolTip="Open (Enter)" Content="Open" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding EditCommand}" AutomationProperties.Name="Edit content item" ToolTip="Rename folder / edit link / edit note (F2)" Content="Edit…" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move content item" ToolTip="Move within this project" Content="Move to…" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding MoveToTrashCommand}" AutomationProperties.Name="Move to Trash" ToolTip="Move to the Trash (Del). Files on disk are not touched.">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Style="{StaticResource Icon}" Text="&#xE74D;" />
-                                    <TextBlock Margin="6,0,0,0" Text="Move to Trash" />
-                                </StackPanel>
-                            </Button>
-                            <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding CheckCommand}" AutomationProperties.Name="Check link" ToolTip="Check whether the selected link's folder or file can be found" Content="Check" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding CheckAllCommand}" AutomationProperties.Name="Check all links" ToolTip="Check every link in this folder" Content="Check all" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding StopCheckingCommand}" AutomationProperties.Name="Stop checking" ToolTip="Stop checking" Content="Stop" />
-                            <Border Width="1" Margin="6,4" Background="{StaticResource Brush.Border}" />
-                            <Button Style="{StaticResource ToolButton}" Command="{Binding OpenTrashCommand}" AutomationProperties.Name="Open Trash" ToolTip="This project's Trash" Content="{Binding TrashButtonText}"
-                                    AutomationProperties.AutomationId="OpenTrash" />
-                        </WrapPanel>
+                                <!-- The content toolbar (Settings → Workspace → "Show the content toolbar"); not shown in the project Trash. -->
+                                <WrapPanel x:Name="ContentToolbar" Margin="0,1" AutomationProperties.Name="Content toolbar">
+                                    <WrapPanel.Style>
+                                        <Style TargetType="WrapPanel">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding IsTrashOpen}" Value="False" />
+                                                        <Condition Binding="{Binding DataContext.ShowContentToolbar, ElementName=WorkspaceTree}" Value="True" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </WrapPanel.Style>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding GoUpCommand}" AutomationProperties.Name="Up one level" ToolTip="Up one level (Backspace)">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Up}" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding NewFolderCommand}" AutomationProperties.Name="New content folder" ToolTip="New folder (a WorkHub reference only)">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderAdd}" />
+                                            <TextBlock Margin="6,0,0,0" Text="Folder" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding NewLinkCommand}" AutomationProperties.Name="New link" ToolTip="New link to a folder, file or web page">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.LinkAdd}" />
+                                            <TextBlock Margin="6,0,0,0" Text="Link" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding NewNoteCommand}" AutomationProperties.Name="New note" ToolTip="New plain-text note">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.NoteAdd}" />
+                                            <TextBlock Margin="6,0,0,0" Text="Note" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Border Width="1" Margin="4,5" Background="{StaticResource Brush.Border}" />
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding OpenCommand}" AutomationProperties.Name="Open" ToolTip="Open (Enter)">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Open}" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding EditCommand}" AutomationProperties.Name="Edit content item" ToolTip="Edit… — rename folder / edit link / edit note (F2)">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move content item" ToolTip="Move to… — within this project">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding MoveToTrashCommand}" AutomationProperties.Name="Move to Trash" ToolTip="Move to the Trash (Del). Files on disk are not touched.">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                                    </Button>
+                                    <Border Width="1" Margin="4,5" Background="{StaticResource Brush.Border}" />
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding CheckCommand}" AutomationProperties.Name="Check link" ToolTip="Check — whether the selected link's folder or file can be found">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Check}" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding CheckAllCommand}" AutomationProperties.Name="Check all links" ToolTip="Check all — every link in this folder">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.CheckAll}" />
+                                    </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding StopCheckingCommand}" AutomationProperties.Name="Stop checking" ToolTip="Stop checking">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Stop}" />
+                                    </Button>
+                                    <Border Width="1" Margin="4,5" Background="{StaticResource Brush.Border}" />
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding OpenTrashCommand}" AutomationProperties.Name="Open Trash" ToolTip="This project's Trash" Content="{Binding TrashButtonText}"
+                                            AutomationProperties.AutomationId="OpenTrash" />
+                                </WrapPanel>
+
+                                <!-- The content toolbar hidden: one compact More (⋯) with every content action, including Up and Trash. -->
+                                <Button x:Name="ContentMoreButton" Margin="0,1"
+                                        AutomationProperties.Name="More content actions" ToolTip="Content actions (the content toolbar is hidden)"
+                                        Click="ContentMoreButton_Click" Tag="{Binding DataContext, ElementName=WorkspaceTree}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource IconPillButton}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding IsTrashOpen}" Value="False" />
+                                                        <Condition Binding="{Binding DataContext.ShowContentToolbar, ElementName=WorkspaceTree}" Value="False" />
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <Button.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="Up one level" InputGestureText="Backspace" Command="{Binding GoUpCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Up}" /></MenuItem.Icon></MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderAdd}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="New Link…" Command="{Binding NewLinkCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.LinkAdd}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="New Note…" Command="{Binding NewNoteCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.NoteAdd}" /></MenuItem.Icon></MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Open}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Move to…" Command="{Binding MoveCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Move to Trash" InputGestureText="Del" Command="{Binding MoveToTrashCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="Check" Command="{Binding CheckCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Check}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Check all" Command="{Binding CheckAllCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.CheckAll}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Stop checking" Command="{Binding StopCheckingCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Stop}" /></MenuItem.Icon></MenuItem>
+                                            <Separator />
+                                            <MenuItem Header="{Binding TrashButtonText}" Command="{Binding OpenTrashCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Show content toolbar" Command="{Binding PlacementTarget.Tag.Preferences.ShowContentToolbarCommand, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                        </ContextMenu>
+                                    </Button.ContextMenu>
+                                    <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.More}" />
+                                </Button>
+                            </WrapPanel>
+                        </Border>
 
                         <Border DockPanel.Dock="Top" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
                             <Border.Style>
@@ -1249,7 +1580,7 @@
                                 <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DataContext.CloseTrashCommand, ElementName=ContentArea}"
                                         AutomationProperties.Name="Back to content" ToolTip="Back to the folder that was shown">
                                     <StackPanel Orientation="Horizontal">
-                                        <TextBlock Style="{StaticResource Icon}" Text="&#xE72B;" />
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Back}" />
                                         <TextBlock Margin="6,0,0,0" Text="Back" />
                                     </StackPanel>
                                 </Button>
@@ -1281,7 +1612,7 @@
                                                     <ColumnDefinition Width="70" />
                                                     <ColumnDefinition Width="120" />
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" VerticalAlignment="Center" />
+                                                <Image x:Name="Glyph" VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Folder}" />
                                                 <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                                 <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
                                                            Text="{Binding FromText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding FromText}" />
@@ -1290,12 +1621,10 @@
                                             </Grid>
                                             <DataTemplate.Triggers>
                                                 <DataTrigger Binding="{Binding IsLink}" Value="True">
-                                                    <Setter TargetName="Glyph" Property="Text" Value="&#xE71B;" />
-                                                    <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                                    <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Link}" />
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding IsNote}" Value="True">
-                                                    <Setter TargetName="Glyph" Property="Text" Value="&#xE70B;" />
-                                                    <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.MutedText}" />
+                                                    <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Note}" />
                                                 </DataTrigger>
                                             </DataTemplate.Triggers>
                                         </DataTemplate>
@@ -1336,7 +1665,7 @@
                                                 <!-- Fixed width keeps the Target column aligned across rows (each row is its own Grid). -->
                                                 <ColumnDefinition Width="170" />
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" Text="&#xE8B7;" Foreground="{StaticResource Brush.Warning}" VerticalAlignment="Center" />
+                                            <Image x:Name="Glyph" VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Folder}" />
                                             <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
                                                        Text="{Binding DetailText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DetailText}" />
@@ -1345,20 +1674,16 @@
                                         </Grid>
                                         <DataTemplate.Triggers>
                                             <DataTrigger Binding="{Binding KindText}" Value="Web">
-                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE774;" />
-                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.WebLink}" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding KindText}" Value="File">
-                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE8A5;" />
-                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.FileLink}" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding KindText}" Value="Folder link">
-                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE838;" />
-                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Accent}" />
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.FolderLink}" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding KindText}" Value="Note">
-                                                <Setter TargetName="Glyph" Property="Text" Value="&#xE70B;" />
-                                                <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.MutedText}" />
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Note}" />
                                             </DataTrigger>
                                             <DataTrigger Binding="{Binding IsStatusUnverified}" Value="True">
                                                 <Setter TargetName="Status" Property="Foreground" Value="{StaticResource Brush.Warning}" />
@@ -1371,18 +1696,18 @@
                                 </ListView.ItemTemplate>
                                 <ListView.ContextMenu>
                                     <ContextMenu>
-                                        <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}" />
-                                        <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}" />
-                                        <MenuItem Header="Move to…" Command="{Binding MoveCommand}" />
-                                        <MenuItem Header="Move to Trash" InputGestureText="Del" Command="{Binding MoveToTrashCommand}" />
-                                        <MenuItem Header="Check" Command="{Binding CheckCommand}" />
+                                        <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Open}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="Move to…" Command="{Binding MoveCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="Move to Trash" InputGestureText="Del" Command="{Binding MoveToTrashCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="Check" Command="{Binding CheckCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Check}" /></MenuItem.Icon></MenuItem>
                                         <Separator />
-                                        <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}" />
-                                        <MenuItem Header="New Link…" Command="{Binding NewLinkCommand}" />
-                                        <MenuItem Header="New Note…" Command="{Binding NewNoteCommand}" />
+                                        <MenuItem Header="New Folder…" Command="{Binding NewFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderAdd}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="New Link…" Command="{Binding NewLinkCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.LinkAdd}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="New Note…" Command="{Binding NewNoteCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.NoteAdd}" /></MenuItem.Icon></MenuItem>
                                         <Separator />
-                                        <MenuItem Header="Check all" Command="{Binding CheckAllCommand}" />
-                                        <MenuItem Header="Stop checking" Command="{Binding StopCheckingCommand}" />
+                                        <MenuItem Header="Check all" Command="{Binding CheckAllCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.CheckAll}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="Stop checking" Command="{Binding StopCheckingCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Stop}" /></MenuItem.Icon></MenuItem>
                                     </ContextMenu>
                                 </ListView.ContextMenu>
                             </ListView>
@@ -1443,6 +1768,98 @@
                         </Border>
                         </Grid>
                     </DockPanel>
+
+                        <!--
+                            Phase 13A Info drawer: right of Content (300 px); below 640 px pane width an overlay sheet over Content.
+                            It shows the CURRENT selection (bindings follow SelectedProject / SelectedNode); Esc or ✕ closes it.
+                        -->
+                        <Border x:Name="InfoDrawer" Grid.Row="1" Width="300" Margin="0,0,20,12" Padding="14,10"
+                                CornerRadius="10" Background="{StaticResource Brush.Surface}" BorderBrush="{StaticResource Brush.ControlBorder}" BorderThickness="1"
+                                AutomationProperties.Name="Info" AutomationProperties.AutomationId="InfoDrawer"
+                                IsKeyboardFocusWithinChanged="InfoDrawer_IsKeyboardFocusWithinChanged">
+                            <Border.InputBindings>
+                                <KeyBinding Key="Escape" Command="{Binding CloseInfoCommand}" />
+                            </Border.InputBindings>
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Grid.Column" Value="1" />
+                                    <Setter Property="Grid.ColumnSpan" Value="1" />
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsInfoOpen}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                        <!-- Narrow: an overlay sheet over Content instead of narrowing it. -->
+                                        <DataTrigger Binding="{Binding ActualWidth, ElementName=SelectionPane, Converter={StaticResource NarrowerThanInfoDrawer}}" Value="True">
+                                            <Setter Property="Grid.Column" Value="0" />
+                                            <Setter Property="Grid.ColumnSpan" Value="2" />
+                                            <Setter Property="HorizontalAlignment" Value="Right" />
+                                            <Setter Property="Panel.ZIndex" Value="10" />
+                                            <Setter Property="KeyboardNavigation.TabNavigation" Value="Cycle" />
+                                            <Setter Property="Effect">
+                                                <Setter.Value>
+                                                    <DropShadowEffect BlurRadius="16" ShadowDepth="2" Opacity="0.25" />
+                                                </Setter.Value>
+                                            </Setter>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <DockPanel>
+                                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                                    <Button x:Name="InfoCloseButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Padding="6,2"
+                                            Command="{Binding CloseInfoCommand}" AutomationProperties.Name="Close info" ToolTip="Close (Esc)">
+                                        <Image Style="{StaticResource IconImage}" Width="12" Height="12" Source="{StaticResource Img.Dismiss}" />
+                                    </Button>
+                                    <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" FontSize="14" Text="Info" />
+                                </DockPanel>
+
+                                <!-- Project -->
+                                <Grid DockPanel.Dock="Top" Visibility="{Binding SelectedProject, Converter={StaticResource NullToCollapsed}}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition /><RowDefinition />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0" Margin="0,0,12,4" Foreground="{StaticResource Brush.MutedText}" Text="Owner" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Margin="0,0,0,4" TextWrapping="Wrap" Text="{Binding SelectedProject.Owner, TargetNullValue=—}"
+                                               AutomationProperties.AutomationId="SelectedProjectOwner" />
+                                    <TextBlock Grid.Row="1" Margin="0,0,12,4" Foreground="{StaticResource Brush.MutedText}" Text="Project manager" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,0,0,4" TextWrapping="Wrap" Text="{Binding SelectedProject.ProjectManager, TargetNullValue=—}"
+                                               AutomationProperties.AutomationId="SelectedProjectManager" />
+                                    <TextBlock Grid.Row="2" Margin="0,0,12,4" Foreground="{StaticResource Brush.MutedText}" Text="Location" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,0,0,4" TextWrapping="Wrap" Text="{Binding SelectedLocation}"
+                                               AutomationProperties.AutomationId="InfoLocation" />
+                                    <TextBlock Grid.Row="3" Margin="0,0,12,4" Foreground="{StaticResource Brush.MutedText}" Text="Status" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" Margin="0,0,0,4" Text="{Binding SelectedProjectStatus}" AutomationProperties.AutomationId="InfoStatus" />
+                                    <TextBlock Grid.Row="4" Margin="0,0,12,4" Foreground="{StaticResource Brush.MutedText}" Text="Created" />
+                                    <TextBlock Grid.Row="4" Grid.Column="1" Margin="0,0,0,4" Text="{Binding SelectedProject.CreatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}" />
+                                    <TextBlock Grid.Row="5" Margin="0,0,12,4" Foreground="{StaticResource Brush.MutedText}" Text="Updated" />
+                                    <TextBlock Grid.Row="5" Grid.Column="1" Margin="0,0,0,4" Text="{Binding SelectedProject.UpdatedAt.LocalDateTime, StringFormat='yyyy-MM-dd HH:mm'}" />
+                                </Grid>
+                                <Button DockPanel.Dock="Bottom" HorizontalAlignment="Left" Margin="0,10,0,0" Content="Edit…" Command="{Binding EditProjectCommand}"
+                                        AutomationProperties.Name="Edit Project (info)" Visibility="{Binding SelectedProject, Converter={StaticResource NullToCollapsed}}" />
+                                <DockPanel Visibility="{Binding SelectedProject, Converter={StaticResource NullToCollapsed}}">
+                                    <TextBlock DockPanel.Dock="Top" Margin="0,6,0,2" Foreground="{StaticResource Brush.MutedText}" Text="Description" />
+                                    <TextBox IsReadOnly="True" BorderThickness="0" Background="Transparent" Padding="0" TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto" Text="{Binding SelectedProject.Description, Mode=OneWay, TargetNullValue=—}"
+                                             AutomationProperties.Name="Project description" AutomationProperties.AutomationId="SelectedProjectDescription" />
+                                </DockPanel>
+
+                                <!-- Folder -->
+                                <StackPanel DockPanel.Dock="Top" Visibility="{Binding IsFolderSelected, Converter={StaticResource BoolToVisibility}}">
+                                    <TextBlock Foreground="{StaticResource Brush.MutedText}" Text="Location" />
+                                    <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" Text="{Binding SelectedNode.Path}" AutomationProperties.AutomationId="InfoFolderPath" />
+                                    <TextBlock TextWrapping="Wrap" AutomationProperties.AutomationId="InfoFolderCounts"
+                                               Visibility="{Binding SelectedFolderInfo, Converter={StaticResource NullToCollapsed}}">
+                                        <Run Text="{Binding SelectedFolderInfo.ActiveChildren, Mode=OneWay}" /><Run Text=" visible items · " /><Run Text="{Binding SelectedFolderInfo.ArchivedChildren, Mode=OneWay}" /><Run Text=" archived projects · " /><Run Text="{Binding SelectedFolderInfo.TrashedChildren, Mode=OneWay}" /><Run Text=" in the Trash" />
+                                    </TextBlock>
+                                    <TextBlock Style="{StaticResource FieldHint}" Text="Folders are WorkHub references only; nothing on disk belongs to them." />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
                     </Grid>
                 </Grid>
             </TabItem>

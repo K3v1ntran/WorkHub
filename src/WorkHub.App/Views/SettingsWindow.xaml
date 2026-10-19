@@ -225,6 +225,30 @@
                     </Border>
                 </StackPanel>
 
+                <!--
+                    Phase 13A Workspace page: one checkbox per toolbar, each saved on its own (with Save, like every page). A
+                    hidden toolbar is always restored here.
+                -->
+                <StackPanel Visibility="{Binding IsWorkspaceSelected, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock Margin="0,10,0,0" FontSize="16" FontWeight="SemiBold" Text="Workspace" />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="0,6,0,0" TextWrapping="Wrap"
+                               Text="Each toolbar is shown or hidden on its own. When one is hidden, its actions stay in More (⋯), the right-click menus and the keys." />
+                    <CheckBox Margin="0,14,0,0" Content="Show the tree toolbar" IsChecked="{Binding ShowTreeToolbar}"
+                              AutomationProperties.Name="Show the tree toolbar" />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="22,3,0,0"
+                               Text="New Folder, New Project, Rename, Move, Archive, Trash and Remove above the tree. Search and LIBRARY stay." />
+                    <CheckBox Margin="0,12,0,0" Content="Show the selection toolbar" IsChecked="{Binding ShowSelectionToolbar}"
+                              AutomationProperties.Name="Show the selection toolbar" />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="22,3,0,0"
+                               Text="Edit, Move, Archive and Trash beside the selected project or folder. Status, dates, Info and More stay." />
+                    <CheckBox Margin="0,12,0,0" Content="Show the content toolbar" IsChecked="{Binding ShowContentToolbar}"
+                              AutomationProperties.Name="Show the content toolbar" />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="22,3,0,0"
+                               Text="New, Open, Edit, Move, Trash, Check and the project's Trash beside the content location. The location stays." />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="0,12,0,0"
+                               Text="Other open WorkHub windows use the new values after they restart." />
+                </StackPanel>
+
                 <!-- Data page: Backups (Phase 9 list and checks; Phase 10 Restore…). Nothing here deletes or overwrites a backup. -->
                 <views:BackupsPanel DataContext="{Binding Backups}"
                                     Visibility="{Binding DataContext.IsBackupsSelected, RelativeSource={RelativeSource AncestorType=ScrollViewer}, Converter={StaticResource BoolToVisibility}}" />
@@ -237,14 +261,13 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type settings:SettingsIssue}">
                             <StackPanel Orientation="Horizontal" Margin="0,1">
-                                <TextBlock x:Name="Glyph" Style="{StaticResource Icon}" FontSize="12" Text="&#xE7BA;" Foreground="{StaticResource Brush.Warning}" />
+                                <Image x:Name="Glyph" Style="{StaticResource IconImage}" Width="14" Height="14" Source="{StaticResource Img.Warning}" />
                                 <TextBlock x:Name="Message" Margin="6,0,0,0" TextWrapping="Wrap" Text="{Binding Message}" Foreground="{StaticResource Brush.Warning}" />
                                 <TextBlock Margin="6,0,0,0" FontSize="11" Foreground="{StaticResource Brush.MutedText}" Text="{Binding Section, StringFormat=({0})}" />
                             </StackPanel>
                             <DataTemplate.Triggers>
                                 <DataTrigger Binding="{Binding Severity}" Value="{x:Static settings:IssueSeverity.Error}">
-                                    <Setter TargetName="Glyph" Property="Text" Value="&#xEA39;" />
-                                    <Setter TargetName="Glyph" Property="Foreground" Value="{StaticResource Brush.Error}" />
+                                    <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Error}" />
                                     <Setter TargetName="Message" Property="Foreground" Value="{StaticResource Brush.Error}" />
                                 </DataTrigger>
                             </DataTemplate.Triggers>

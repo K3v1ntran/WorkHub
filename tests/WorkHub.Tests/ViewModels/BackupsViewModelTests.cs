@@ -194,7 +194,7 @@ public sealed class BackupsViewModelTests : IDisposable
         var vm = new SettingsViewModel(settings, new SystemService(new SqliteSystemStore(new SqliteConnectionFactory(_root.Paths.DatabaseFile))),
             _root.CreateLegacyImportService(), new FakeDialogs(), () => null, backups: new BackupsViewModel(catalog));
 
-        Assert.Equal(["REPOSITORY", "REPOSITORY", "DATA", "DATA"], vm.Pages.Select(p => p.Group));
+        Assert.Equal(["REPOSITORY", "REPOSITORY", "WORKSPACE", "DATA", "DATA"], vm.Pages.Select(p => p.Group)); // Phase 13A Workspace page
         Assert.Equal(0, catalog.ListCalls);
         vm.SelectedPage = vm.Pages.Single(p => p.Page == SettingsPage.Backups);
 

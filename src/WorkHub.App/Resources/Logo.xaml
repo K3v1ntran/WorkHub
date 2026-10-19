@@ -1,0 +1,92 @@
+<!--
+    WorkHub logo A, "Hub tile" (Phase 13A, chosen by the user). The single vector source for the header brand mark,
+    the window icon and WorkHub.ico (the .ico frames are rendered from THIS file; see the Phase 13A notes).
+    Logo.Master: 64-unit design for 32 px and larger. Logo.Small: separately drawn 16-unit variant for 16-24 px
+    (four shapes, thicker spokes, pixel-aligned). Each drawing starts with a transparent full-size square so that its
+    bounds are exactly 0..64 / 0..16 and it scales without shifting.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <DrawingImage x:Key="Logo.Master">
+        <DrawingImage.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="Transparent" Geometry="M0,0 H64 V64 H0 Z" />
+                <GeometryDrawing>
+                    <GeometryDrawing.Brush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Offset="0" Color="#FF2B8CFF" />
+                            <GradientStop Offset="1" Color="#FF0F62C9" />
+                        </LinearGradientBrush>
+                    </GeometryDrawing.Brush>
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="2,2,60,60" RadiusX="14" RadiusY="14" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Geometry="M32,34 L17,19 M32,34 L47,19 M32,34 L32,51">
+                    <GeometryDrawing.Pen>
+                        <Pen Brush="#FFFFFFFF" Thickness="4" StartLineCap="Round" EndLineCap="Round" />
+                    </GeometryDrawing.Pen>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFFFFF">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="32,34" RadiusX="8" RadiusY="8" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFFFFF">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="17,19" RadiusX="5.5" RadiusY="5.5" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFC53D">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="47,19" RadiusX="5.5" RadiusY="5.5" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFFFFF">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="32,51" RadiusX="5.5" RadiusY="5.5" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+            </DrawingGroup>
+        </DrawingImage.Drawing>
+    </DrawingImage>
+
+    <DrawingImage x:Key="Logo.Small">
+        <DrawingImage.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="Transparent" Geometry="M0,0 H16 V16 H0 Z" />
+                <GeometryDrawing Brush="#FF1474E0">
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="0.5,0.5,15,15" RadiusX="3.5" RadiusY="3.5" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Geometry="M8,8.5 L4,4.5 M8,8.5 L12,4.5 M8,8.5 L8,12.5">
+                    <GeometryDrawing.Pen>
+                        <Pen Brush="#FFFFFFFF" Thickness="1.6" StartLineCap="Round" EndLineCap="Round" />
+                    </GeometryDrawing.Pen>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFFFFF">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="8,8.5" RadiusX="2.2" RadiusY="2.2" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFFFFF">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="4,4.5" RadiusX="1.6" RadiusY="1.6" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFC53D">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="12,4.5" RadiusX="1.6" RadiusY="1.6" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Brush="#FFFFFFFF">
+                    <GeometryDrawing.Geometry>
+                        <EllipseGeometry Center="8,12.5" RadiusX="1.6" RadiusY="1.6" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+            </DrawingGroup>
+        </DrawingImage.Drawing>
+    </DrawingImage>
+</ResourceDictionary>

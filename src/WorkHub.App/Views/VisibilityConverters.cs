@@ -23,3 +23,15 @@ public sealed class InverseBoolToVisibilityConverter : IValueConverter
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
         throw new NotSupportedException();
 }
+
+/// <summary>Phase 13A: a width (double) → true when it is greater than 0 and less than <see cref="Threshold"/>.</summary>
+public sealed class LessThanConverter : IValueConverter
+{
+    public double Threshold { get; set; }
+
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture) =>
+        value is double width && width > 0 && width < Threshold;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
+}

@@ -1,5 +1,6 @@
 using WorkHub.Presentation.Mvvm;
 using WorkHub.Presentation.Services;
+using WorkHub.Core.Backup;
 using WorkHub.Core.Diagnostics;
 using WorkHub.Core.Restore;
 using WorkHub.Core.Settings;
@@ -32,6 +33,7 @@ public sealed class MainViewModel(
 
     private ShellState _state = ShellState.Initializing;
     private string _statusText = "Starting…";
+    private string? _technicalStatus;
     private string? _errorMessage;
     private string? _warningMessage;
     private bool _isRecoveryRequired;
@@ -71,10 +73,47 @@ public sealed class MainViewModel(
     /// <summary>The <c>--data-root</c> folder when WorkHub runs on isolated data; null for the normal profile.</summary>
     public string? CustomDataRoot { get; init; }
 
+    /// <summary>
+    /// The startup status. Phase 13A: the header shows it only while it is not routine (starting, failed, closing); once
+    /// Ready, the schema and backup details are in <see cref="TechnicalStatus"/> (Settings → Backups and the brand tooltip).
+    /// </summary>
     public string StatusText
     {
         get => _statusText;
         private set => SetProperty(ref _statusText, value);
+    }
+
+    /// <summary>The application version shown in the brand tooltip (set by the composition root).</summary>
+    public string? AppVersion { get; init; }
+
+    /// <summary>"Database schema v8 · Today's backup: …" once startup succeeded; null before.</summary>
+    public string? TechnicalStatus
+    {
+        get => _technicalStatus;
+        private set
+        {
+            if (SetProperty(ref _technicalStatus, value))
+                OnPropertyChanged(nameof(BrandToolTip));
+        }
+    }
+
+    /// <summary>The brand mark's tooltip and accessible help text.</summary>
+    public string BrandToolTip => TechnicalStatus is null
+        ? $"WorkHub {AppVersion}".TrimEnd()
+        : $"WorkHub {AppVersion}".TrimEnd() + Environment.NewLine + TechnicalStatus;
+
+    /// <summary>The Settings → Backups status line for one startup result.</summary>
+    public static string TechnicalStatusFor(int schemaVersion, DailyBackupResult? backup)
+    {
+        var schema = $"Database schema v{schemaVersion}";
+        return backup switch
+        {
+            null => $"{schema} · Daily backup did not run.",
+            { Outcome: DailyBackupOutcome.Created, FileName: { } created } => $"{schema} · Today's backup: {created} (created now)",
+            { Outcome: DailyBackupOutcome.AlreadyDone, FileName: { } existing } => $"{schema} · Today's backup: {existing}",
+            { BackedUpToday: true } => $"{schema} · Backed up today",
+            _ => $"{schema} · No backup was made today (see the notice above the tabs).",
+        };
     }
 
     public string? ErrorMessage
@@ -143,6 +182,7 @@ public sealed class MainViewModel(
             StatusText = result.DailyBackup?.BackedUpToday == true
                 ? $"Ready · schema v{result.Database.SchemaVersion} · backed up today"
                 : $"Ready · schema v{result.Database.SchemaVersion}";
+            TechnicalStatus = TechnicalStatusFor(result.Database.SchemaVersion, result.DailyBackup);
             State = ShellState.Ready;
         }
         catch (RestoreStartupException ex)

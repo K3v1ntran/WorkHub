@@ -4,11 +4,20 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+             xmlns:views="clr-namespace:WorkHub.App.Views"
              mc:Ignorable="d"
              d:DataContext="{d:DesignInstance Type=vm:BackupsViewModel}">
+    <UserControl.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsedLocal" />
+    </UserControl.Resources>
     <!-- Database backups (Phase 9 list and checks; Phase 10 Restore…). Nothing here deletes or overwrites a backup. -->
     <StackPanel>
         <TextBlock Margin="0,10,0,0" FontSize="16" FontWeight="SemiBold" Text="Database backups" />
+        <!-- Phase 13A: the schema / today's backup details formerly shown in the main window header. -->
+        <Border Margin="0,8,0,2" Padding="10,6" CornerRadius="8" Background="{StaticResource Brush.Strip}" BorderBrush="{StaticResource Brush.Border}" BorderThickness="1"
+                Visibility="{Binding StatusLine, Converter={StaticResource NullToCollapsedLocal}}">
+            <TextBlock TextWrapping="Wrap" Text="{Binding StatusLine}" AutomationProperties.AutomationId="BackupsStatusLine" />
+        </Border>
         <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{x:Static vm:BackupsViewModel.ScopeText}" AutomationProperties.AutomationId="BackupsScope" />
         <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{x:Static vm:BackupsViewModel.RetentionText}" />
         <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Foreground="{StaticResource Brush.Warning}" Text="{x:Static vm:BackupsViewModel.RecoveryText}" />

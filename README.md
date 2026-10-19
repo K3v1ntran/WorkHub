@@ -69,9 +69,40 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   its subfolders, and a name clash at the destination is rejected without changing anything.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
 
+**Layout.**
+- **Selection header.** Selecting a folder or project shows a compact header: its name and location, then one strip
+  with the project's status, Created and Updated dates, **Info**, the selection toolbar (Edit, Move, Archive, Move to
+  Trash; for a folder: Rename, Move, Remove) and **More (⋯)**. More holds the same menu as a right-click on the tree.
+  The selected project's **content fills the rest of the pane**. On narrow windows the strip wraps (dates are never
+  cut), and Move and Move to Trash are left to More.
+- **Info** (the Info button, **Ctrl+I**, or Info in the menus) opens a drawer beside the content with Owner, Project
+  manager, location, status, dates and Description, plus Edit…. For a folder it shows the location and what is
+  directly inside. It follows the selection, and closes with ✕, **Esc**, when nothing is selected, or when Trash or
+  Archived opens. On narrow windows it opens over the content.
+- **Toolbars.** Settings → Workspace has one checkbox per toolbar, all on by default, each saved on its own:
+  - **Show the tree toolbar**: New Folder, New Project, Rename, Move, Archive, Trash and Remove above the tree. When it
+    is hidden, a compact **More (⋯)** beside the search box opens the tree's menu.
+  - **Show the selection toolbar**: Edit, Move, Archive and Trash in the strip. Info and More stay.
+  - **Show the content toolbar**: the content actions beside the breadcrumb. When it is hidden, a compact **More (⋯)**
+    holds every content action, including Up one level and the project's Trash.
+
+  Hiding one toolbar never hides the others, search, the breadcrumb, the status and dates, Info, LIBRARY, the
+  right-click menus or the keys. A right-click on the tree toolbar, the strip or the content header shows or hides
+  only that toolbar, and Settings can always show a hidden one again. The choices are stored as
+  `ui.workspace.showTreeToolbar`, `showSelectionToolbar` and `showContentToolbar` in `settings.json` (a missing value
+  means shown) and are used by other open WorkHub windows after they restart.
+- **LIBRARY** (bottom of the left column): **Archived projects** (**Ctrl+Shift+A**) and **Trashed projects**
+  (**Ctrl+Shift+T**). It stays visible however long the tree is.
+- **Icons.** Folders, projects, links, notes and every action use one graphical icon each, the same in the tree, the
+  lists, the toolbars and the menus. They are original WorkHub artwork: vector drawings in
+  `src/WorkHub.App/Resources/Icons.xaml`, as is the WorkHub logo in `Resources/Logo.xaml`. No third-party icon set, icon
+  font or system icon is used, so no third-party licence notice applies.
+- **Status details.** The window header shows only the WorkHub mark, plus problems and the test-data-root indicator.
+  The database schema version and today's backup are shown in **Settings → Backups** and in the mark's tooltip.
+
 ### Workspace Trash (schema v7)
 
-**Move to Trash** (toolbar, context menu, the details pane or **Del** on a project; always confirmed) moves a whole
+**Move to Trash** (toolbar, context menu, the selection strip or **Del** on a project; always confirmed) moves a whole
 Project to the Workspace Trash. Only its marker changes: its details, project folders, links, notes and its own
 project Trash entries stay exactly as they are (names, content, note revisions, timestamps) and are read-only while it
 is in the Trash. Nothing on disk is touched.
@@ -81,7 +112,7 @@ is in the Trash. Nothing on disk is touched.
 - **Undo** (in the banner) restores it. Undo is offered only while you stay on the Workspace tab: leaving the tab (or
   Retry) withdraws it, and a move that completes after you left offers none. The project then selects itself only if you
   have not selected anything else since pressing Undo.
-- **Trashed projects (n)** (above the tree) lists them with the folder they came from and when; **Restore** (or Enter)
+- **Trashed projects (n)** (LIBRARY, bottom of the left column) lists them with the folder they came from and when; **Restore** (or Enter)
   puts the project back into that folder — by identity, wherever that folder is now — or the top level. A folder or
   project with the same name there refuses the restore; nothing is renamed, created or moved. Restoring never changes the
   selection; **Back** (or selecting a tree node) returns to it.
@@ -95,7 +126,7 @@ is in the Trash. Nothing on disk is touched.
 
 ### Project Archive (schema v8)
 
-**Archive** (toolbar, context menu or the details pane; always confirmed; no keyboard shortcut) takes a finished
+**Archive** (toolbar, context menu or the selection strip; always confirmed; no keyboard shortcut) takes a finished
 Project out of the tree without trashing it. Only its status (Archived) and an internal archive counter change: its
 place, name, details, project folders, links, notes and project Trash entries stay exactly as they are. Nothing on disk
 is touched.
@@ -106,7 +137,7 @@ is touched.
 - **Undo** (in the banner) restores the exact status it had, with the same rules as Undo after Move to Trash. It applies
   only to that archive: if another window unarchived the project, or unarchived and archived it again, Undo changes
   nothing and says so.
-- **Archived projects (n)** (above the tree) lists archived projects with the folder they are in. **Unarchive…** (or
+- **Archived projects (n)** (LIBRARY, bottom of the left column) lists archived projects with the folder they are in. **Unarchive…** (or
   Enter) asks for the status (Completed is preselected) and puts the project back into that folder, wherever it is now.
   Unarchive never changes the selection; **Back** (or selecting a tree node) returns to it.
 - An archived project keeps its name: creating, renaming or moving something to the same name in that folder is refused
@@ -299,7 +330,8 @@ computer's own time zone), after the database has been opened or upgraded, WorkH
 **Pre-migration backups (`Backups\Migrations\`).** Before a schema upgrade WorkHub makes the same kind of standalone,
 validated copy at the old version. If it cannot, the database is **not** upgraded and startup stops, as before.
 
-**Settings → Backups** lists the three folders and shows, for each backup, its date (Japan time), schema version, size,
+**Settings → Backups** starts with this start's status line (database schema version and today's backup), then lists the
+three folders and shows, for each backup, its date (Japan time), schema version, size,
 status and whether this version can use it. *Quick-checked* is a light check made when the list loads; **Validate**
 runs the full check (*Fully validated*). **Restore…** is described below. Nothing on the page deletes or overwrites a
 backup.

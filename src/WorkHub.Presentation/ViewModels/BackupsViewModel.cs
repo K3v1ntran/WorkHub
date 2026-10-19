@@ -45,6 +45,12 @@ public sealed class BackupsViewModel : ObservableObject
     private bool _isRestoring;
 
     /// <param name="requester">Phase 10 restore requests; null hides Restore… (read-only page).</param>
+    /// <summary>
+    /// Phase 13A: the technical status of this start ("Database schema v8 · Today's backup: …"), shown at the top of the
+    /// Backups page. This is where the details formerly shown in the main window header live now. Null hides the line.
+    /// </summary>
+    public string? StatusLine { get; init; }
+
     public BackupsViewModel(IBackupCatalog catalog, IRestoreRequester? requester = null, IDialogService? dialogs = null, IAppLifetime? lifetime = null, IAppLog? log = null)
     {
         _catalog = catalog;

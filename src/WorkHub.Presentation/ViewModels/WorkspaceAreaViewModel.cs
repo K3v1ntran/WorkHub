@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using WorkHub.Core.Diagnostics;
+using WorkHub.Core.Settings;
 using WorkHub.Core.Workspace;
 using WorkHub.Core.Workspace.Content;
 using WorkHub.Core.Workspace.Search;
@@ -66,6 +67,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     private UndoOffer? _undo;
     private bool _isTrashOpen;
     private bool _isArchivedOpen;
+    private bool _isInfoOpen;
+    private WorkspaceNodeState? _selectedFolderInfo;
+    private int _folderInfoVersion;
 
     /// <summary>
     /// The Undo of the latest Move to Trash or Archive, bound to the Workspace visit in which it started. An Archive's Undo
@@ -77,16 +81,32 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// <param name="checker">The application-wide manual link checker.</param>
     /// <param name="search">Workspace search; null leaves search out.</param>
     /// <param name="searchDelayMs">Search debounce (tests shorten it).</param>
+    /// <param name="settings">Phase 13A Workspace preferences (the selection toolbar); null leaves them out (toolbar shown).</param>
     public WorkspaceAreaViewModel(
         WorkspaceService workspace, IDialogService dialogs, IAppLog log,
         ProjectContentService? content = null, ILinkHealthChecker? checker = null,
-        WorkspaceSearchService? search = null, int searchDelayMs = WorkspaceSearchViewModel.DefaultDelayMs)
+        WorkspaceSearchService? search = null, int searchDelayMs = WorkspaceSearchViewModel.DefaultDelayMs,
+        SettingsService? settings = null)
     {
         _workspace = workspace;
         _dialogs = dialogs;
         _log = log;
         _content = content;
         _checker = checker;
+        if (settings is not null)
+        {
+            Preferences = new WorkspacePreferencesViewModel(settings, message => BannerMessage = message);
+            Preferences.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName is nameof(WorkspacePreferencesViewModel.ShowTreeToolbar)
+                    or nameof(WorkspacePreferencesViewModel.ShowSelectionToolbar)
+                    or nameof(WorkspacePreferencesViewModel.ShowContentToolbar))
+                    OnPropertyChanged(e.PropertyName);
+            };
+        }
+
+        ToggleInfoCommand = new RelayCommand(() => IsInfoOpen = !IsInfoOpen, () => IsInfoOpen || CanOpenInfo);
+        CloseInfoCommand = new RelayCommand(() => IsInfoOpen = false, () => IsInfoOpen);
         if (search is not null)
         {
             _resolveRunner = new LatestOnlyRunner<SearchItemRef, RevealResolution>((item, token) => search.ResolveAsync(item, token));
@@ -178,6 +198,109 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             OpenArchivedCommand.RaiseCanExecuteChanged();
             CloseArchivedCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(IsPanelOpen));
+            OnInfoAvailabilityChanged();
+        }
+    }
+
+    /// <summary>Phase 13A Workspace preferences; null when settings are not wired (every toolbar is then shown).</summary>
+    public WorkspacePreferencesViewModel? Preferences { get; }
+
+    /// <summary>The tree toolbar is shown; when hidden, a More (⋯) button beside search, the tree menu and keys remain.</summary>
+    public bool ShowTreeToolbar => Preferences?.ShowTreeToolbar ?? true;
+
+    /// <summary>The selection toolbar (Edit / Move / Archive / Trash) is shown; More, Info, menus and keys always remain.</summary>
+    public bool ShowSelectionToolbar => Preferences?.ShowSelectionToolbar ?? true;
+
+    /// <summary>The content toolbar is shown; when hidden, the breadcrumb, a More (⋯) button, the list menu and keys remain.</summary>
+    public bool ShowContentToolbar => Preferences?.ShowContentToolbar ?? true;
+
+    /// <summary>Info can be opened: something is selected and no panel replaces the selection view.</summary>
+    public bool CanOpenInfo => SelectedNode is not null && !IsPanelOpen;
+
+    /// <summary>The UI context the view model was created on (null in tests without one).</summary>
+    private readonly SynchronizationContext? _ui = SynchronizationContext.Current;
+
+    /// <summary>
+    /// The Info drawer (Phase 13A §5.4). It follows the selection: it shows whatever is selected now, and closes when nothing
+    /// is selected or the Trash / Archived panel opens. Session-only.
+    /// </summary>
+    public bool IsInfoOpen
+    {
+        get => _isInfoOpen;
+        set
+        {
+            if (!SetProperty(ref _isInfoOpen, value && CanOpenInfo))
+                return;
+            ToggleInfoCommand.RaiseCanExecuteChanged();
+            CloseInfoCommand.RaiseCanExecuteChanged();
+            StartFolderInfoLoad();
+        }
+    }
+
+    /// <summary>Ctrl+I, the Info button and the menus.</summary>
+    public RelayCommand ToggleInfoCommand { get; }
+
+    /// <summary>✕ and Esc in the drawer.</summary>
+    public RelayCommand CloseInfoCommand { get; }
+
+    /// <summary>Counts for the selected Folder while Info is open (null otherwise or while loading).</summary>
+    public WorkspaceNodeState? SelectedFolderInfo
+    {
+        get => _selectedFolderInfo;
+        private set => SetProperty(ref _selectedFolderInfo, value);
+    }
+
+    /// <summary>The most recent folder-info load; lets tests await it.</summary>
+    internal Task CurrentFolderInfoLoad { get; private set; } = Task.CompletedTask;
+
+    private void OnInfoAvailabilityChanged()
+    {
+        OnPropertyChanged(nameof(CanOpenInfo));
+        if (IsPanelOpen)
+        {
+            IsInfoOpen = false; // a panel replaces the selection view: close now
+        }
+        else if (SelectedNode is null)
+        {
+            // A tree selection change can deselect the old node before the new one is selected (a transient "nothing
+            // selected"). Info closes only if the selection is still empty once the current UI work item has finished.
+            if (_ui is null)
+                IsInfoOpen = false;
+            else
+                _ui.Post(_ => { if (SelectedNode is null) IsInfoOpen = false; }, null);
+        }
+        else
+        {
+            StartFolderInfoLoad();
+        }
+
+        ToggleInfoCommand.RaiseCanExecuteChanged();
+    }
+
+    private void StartFolderInfoLoad()
+    {
+        var version = ++_folderInfoVersion;
+        SelectedFolderInfo = null;
+        if (!IsInfoOpen || SelectedNode is not { IsFolder: true } folder)
+        {
+            CurrentFolderInfoLoad = Task.CompletedTask;
+            return;
+        }
+
+        CurrentFolderInfoLoad = LoadFolderInfoAsync(folder.Id, version);
+    }
+
+    private async Task LoadFolderInfoAsync(long folderId, int version)
+    {
+        try
+        {
+            var state = await _workspace.GetNodeStateAsync(folderId);
+            if (version == _folderInfoVersion)
+                SelectedFolderInfo = state;
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Loading folder info failed.", ex); // read only; the drawer shows the location without counts
         }
     }
 
@@ -194,6 +317,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             OpenTrashCommand.RaiseCanExecuteChanged();
             CloseTrashCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(IsPanelOpen));
+            OnInfoAvailabilityChanged();
         }
     }
 
@@ -306,19 +430,37 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             var previous = _selectedNode;
             _selectedNode = value;
             if (previous is not null)
+            {
                 previous.IsSelected = false;
+                previous.PropertyChanged -= OnSelectedNodeChanged;
+            }
+
             if (value is not null)
+            {
                 value.IsSelected = true;
+                value.PropertyChanged += OnSelectedNodeChanged;
+            }
 
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsFolderSelected));
+            OnPropertyChanged(nameof(SelectedLocation));
             RaiseWriteCommands();
             StartDetailsLoad();
             UpdateContent();
+            OnInfoAvailabilityChanged(); // Info follows the selection, or closes when nothing is selected
         }
     }
 
     public bool IsFolderSelected => SelectedNode?.IsFolder == true;
+
+    /// <summary>Where the selected node is: its parent folder's path, or "Workspace" at the top level (Phase 13A title line).</summary>
+    public string? SelectedLocation => SelectedNode is null ? null : SelectedNode.Parent?.Path ?? "Workspace";
+
+    private void OnSelectedNodeChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(WorkspaceNodeViewModel.Parent) or nameof(WorkspaceNodeViewModel.Path) or nameof(WorkspaceNodeViewModel.Name) or null)
+            OnPropertyChanged(nameof(SelectedLocation));
+    }
 
     /// <summary>Content (ProjectFolders and Links) of the selected Project; null for Folders, no selection, or when content is not wired.</summary>
     public ProjectContentViewModel? SelectedContent

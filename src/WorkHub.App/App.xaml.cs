@@ -38,7 +38,12 @@ public partial class App : Application
 
         var dialogs = new DialogService();
         var lifetime = new AppLifetime(options.Options);
-        BackupsViewModel Backups() => new(services.Backups, services.RestoreRequester, dialogs, lifetime, services.Log);
+        MainViewModel? main = null;
+        // Phase 13A: the Backups page shows this start's technical status (formerly in the header).
+        BackupsViewModel Backups() => new(services.Backups, services.RestoreRequester, dialogs, lifetime, services.Log)
+        {
+            StatusLine = main?.TechnicalStatus,
+        };
         var repository = new RepositoryAreaViewModel(
             services.Systems,
             services.RepositoryOpener,
@@ -51,11 +56,13 @@ public partial class App : Application
 
         var owner = new OwnerAreaViewModel(services.Owners, dialogs, services.Log);
         var navigation = new RepositoryNavigationViewModel(repository, owner);
-        var workspace = new WorkspaceAreaViewModel(services.Workspace, dialogs, services.Log, services.ProjectContent, services.LinkChecker, services.WorkspaceSearch);
+        var workspace = new WorkspaceAreaViewModel(services.Workspace, dialogs, services.Log, services.ProjectContent, services.LinkChecker, services.WorkspaceSearch,
+            settings: services.Settings);
 
-        var viewModel = new MainViewModel(services.Initializer, services.Settings, navigation, workspace, services.Log, services.RestoreOwner, lifetime, dialogs, Backups)
+        var viewModel = main = new MainViewModel(services.Initializer, services.Settings, navigation, workspace, services.Log, services.RestoreOwner, lifetime, dialogs, Backups)
         {
             CustomDataRoot = options.Options.IsCustomDataRoot ? services.Paths.Root : null,
+            AppVersion = AppVersionText(),
         };
         if (options.Options.RestoreContinueOp is { } op)
             services.Log.Info($"Started to continue restore operation {op}.");
@@ -63,5 +70,15 @@ public partial class App : Application
         MainWindow.Show();
 
         await viewModel.InitializeAsync();
+    }
+
+    /// <summary>"1.1.0 (a194be4)" from the informational version stamped at build time.</summary>
+    private static string AppVersionText()
+    {
+        var info = typeof(App).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? string.Empty;
+        var plus = info.IndexOf('+');
+        return plus < 0 ? info : $"{info[..plus]} ({info[(plus + 1)..Math.Min(info.Length, plus + 8)]})";
     }
 }
