@@ -113,14 +113,9 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
                 trashCount = (int)(long)command.ExecuteScalar()!;
             }
 
-            bool archived;
-            using (var command = connection.CreateCommand())
-            {
-                command.Transaction = transaction;
-                command.CommandText = "SELECT Status = 'Archived' FROM Projects WHERE NodeId = $project;";
-                command.Parameters.AddWithValue("$project", projectNodeId);
-                archived = (long)command.ExecuteScalar()! == 1;
-            }
+            // The Project's EFFECTIVE state (schema v9): archived itself or through an ancestor Folder. The content stays listed and
+            // writable (D11); the flag lets the Workspace area reconcile its tree (§7.9 C5).
+            var archived = Effective(connection, transaction, projectNodeId).State == LifecycleState.Archived;
 
             transaction.Commit();
             return ProjectContentListResult.Ok(new ProjectContentListing(projectNodeId, folderId, breadcrumb, folders, links, notes)
@@ -997,41 +992,49 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         }, cancellationToken);
 
     /// <summary>Checks inside the caller's write transaction that the Project and the (optional) folder exist and match.</summary>
-    private static void RequireContainer(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId, long? folderId)
+    private void RequireContainer(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId, long? folderId)
     {
         if ((ProjectProblem(connection, transaction, projectNodeId) ?? FolderProblem(connection, transaction, projectNodeId, folderId)) is { } problem)
             throw new ContentContainerException(problem);
     }
 
-    /// <param name="requireActive">A Project in the Workspace Trash is <see cref="ContentContainerProblem.ProjectTrashed"/>
-    /// (listing, create, save as new). Display-only lookups pass false.</param>
-    private static ContentContainerProblem? ProjectProblem(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId, bool requireActive = true)
+    /// <param name="requireActive">A Project whose EFFECTIVE state is Trashed — in the Workspace Trash itself, or below a trashed
+    /// Folder (schema v9) — is <see cref="ContentContainerProblem.ProjectTrashed"/> (listing, create, save as new). Display-only
+    /// lookups pass false.</param>
+    private ContentContainerProblem? ProjectProblem(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId, bool requireActive = true)
     {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT n.TrashedAt IS NOT NULL FROM Projects AS p JOIN WorkspaceNodes AS n ON n.Id = p.NodeId WHERE p.NodeId = $project;";
-        command.Parameters.AddWithValue("$project", projectNodeId);
-        return command.ExecuteScalar() switch
+        using (var command = connection.CreateCommand())
         {
-            null => ContentContainerProblem.ProjectNotFound,
-            1L when requireActive => ContentContainerProblem.ProjectTrashed,
-            _ => null,
-        };
+            command.Transaction = transaction;
+            command.CommandText = "SELECT 1 FROM Projects WHERE NodeId = $project;";
+            command.Parameters.AddWithValue("$project", projectNodeId);
+            if (command.ExecuteScalar() is null)
+                return ContentContainerProblem.ProjectNotFound;
+        }
+
+        return requireActive && Effective(connection, transaction, projectNodeId).State == LifecycleState.Trashed
+            ? ContentContainerProblem.ProjectTrashed
+            : null;
     }
 
     /// <summary>
-    /// The Project owning row <paramref name="id"/> of <paramref name="table"/> if that Project is in the Workspace Trash;
-    /// null when it is active or the row no longer exists. Every item-based write asks this FIRST inside its write
-    /// transaction (schema v7); the V007 triggers back it up. The table name is a constant, never input.
+    /// The Project owning row <paramref name="id"/> of <paramref name="table"/> if that Project's EFFECTIVE state is Trashed (in the
+    /// Workspace Trash itself, or below a trashed Folder); null when it is live or archived, or the row no longer exists. Every
+    /// item-based write asks this FIRST inside its write transaction (schema v7, v9); the V007 triggers back up the Project's own
+    /// marker, the store alone enforces ancestor Folders (Phase 13 D9). The table name is a constant, never input.
     /// </summary>
-    private static long? TrashedProjectOfRow(SqliteConnection connection, SqliteTransaction? transaction, string table, long id)
+    private long? TrashedProjectOfRow(SqliteConnection connection, SqliteTransaction? transaction, string table, long id)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"SELECT r.ProjectNodeId FROM {table} AS r JOIN WorkspaceNodes AS n ON n.Id = r.ProjectNodeId WHERE r.Id = $id AND n.TrashedAt IS NOT NULL;";
+        command.CommandText = $"SELECT ProjectNodeId FROM {table} WHERE Id = $id;";
         command.Parameters.AddWithValue("$id", id);
-        return command.ExecuteScalar() is long project ? project : null;
+        return command.ExecuteScalar() is long project && Effective(connection, transaction, project).State == LifecycleState.Trashed ? project : null;
     }
+
+    /// <summary>The Project's effective lifecycle (§7.1) inside the caller's transaction; Live when the node no longer exists.</summary>
+    private EffectiveLifecycle Effective(SqliteConnection connection, SqliteTransaction? transaction, long projectNodeId) =>
+        new NodeLifecycle(connection, transaction, SqliteWorkspaceStore.MaxDepth).Effective(projectNodeId) ?? EffectiveLifecycle.Live;
 
     /// <param name="requireActive">A folder in the Trash is <see cref="ContentContainerProblem.FolderTrashed"/> (listing, create,
     /// move destination, save as new). Display-only lookups pass false.</param>

@@ -78,6 +78,12 @@ public sealed record ProjectDetails(
 
     /// <summary>The Project is archived (Phase 12): hidden from the tree; its node is not renamed, edited, moved or trashed.</summary>
     public bool IsArchived => Status == ProjectStatus.Archived;
+
+    /// <summary>The effective lifecycle (§7.1): Live, or Archived / Trashed through the Project itself or an ancestor Folder.</summary>
+    public EffectiveLifecycle Effective { get; init; } = EffectiveLifecycle.Live;
+
+    /// <summary>Node Ids from <see cref="Effective"/>'s root down to this Project (empty when live).</summary>
+    public IReadOnlyList<long> ChainFromRoot { get; init; } = [];
 }
 
 /// <summary>User-editable Project fields. Owner/ProjectManager are free text, unrelated to Owner Manager.</summary>
@@ -103,6 +109,12 @@ public enum WorkspaceFailure
 
     /// <summary>The Project is archived (Phase 12); nothing was written.</summary>
     ProjectArchived,
+
+    /// <summary>The node, or an ancestor Folder, is archived or in the Trash (§7.1); nothing was written.</summary>
+    AncestorNotLive,
+
+    /// <summary>Move: the destination Folder, or one of its ancestors, is archived or in the Trash; nothing was written.</summary>
+    DestinationNotLive,
 }
 
 /// <summary>

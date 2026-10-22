@@ -88,7 +88,7 @@ public sealed class TrashMigrationTests : IDisposable
     public void V006_IsTheApprovedSql_AndRegisteredAfterTheFrozenMigrations()
     {
         Assert.Equal(6, new V006_ProjectContentTrash().Version);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], SchemaMigrations.All.Select(m => m.Version));
         Assert.IsType<V006_ProjectContentTrash>(SchemaMigrations.All[5]);
         Assert.StartsWith("-- V006_ProjectContentTrash\n", V006_ProjectContentTrash.Sql.ReplaceLineEndings("\n"));
         Assert.DoesNotContain("CASCADE", V006_ProjectContentTrash.Sql);

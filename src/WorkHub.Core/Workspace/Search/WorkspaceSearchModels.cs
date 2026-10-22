@@ -47,8 +47,14 @@ public sealed record WorkspaceSearchHit(
     SearchField MatchedField,
     string? Excerpt)
 {
-    /// <summary>The hit is an archived Project or content of one (schema v8): it is found, marked, and revealed in the Archived panel.</summary>
+    /// <summary>
+    /// The hit's effective state is Archived (§7.1): an archived Project or content of one (schema v8), or anything below an
+    /// archived Folder (schema v9). It is found, marked, and revealed in the Archived panel through its root.
+    /// </summary>
     public bool InArchivedProject { get; init; }
+
+    /// <summary>The archive root's name when the root is an ANCESTOR Folder of the hit ("in folder 2024"); null otherwise.</summary>
+    public string? ArchivedFolderName { get; init; }
 }
 
 /// <summary>At most <c>limit</c> hits in display order; <see cref="Truncated"/> = more matched than were returned.</summary>
@@ -95,22 +101,39 @@ public enum RevealResolveStatus
 
     /// <summary>
     /// The content row's Project is archived (schema v8). No container, ancestors or branches are read;
-    /// <see cref="RevealResolution.ArchivedProjectNodeId"/> is the owning Project's node Id.
+    /// <see cref="RevealResolution.ArchivedRootId"/> is the owning Project's node Id.
     /// </summary>
     ProjectArchived,
+
+    /// <summary>
+    /// The item is below an archived Folder (schema v9; the item itself, or its Project, is not archived). No snapshot is read;
+    /// <see cref="RevealResolution.ArchivedRootId"/> is the OUTERMOST archived Folder, which the Archived panel lists.
+    /// </summary>
+    InArchivedFolder,
+
+    /// <summary>A Folder above the item (or above its Project) is in the Trash (schema v9); it is not revealed.</summary>
+    FolderTrashed,
 }
 
 public sealed record RevealResolution(RevealResolveStatus Status, SearchRevealTarget? Target)
 {
-    /// <summary><see cref="RevealResolveStatus.Archived"/>: the item's own node Id. <see cref="RevealResolveStatus.ProjectArchived"/>:
-    /// the owning Project's node Id. Otherwise null.</summary>
-    public long? ArchivedProjectNodeId { get; init; }
+    /// <summary>
+    /// The archive root the Archived panel lists (§7.1): <see cref="RevealResolveStatus.Archived"/>: the item's own node Id;
+    /// <see cref="RevealResolveStatus.ProjectArchived"/>: the owning Project's node Id; <see cref="RevealResolveStatus.InArchivedFolder"/>:
+    /// the outermost archived Folder. Otherwise null.
+    /// </summary>
+    public long? ArchivedRootId { get; init; }
 
     public static RevealResolution Archived(long projectNodeId) =>
-        new(RevealResolveStatus.Archived, null) { ArchivedProjectNodeId = projectNodeId };
+        new(RevealResolveStatus.Archived, null) { ArchivedRootId = projectNodeId };
 
     public static RevealResolution ProjectArchived(long projectNodeId) =>
-        new(RevealResolveStatus.ProjectArchived, null) { ArchivedProjectNodeId = projectNodeId };
+        new(RevealResolveStatus.ProjectArchived, null) { ArchivedRootId = projectNodeId };
+
+    public static RevealResolution InArchivedFolder(long folderNodeId) =>
+        new(RevealResolveStatus.InArchivedFolder, null) { ArchivedRootId = folderNodeId };
+
+    public static RevealResolution FolderTrashed { get; } = new(RevealResolveStatus.FolderTrashed, null);
 
     public static RevealResolution NotFound { get; } = new(RevealResolveStatus.NotFound, null);
 

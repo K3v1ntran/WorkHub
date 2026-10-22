@@ -9,11 +9,16 @@ public sealed class WorkspaceService(IWorkspaceStore store)
 {
     public const string NameField = ProjectDraftValidator.Fields.Name;
 
-    /// <summary>Children in tree order (Folders first, then name).</summary>
-    public async Task<IReadOnlyList<WorkspaceNode>> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Children in tree order (Folders first, then name), or the typed reason there are none to show: the parent is archived or
+    /// in the Trash (itself or through an ancestor), or gone (§7.9 C3).
+    /// </summary>
+    public async Task<WorkspaceChildrenResult> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default)
     {
-        var nodes = await store.ListChildrenAsync(parentId, cancellationToken).ConfigureAwait(false);
-        return nodes.OrderBy(n => (n.Type, n.Name, n.Id), WorkspaceNodeOrder.Instance).ToList();
+        var result = await store.ListChildrenAsync(parentId, cancellationToken).ConfigureAwait(false);
+        return result.Status == ChildrenReadStatus.Listed
+            ? result with { Nodes = result.Nodes.OrderBy(n => (n.Type, n.Name, n.Id), WorkspaceNodeOrder.Instance).ToList() }
+            : result;
     }
 
     public async Task<WorkspaceResult<WorkspaceNode>> CreateFolderAsync(long? parentId, string? name, CancellationToken cancellationToken = default)
@@ -27,11 +32,15 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized, ex), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (WorkspaceParentException ex)
         {
             return ParentFailed<WorkspaceNode>(ex.Problem);
+        }
+        catch (WorkspaceNotLiveException)
+        {
+            return WorkspaceResult<WorkspaceNode>.Failed(DestinationNotLiveText("created"), failure: WorkspaceFailure.AncestorNotLive);
         }
     }
 
@@ -49,11 +58,15 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized.Name!, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<WorkspaceNode>.Failed(DuplicateName(normalized.Name!, ex), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (WorkspaceParentException ex)
         {
             return ParentFailed<WorkspaceNode>(ex.Problem);
+        }
+        catch (WorkspaceNotLiveException)
+        {
+            return WorkspaceResult<WorkspaceNode>.Failed(DestinationNotLiveText("created"), failure: WorkspaceFailure.AncestorNotLive);
         }
     }
 
@@ -71,7 +84,7 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<string>.Failed(DuplicateName(normalized, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<string>.Failed(DuplicateName(normalized, ex), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (ProjectTrashedException)
         {
@@ -80,6 +93,10 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         catch (ProjectArchivedException)
         {
             return WorkspaceResult<string>.Failed(ProjectIsArchived, failure: WorkspaceFailure.ProjectArchived);
+        }
+        catch (WorkspaceNotLiveException ex)
+        {
+            return WorkspaceResult<string>.Failed(NotLiveText(ex), failure: WorkspaceFailure.AncestorNotLive);
         }
     }
 
@@ -102,7 +119,7 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<ProjectDetails>.Failed(DuplicateName(normalized.Name!, ex.BlockerArchived), NameField, WorkspaceFailure.DuplicateName);
+            return WorkspaceResult<ProjectDetails>.Failed(DuplicateName(normalized.Name!, ex), NameField, WorkspaceFailure.DuplicateName);
         }
         catch (ProjectTrashedException)
         {
@@ -111,6 +128,10 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         catch (ProjectArchivedException)
         {
             return WorkspaceResult<ProjectDetails>.Failed(ProjectIsArchived, failure: WorkspaceFailure.ProjectArchived);
+        }
+        catch (WorkspaceNotLiveException ex)
+        {
+            return WorkspaceResult<ProjectDetails>.Failed(NotLiveText(ex), failure: WorkspaceFailure.AncestorNotLive);
         }
     }
 
@@ -143,7 +164,9 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         }
         catch (DuplicateWorkspaceNameException ex)
         {
-            return WorkspaceResult<bool>.Failed(ex.BlockerArchived
+            return WorkspaceResult<bool>.Failed(ex.BlockerArchivedFolder
+                ? $"The destination already contains an archived folder named '{ex.Name}'. Unarchive or rename it first."
+                : ex.BlockerArchived
                 ? $"The destination already contains an archived project named '{ex.Name}'. Unarchive or rename it first."
                 : $"The destination already contains a folder or project named '{ex.Name}'.", failure: WorkspaceFailure.DuplicateName);
         }
@@ -154,6 +177,14 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         catch (ProjectArchivedException)
         {
             return WorkspaceResult<bool>.Failed(ProjectIsArchived, failure: WorkspaceFailure.ProjectArchived);
+        }
+        catch (WorkspaceNotLiveException ex) when (ex.NodeId == nodeId)
+        {
+            return WorkspaceResult<bool>.Failed(NotLiveText(ex), failure: WorkspaceFailure.AncestorNotLive);
+        }
+        catch (WorkspaceNotLiveException)
+        {
+            return WorkspaceResult<bool>.Failed(DestinationNotLiveText("moved"), failure: WorkspaceFailure.DestinationNotLive);
         }
     }
 
@@ -218,6 +249,40 @@ public sealed class WorkspaceService(IWorkspaceStore store)
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         store.CountArchivedAsync(cancellationToken);
 
+    // ---- Folder Archive and Folder Trash (schema v9) ---------------------------------------------------------------------------
+
+    /// <summary>The confirmation to show for archiving or trashing a Folder (its preview and token), or why it is refused now.</summary>
+    public Task<FolderLifecyclePreview> PrepareFolderLifecycleAsync(long nodeId, FolderLifecycleKind kind, CancellationToken cancellationToken = default) =>
+        store.PrepareFolderLifecycleAsync(nodeId, kind, cancellationToken);
+
+    /// <summary>
+    /// Archives (or trashes) the Folder that roots a subtree: only that Folder's marker and serial change; every descendant keeps
+    /// its own state. Commits only if the subtree still matches <paramref name="confirmationToken"/> (§7.4). Nothing on disk is
+    /// touched.
+    /// </summary>
+    /// <exception cref="ArgumentException">No confirmation token; nothing was called or written.</exception>
+    public Task<FolderLifecycleResult> MarkFolderAsync(long nodeId, FolderLifecycleKind kind, string confirmationToken, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(confirmationToken))
+            throw new ArgumentException("A folder lifecycle change needs the token of a shown confirmation.", nameof(confirmationToken));
+        return kind == FolderLifecycleKind.Archive
+            ? store.ArchiveFolderAsync(nodeId, confirmationToken, cancellationToken)
+            : store.TrashFolderAsync(nodeId, confirmationToken, cancellationToken);
+    }
+
+    /// <summary>Unarchive (state-based) or strict Restore of a Folder at its original parent and name.</summary>
+    public Task<FolderClearResult> ClearFolderAsync(long nodeId, FolderLifecycleKind kind, CancellationToken cancellationToken = default) =>
+        kind == FolderLifecycleKind.Archive ? store.UnarchiveFolderAsync(nodeId, cancellationToken) : store.RestoreFolderAsync(nodeId, cancellationToken);
+
+    /// <summary>Undoes exactly one Folder archive or trash event (its serial).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Not a committed event; nothing was called or written.</exception>
+    public Task<FolderClearResult> UndoFolderLifecycleAsync(FolderLifecycleEvent lifecycleEvent, CancellationToken cancellationToken = default)
+    {
+        if (lifecycleEvent.Serial < 1)
+            throw new ArgumentOutOfRangeException(nameof(lifecycleEvent), lifecycleEvent.Serial, "A folder lifecycle event has a serial of 1 or more.");
+        return store.UndoFolderLifecycleAsync(lifecycleEvent, cancellationToken);
+    }
+
     internal static string NewProjectId() => Guid.NewGuid().ToString("N");
 
     public const string ProjectInTrash = "This project is in the Trash.";
@@ -226,9 +291,24 @@ public sealed class WorkspaceService(IWorkspaceStore store)
 
     private const string NoLongerExists = "This folder or project no longer exists.";
 
-    private static string DuplicateName(string name, bool blockerArchived) => blockerArchived
-        ? $"An archived project named '{name}' already exists here. Unarchive it or choose another name."
-        : $"A folder or project named '{name}' already exists here (names are compared ignoring case and width).";
+    private static string DuplicateName(string name, DuplicateWorkspaceNameException ex) =>
+        ex.BlockerArchivedFolder
+            ? $"An archived folder named '{name}' already exists here. Unarchive it or choose another name."
+            : ex.BlockerArchived
+            ? $"An archived project named '{name}' already exists here. Unarchive it or choose another name."
+            : $"A folder or project named '{name}' already exists here (names are compared ignoring case and width).";
+
+    /// <summary>The node itself is a marked Folder, or something above it is archived or in the Trash.</summary>
+    private static string NotLiveText(WorkspaceNotLiveException ex) =>
+        (ex.State.RootId == ex.NodeId, ex.State.State) switch
+        {
+            (true, LifecycleState.Trashed) => "This folder is in the Trash. Nothing was changed.",
+            (true, _) => "This folder is archived. Nothing was changed.",
+            (false, LifecycleState.Trashed) => "This item's folder is in the Trash. Nothing was changed.",
+            _ => "This item's folder is archived. Nothing was changed.",
+        };
+
+    private static string DestinationNotLiveText(string verb) => $"The destination folder is archived or in the Trash. Nothing was {verb}.";
 
     private static WorkspaceResult<T> ParentFailed<T>(WorkspaceParentProblem problem) => problem == WorkspaceParentProblem.NotFound
         ? WorkspaceResult<T>.Failed("The destination folder no longer exists.", failure: WorkspaceFailure.ParentNotFound)

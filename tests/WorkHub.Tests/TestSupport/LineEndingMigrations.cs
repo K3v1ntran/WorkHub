@@ -14,7 +14,7 @@ public enum Checkout
     /// <summary>Every migration CRLF (a fresh checkout with <c>core.autocrlf=true</c>).</summary>
     Crlf,
 
-    /// <summary>The main working tree at dcfa6bb: V002, V003 and V007 CRLF, the others LF (V008 was added as LF).</summary>
+    /// <summary>The main working tree at dcfa6bb: V002, V003 and V007 CRLF, the others LF (V008 and V009 were added as LF).</summary>
     Mixed,
 }
 
@@ -27,7 +27,7 @@ internal static class LineEndingMigrations
 {
     private static readonly int[] MixedCrlfVersions = [2, 3, 7];
 
-    /// <param name="toVersion">The producer's schema version; null = the current one (v8, V008 included).</param>
+    /// <param name="toVersion">The producer's schema version; null = the current one (v9, V009 included).</param>
     public static ISchemaMigration[] For(Checkout checkout, int? toVersion = null) =>
         [.. SchemaMigrations.All.Where(m => m.Version <= (toVersion ?? SchemaMigrations.LatestVersion)).Select(m => new Converted(m, NewLine(checkout, m.Version)))];
 

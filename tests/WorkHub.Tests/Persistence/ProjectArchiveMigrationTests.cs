@@ -77,9 +77,8 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     {
         Assert.Equal(8, new V008_ProjectArchiveSerial().Version);
         Assert.Equal("Project archive serial", new V008_ProjectArchiveSerial().Description);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], SchemaMigrations.All.Select(m => m.Version));
-        Assert.IsType<V008_ProjectArchiveSerial>(SchemaMigrations.All[^1]);
-        Assert.Equal(8, SchemaMigrations.LatestVersion);
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], SchemaMigrations.All.Select(m => m.Version));
+        Assert.IsType<V008_ProjectArchiveSerial>(SchemaMigrations.All[7]);
 
         // The raw string has no trailing newline; the hash is over its LF form (the approved evidence file minus its final newline).
         var sql = V008_ProjectArchiveSerial.Sql.ReplaceLineEndings("\n");
@@ -93,7 +92,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     [Fact]
     public void FreshDatabase_HasTheReviewedV008Schema()
     {
-        var result = _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        var result = _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Created, result.Outcome);
         Assert.Equal(8, result.SchemaVersion);
@@ -122,7 +121,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var result = _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        var result = _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Outcome);
         Assert.Equal((7, 8), (result.PreviousSchemaVersion, result.SchemaVersion));
@@ -175,13 +174,13 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize());
+        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize());
         Assert.Equal(DatabaseStartupFailure.MigrationFailed, ex.Failure);
         AssertUnchangedV7(beforeData, beforeSchema);
         var first = AssertValidatedBackups(beforeData, beforeSchema, expectedCount: 1);
 
         Thread.Sleep(5); // distinct backup timestamp
-        Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize());
+        Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize());
         AssertUnchangedV7(beforeData, beforeSchema);
         var all = AssertValidatedBackups(beforeData, beforeSchema, expectedCount: 2);
         Assert.All(first, b => Assert.Contains(b, all));
@@ -201,7 +200,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize());
+        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize());
 
         Assert.Equal(DatabaseStartupFailure.MigrationFailed, ex.Failure);
         AssertUnchangedV7(beforeData, beforeSchema);
@@ -218,7 +217,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     public void AV7Build_RefusesTheV8Database_AndLeavesItUnchanged()
     {
         CreatePopulatedV7Database();
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize();
         BackupKit.ClearPools(_root.Paths.DatabaseFile); // this database only: other classes run in parallel
         var before = BackupKit.Hash(_root.Paths.DatabaseFile);
         var backups = Directory.GetFiles(_root.Paths.MigrationBackupsDirectory);
@@ -255,7 +254,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     public void TheTransitionGuard_ValidatesTheSerial_AndNeverAssignsIt(string label, string startStatus, string statementAndExpected)
     {
         var (statement, expected) = (statementAndExpected.Split('|')[0], statementAndExpected.Split('|')[1]);
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize();
         using var c = _root.Open();
         var id = Db.InsertNode(c, null, "Project", "P");
         Db.InsertProjectDetails(c, id);
@@ -282,7 +281,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     public void TheTrashedGuard_StillRefusesAnyProjectsUpdate_IncludingAValidArchive()
     {
         var ids = CreatePopulatedV7Database();
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize();
         using var c = _root.Open();
 
         Assert.Equal("WH_PROJECT_TRASHED", Raise(() => Db.Exec(c, "UPDATE Projects SET Status = 'Archived', ArchiveSerial = ArchiveSerial + 1 WHERE NodeId = $id;", ("$id", ids["Trashed"]))));
@@ -296,7 +295,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     [Fact]
     public void TheArchivedCount_UsesThePartialIndex()
     {
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV008).Initialize();
         using var c = _root.Open();
         using var command = c.CreateCommand();
         command.CommandText = "EXPLAIN QUERY PLAN SELECT count(*) FROM Projects WHERE Status = 'Archived';";

@@ -187,8 +187,9 @@ public sealed class WorkspaceTrashSchemaTests : IDisposable
     public void QueryPlans_UseTheNewIndexes()
     {
         Assert.Contains("IX_WorkspaceNodes_Trashed", Plan("SELECT Id FROM WorkspaceNodes WHERE TrashedAt IS NOT NULL ORDER BY TrashedAt DESC;"));
-        Assert.Contains("UX_WorkspaceNodes_ActiveChildName", Plan("SELECT Id FROM WorkspaceNodes WHERE ParentId = 1 AND NameKey = 'X' AND TrashedAt IS NULL;"));
-        Assert.Contains("UX_WorkspaceNodes_ActiveRootName", Plan("SELECT Id FROM WorkspaceNodes WHERE ParentId IS NULL AND NameKey = 'X' AND TrashedAt IS NULL;"));
+        // V009 replaced V007's active-name indexes by live-name indexes (a trashed Folder frees its name, like a trashed Project).
+        Assert.Contains("UX_WorkspaceNodes_LiveChildName", Plan("SELECT Id FROM WorkspaceNodes WHERE ParentId = 1 AND NameKey = 'X' AND TrashedAt IS NULL AND FolderTrashedAt IS NULL;"));
+        Assert.Contains("UX_WorkspaceNodes_LiveRootName", Plan("SELECT Id FROM WorkspaceNodes WHERE ParentId IS NULL AND NameKey = 'X' AND TrashedAt IS NULL AND FolderTrashedAt IS NULL;"));
     }
 
     private string Plan(string sql)

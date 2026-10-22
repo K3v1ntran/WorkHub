@@ -55,11 +55,11 @@ public sealed class WorkspaceTrashStoreTests : IDisposable
 
     private static List<string> WithoutNodeMarkers(List<string> rows) =>
         rows.Select(r => r.StartsWith("WorkspaceNodes|", StringComparison.Ordinal)
-            ? System.Text.RegularExpressions.Regex.Replace(r, @"\|TrashedAt=[^|]*$", string.Empty)
+            ? System.Text.RegularExpressions.Regex.Replace(r, @"\|TrashedAt=[^|]*", string.Empty) // V009 columns follow TrashedAt
             : r).ToList();
 
     private async Task<string> Children(long? parent) =>
-        string.Join(",", (await _workspace.ListChildrenAsync(parent)).Select(n => $"{n.Name}{(n.HasChildren ? "+" : string.Empty)}"));
+        string.Join(",", (await _workspace.ListChildrenAsync(parent)).Nodes.Select(n => $"{n.Name}{(n.HasChildren ? "+" : string.Empty)}"));
 
     /// <summary>Content in Alpha including nested Phase 7 entries (Drafts trashed, then Specs) and a revised note.</summary>
     private async Task<(long Specs, long Drafts, long Note, long Link)> SeedContent()
@@ -90,7 +90,10 @@ public sealed class WorkspaceTrashStoreTests : IDisposable
         Assert.Equal(string.Empty, await Children(_tokyo));
         Assert.Equal("東京支社", await Children(_clients)); // a folder holding only a trashed Project shows no expander
         Assert.True((await _workspace.GetProjectAsync(_alpha))!.IsTrashed);
-        Assert.Equal(new WorkspaceNodeState(_alpha, WorkspaceNodeType.Project, _tokyo, true), await _workspace.GetNodeStateAsync(_alpha));
+        var state = (await _workspace.GetNodeStateAsync(_alpha))!;
+        Assert.Equal((_alpha, WorkspaceNodeType.Project, (long?)_tokyo, true, false), (state.NodeId, state.Type, state.ParentId, state.Trashed, state.Archived));
+        Assert.Equal(new EffectiveLifecycle(LifecycleState.Trashed, _alpha, WorkspaceNodeType.Project), state.Effective); // schema v9: the effective state too
+        Assert.Equal([_alpha], state.ChainFromRoot);
         Assert.Equal(1, await _workspace.CountTrashAsync());
     }
 

@@ -52,12 +52,12 @@ public sealed class WorkspaceServiceTests : IDisposable
         var project = await Project("販売管理システム", nested.Id);
         await Project("Alpha");
 
-        Assert.Equal(["archive", "Clients", "Alpha"], (await _workspace.ListChildrenAsync(null)).Select(n => n.Name));
-        var underClients = Assert.Single(await _workspace.ListChildrenAsync(clients.Id));
+        Assert.Equal(["archive", "Clients", "Alpha"], (await _workspace.ListChildrenAsync(null)).Nodes.Select(n => n.Name));
+        var underClients = Assert.Single((await _workspace.ListChildrenAsync(clients.Id)).Nodes);
         Assert.Equal((nested.Id, WorkspaceNodeType.Folder, true), (underClients.Id, underClients.Type, underClients.HasChildren));
-        var underTokyo = Assert.Single(await _workspace.ListChildrenAsync(nested.Id));
+        var underTokyo = Assert.Single((await _workspace.ListChildrenAsync(nested.Id)).Nodes);
         Assert.Equal((project.Id, WorkspaceNodeType.Project, "販売管理システム", false), (underTokyo.Id, underTokyo.Type, underTokyo.Name, underTokyo.HasChildren));
-        Assert.False((await _workspace.ListChildrenAsync(null)).Single(n => n.Id == archive.Id).HasChildren);
+        Assert.False((await _workspace.ListChildrenAsync(null)).Nodes.Single(n => n.Id == archive.Id).HasChildren);
     }
 
     [Fact]

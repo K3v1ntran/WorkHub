@@ -236,7 +236,7 @@ public sealed class BackupsViewModelTests : IDisposable
         await main.InitializeAsync();
 
         Assert.Equal(ShellState.Ready, main.State);
-        Assert.Equal("Ready · schema v8 · backed up today", main.StatusText);
+        Assert.Equal("Ready · schema v9 · backed up today", main.StatusText);
         Assert.Null(main.WarningMessage);
         Assert.Single(BackupKit.PublishedBackups(_root));
         new SqliteConnectionFactory(_root.Paths.DatabaseFile).ClearPools();
@@ -255,7 +255,7 @@ public sealed class BackupsViewModelTests : IDisposable
         await main.InitializeAsync();
 
         Assert.Equal(ShellState.Ready, main.State);
-        Assert.Equal("Ready · schema v8", main.StatusText);
+        Assert.Equal("Ready · schema v9", main.StatusText);
         var lines = main.WarningMessage!.Split(Environment.NewLine);
         Assert.Equal(2, lines.Length);
         Assert.Contains("settings.json", lines[0]);

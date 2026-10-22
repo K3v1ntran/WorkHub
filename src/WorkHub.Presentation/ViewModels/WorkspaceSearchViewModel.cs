@@ -17,11 +17,17 @@ public enum WorkspaceRevealOutcome
     /// <summary>The content item's Project is in the Workspace Trash; it is not revealed.</summary>
     ProjectTrashed,
 
-    /// <summary>The Project (or the content item's Project) is archived: its row is selected in the Archived projects panel.</summary>
+    /// <summary>The Project (or the content item's Project) is archived: its row is selected in the Archived panel.</summary>
     Archived,
 
-    /// <summary>It was archived when found, but the Archived projects panel no longer lists the Project; nothing was selected.</summary>
+    /// <summary>It was archived when found, but the Archived panel no longer lists its root; nothing was selected.</summary>
     NoLongerArchived,
+
+    /// <summary>The item is below an archived Folder (schema v9): the OUTERMOST archived Folder's row is selected in the Archived panel.</summary>
+    InArchivedFolder,
+
+    /// <summary>A Folder above the item (or above its Project) is in the Trash (schema v9); it is not revealed.</summary>
+    FolderTrashed,
 
     MovedMeanwhile,
     ContainerMissing,
@@ -70,8 +76,10 @@ public sealed class WorkspaceSearchHitViewModel(WorkspaceSearchHit hit) : Observ
         }
     }
 
-    /// <summary>"Archived · Clients / Tokyo" for archived hits.</summary>
-    public string Location => IsArchived ? $"Archived · {Hit.Location}" : Hit.Location;
+    /// <summary>"Archived · Clients / Tokyo" for archived hits; "Archived (in folder 2024) · …" when the archive root is a Folder above it.</summary>
+    public string Location => !IsArchived ? Hit.Location
+        : Hit.ArchivedFolderName is { } folder ? $"Archived (in folder {folder}) · {Hit.Location}"
+        : $"Archived · {Hit.Location}";
 
     public string KindText => Hit.Item.Kind switch
     {
@@ -329,6 +337,16 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
             hit.IsArchived = archived;
     }
 
+    /// <summary>
+    /// Re-marks the shown hit of this Workspace Folder itself after a Folder Archive, Unarchive or Undo here. Hits below it keep
+    /// their marks until the next search; activating one re-resolves it and routes by its effective state (§7.5).
+    /// </summary>
+    internal void MarkFolderArchived(long folderNodeId, bool archived)
+    {
+        if (Results.FirstOrDefault(r => r.Item == new SearchItemRef(SearchResultKind.WorkspaceFolder, folderNodeId)) is { } hit)
+            hit.IsArchived = archived;
+    }
+
     private void Activate(WorkspaceSearchHitViewModel? hit)
     {
         if (hit is null)
@@ -357,15 +375,26 @@ public sealed class WorkspaceSearchViewModel : ObservableObject
                 RemoveResult(hit.Item);
                 NoticeText = "This item's project is in the Trash.";
                 break;
+            case WorkspaceRevealOutcome.FolderTrashed:
+                RemoveResult(hit.Item);
+                NoticeText = "This item's folder is in the Trash.";
+                break;
             case WorkspaceRevealOutcome.Archived:
-                // The hit stays: it still exists; its Project's row is selected in the Archived projects panel.
+                // The hit stays: it still exists; its archive root's row is selected in the Archived panel.
                 hit.IsArchived = true;
-                NoticeText = hit.Item.Kind == SearchResultKind.Project
-                    ? "This project is archived — it is selected under Archived projects."
-                    : "This item's project is archived — it is selected under Archived projects.";
+                NoticeText = hit.Item.Kind switch
+                {
+                    SearchResultKind.Project => "This project is archived — it is selected under Archived.",
+                    SearchResultKind.WorkspaceFolder => "This folder is archived — it is selected under Archived.",
+                    _ => "This item's project is archived — it is selected under Archived.",
+                };
+                break;
+            case WorkspaceRevealOutcome.InArchivedFolder:
+                hit.IsArchived = true;
+                NoticeText = $"“{hit.Name}” is in an archived folder — that folder is selected under Archived.";
                 break;
             case WorkspaceRevealOutcome.NoLongerArchived:
-                NoticeText = "This project is no longer archived. Search again.";
+                NoticeText = "This item is no longer archived. Search again.";
                 break;
             case WorkspaceRevealOutcome.MovedMeanwhile:
                 NoticeText = "The item was moved meanwhile. Search again.";

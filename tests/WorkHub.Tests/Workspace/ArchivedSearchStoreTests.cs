@@ -71,7 +71,7 @@ public sealed class ArchivedSearchStoreTests : IDisposable
 
         Assert.Equal(RevealResolveStatus.Archived, resolution.Status);
         Assert.Null(resolution.Target);
-        Assert.Equal(_alpha, resolution.ArchivedProjectNodeId);
+        Assert.Equal(_alpha, resolution.ArchivedRootId);
     }
 
     [Theory]
@@ -86,7 +86,7 @@ public sealed class ArchivedSearchStoreTests : IDisposable
 
         Assert.Equal(RevealResolveStatus.ProjectArchived, resolution.Status);
         Assert.Null(resolution.Target);
-        Assert.Equal(_alpha, resolution.ArchivedProjectNodeId);
+        Assert.Equal(_alpha, resolution.ArchivedRootId);
     }
 
     [Fact]
@@ -95,7 +95,7 @@ public sealed class ArchivedSearchStoreTests : IDisposable
         // A content item in the content Trash of an archived Project → Trashed.
         Assert.Equal(TrashOutcome.Trashed, (await _content.TrashAsync(new ContentRef(ContentKind.Link, _link))).Outcome);
         var trashedItem = await Resolve(SearchResultKind.Link, _link);
-        Assert.Equal((RevealResolveStatus.Trashed, (long?)null), (trashedItem.Status, trashedItem.ArchivedProjectNodeId));
+        Assert.Equal((RevealResolveStatus.Trashed, (long?)null), (trashedItem.Status, trashedItem.ArchivedRootId));
 
         // An archived Project that an earlier build also trashed → Trashed / ProjectTrashed.
         using (var connection = _root.Open())
@@ -104,7 +104,7 @@ public sealed class ArchivedSearchStoreTests : IDisposable
         Assert.Equal(RevealResolveStatus.ProjectTrashed, (await Resolve(SearchResultKind.Note, _note)).Status);
 
         var found = await Resolve(SearchResultKind.Project, _beta);
-        Assert.Equal((RevealResolveStatus.Found, (long?)null), (found.Status, found.ArchivedProjectNodeId));
+        Assert.Equal((RevealResolveStatus.Found, (long?)null), (found.Status, found.ArchivedRootId));
         Assert.Equal(RevealResolveStatus.NotFound, (await Resolve(SearchResultKind.Project, 999)).Status);
     }
 
@@ -115,15 +115,15 @@ public sealed class ArchivedSearchStoreTests : IDisposable
 
         var clients = resolution.Target!.Branches.Single(b => b.ParentId == _clients);
         Assert.Equal(["Zebra active"], clients.Children.Select(c => c.Name));
-        var tree = await _workspace.ListChildrenAsync(_clients);
+        var tree = (await _workspace.ListChildrenAsync(_clients)).Nodes;
         Assert.Equal(tree.Select(n => (n.Id, n.HasChildren)), clients.Children.Select(n => (n.Id, n.HasChildren)));
         var root = resolution.Target.Branches.Single(b => b.ParentId is null);
-        Assert.Equal((await _workspace.ListChildrenAsync(null)).Select(n => (n.Id, n.HasChildren)), root.Children.Select(n => (n.Id, n.HasChildren)));
+        Assert.Equal((await _workspace.ListChildrenAsync(null)).Nodes.Select(n => (n.Id, n.HasChildren)), root.Children.Select(n => (n.Id, n.HasChildren)));
 
         // With only the archived Project left, the folder has no expander in either reading.
         await _workspace.ArchiveProjectAsync(_beta);
         var folder = (await Resolve(SearchResultKind.WorkspaceFolder, _clients)).Target!.Branches.Single(b => b.ParentId is null).Children.Single(c => c.Id == _clients);
         Assert.False(folder.HasChildren);
-        Assert.False((await _workspace.ListChildrenAsync(null)).Single(n => n.Id == _clients).HasChildren);
+        Assert.False((await _workspace.ListChildrenAsync(null)).Nodes.Single(n => n.Id == _clients).HasChildren);
     }
 }

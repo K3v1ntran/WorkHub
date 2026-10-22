@@ -24,6 +24,11 @@ using WorkHub.Infrastructure.Restore;
 //   request <dataRoot> <dailyFileName> staged|confirmed     a running window requests a restore; stop there (R held / released)
 //   hold <file>                                             open the file with an unpooled connection and keep it open
 //   hold-pooled <file>                                      open and close a pooled connection (the pool keeps the file open)
+//
+// Phase 13 (Folder Archive / Trash; the real SqliteWorkspaceStore, killed inside its write transaction):
+//   folder-lifecycle <databaseFile> archive|trash|restore <nodeId>
+//                                                           run the operation (archive/trash confirm their own fresh preview);
+//                                                           stop right AFTER its marker UPDATE, before COMMIT
 
 if (args.Length < 2)
 {
@@ -163,6 +168,38 @@ switch (args[0])
         }
 
         Ready();
+        return 1;
+    }
+
+    case "folder-lifecycle":
+    {
+        // Preview and token from an ungated connection; the write runs on a connection whose TEMP trigger parks it inside its
+        // transaction right after the marker UPDATE (the store's own statement), so the kill leaves a hot journal behind.
+        var nodeId = long.Parse(args[3], CultureInfo.InvariantCulture);
+        var plain = new SqliteWorkspaceStore(new SqliteConnectionFactory(args[1]));
+        var gated = new SqliteWorkspaceStore(new SqliteConnectionFactory(args[1], defaultTimeoutSeconds: null, opened: connection =>
+        {
+            connection.CreateFunction("wh_probe_park", () =>
+            {
+                Ready();
+                return 0L;
+            });
+            Exec(connection, "CREATE TEMP TRIGGER wh_probe_park_trigger AFTER UPDATE OF FolderArchivedAt, FolderTrashedAt ON main.WorkspaceNodes BEGIN SELECT wh_probe_park(); END;");
+        }));
+        switch (args[2])
+        {
+            case "archive":
+                gated.ArchiveFolderAsync(nodeId, plain.PrepareFolderLifecycleAsync(nodeId, WorkHub.Core.Workspace.FolderLifecycleKind.Archive).GetAwaiter().GetResult().Confirmation!.Token).GetAwaiter().GetResult();
+                break;
+            case "trash":
+                gated.TrashFolderAsync(nodeId, plain.PrepareFolderLifecycleAsync(nodeId, WorkHub.Core.Workspace.FolderLifecycleKind.Trash).GetAwaiter().GetResult().Confirmation!.Token).GetAwaiter().GetResult();
+                break;
+            default:
+                gated.RestoreFolderAsync(nodeId).GetAwaiter().GetResult();
+                break;
+        }
+
+        Console.WriteLine("FINISHED");
         return 1;
     }
 

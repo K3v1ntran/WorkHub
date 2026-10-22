@@ -4,7 +4,14 @@ namespace WorkHub.Core.Workspace;
 /// An archived Project as listed in the Archived projects panel: the node itself (its Id), its CURRENT parent and that
 /// parent's path (null for the root), and its last update. Archive keeps the parent, name and UpdatedAt unchanged.
 /// </summary>
-public sealed record ArchivedProjectEntry(long NodeId, string Name, long? ParentId, string? ParentPath, DateTimeOffset UpdatedAt);
+public sealed record ArchivedProjectEntry(long NodeId, string Name, long? ParentId, string? ParentPath, DateTimeOffset UpdatedAt)
+{
+    /// <summary>A Project, or (schema v9) a Folder that roots an archived subtree.</summary>
+    public WorkspaceNodeType Type { get; init; } = WorkspaceNodeType.Project;
+
+    /// <summary>When a Folder was archived (its <c>FolderArchivedAt</c>); null for Projects.</summary>
+    public DateTimeOffset? ArchivedAt { get; init; }
+}
 
 /// <summary>
 /// Identity of ONE committed archive event (schema v8): the Project, the <c>ArchiveSerial</c> the Archive committed (always
@@ -25,6 +32,9 @@ public enum ProjectArchiveOutcome
 
     /// <summary>The Project is in the Workspace Trash (checked first); nothing was written.</summary>
     ProjectTrashed,
+
+    /// <summary>An ancestor Folder is archived or in the Trash (§7.1); nothing was written.</summary>
+    AncestorNotLive,
 }
 
 /// <param name="Entry">The archived Project as it now appears in the panel.</param>
@@ -45,6 +55,12 @@ public enum ProjectUnarchiveOutcome
 
     /// <summary>The Project is in the Workspace Trash; nothing was written.</summary>
     ProjectTrashed,
+
+    /// <summary>An ancestor Folder is archived (§7.1: unarchive the outermost one); nothing was written.</summary>
+    ParentArchived,
+
+    /// <summary>An ancestor Folder is in the Trash; nothing was written.</summary>
+    ParentTrashed,
 }
 
 /// <param name="Unarchived">The Project as it now appears in the tree, and its parent's path.</param>
@@ -68,6 +84,12 @@ public enum ArchiveUndoOutcome
 
     /// <summary>Archived again by a LATER archive event (a different serial); this Undo no longer applies; nothing was written.</summary>
     ArchivedAgain,
+
+    /// <summary>An ancestor Folder is archived; nothing was written.</summary>
+    ParentArchived,
+
+    /// <summary>An ancestor Folder is in the Trash; nothing was written.</summary>
+    ParentTrashed,
 }
 
 public sealed record ArchiveUndoResult(ArchiveUndoOutcome Outcome, RestoredProject? Restored)

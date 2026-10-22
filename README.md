@@ -72,7 +72,7 @@ creating, renaming or moving a folder or project never creates, moves, renames o
 **Layout.**
 - **Selection header.** Selecting a folder or project shows a compact header: its name and location, then one strip
   with the project's status, Created and Updated dates, **Info**, the selection toolbar (Edit, Move, Archive, Move to
-  Trash; for a folder: Rename, Move, Remove) and **More (⋯)**. More holds the same menu as a right-click on the tree.
+  Trash; for a folder: Rename, Move, Archive folder, Move folder to Trash, Remove) and **More (⋯)**. More holds the same menu as a right-click on the tree.
   The selected project's **content fills the rest of the pane**. On narrow windows the strip wraps (dates are never
   cut), and Move and Move to Trash are left to More.
 - **Info** (the Info button, **Ctrl+I**, or Info in the menus) opens a drawer beside the content with Owner, Project
@@ -80,8 +80,8 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   directly inside. It follows the selection, and closes with ✕, **Esc**, when nothing is selected, or when Trash or
   Archived opens. On narrow windows it opens over the content.
 - **Toolbars.** Settings → Workspace has one checkbox per toolbar, all on by default, each saved on its own:
-  - **Show the tree toolbar**: New Folder, New Project, Rename, Move, Archive, Trash and Remove above the tree. When it
-    is hidden, a compact **More (⋯)** beside the search box opens the tree's menu.
+  - **Show the tree toolbar**: New Folder, New Project, Rename, Move, Archive and Trash (for a project and for a folder)
+    and Remove above the tree. When it is hidden, a compact **More (⋯)** beside the search box opens the tree's menu.
   - **Show the selection toolbar**: Edit, Move, Archive and Trash in the strip. Info and More stay.
   - **Show the content toolbar**: the content actions beside the breadcrumb. When it is hidden, a compact **More (⋯)**
     holds every content action, including Up one level and the project's Trash.
@@ -91,8 +91,8 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   only that toolbar, and Settings can always show a hidden one again. The choices are stored as
   `ui.workspace.showTreeToolbar`, `showSelectionToolbar` and `showContentToolbar` in `settings.json` (a missing value
   means shown) and are used by other open WorkHub windows after they restart.
-- **LIBRARY** (bottom of the left column): **Archived projects** (**Ctrl+Shift+A**) and **Trashed projects**
-  (**Ctrl+Shift+T**). It stays visible however long the tree is.
+- **LIBRARY** (bottom of the left column): **Archived** (**Ctrl+Shift+A**) and **Trash** (**Ctrl+Shift+T**), each with
+  the number of folders and projects it lists. It stays visible however long the tree is.
 - **Icons.** Folders, projects, links, notes and every action use one graphical icon each, the same in the tree, the
   lists, the toolbars and the menus. They are original WorkHub artwork: vector drawings in
   `src/WorkHub.App/Resources/Icons.xaml`, as is the WorkHub logo in `Resources/Logo.xaml`. No third-party icon set, icon
@@ -112,16 +112,17 @@ is in the Trash. Nothing on disk is touched.
 - **Undo** (in the banner) restores it. Undo is offered only while you stay on the Workspace tab: leaving the tab (or
   Retry) withdraws it, and a move that completes after you left offers none. The project then selects itself only if you
   have not selected anything else since pressing Undo.
-- **Trashed projects (n)** (LIBRARY, bottom of the left column) lists them with the folder they came from and when; **Restore** (or Enter)
+- **Trash (n)** (LIBRARY, bottom of the left column) lists them with the folder they came from and when; **Restore** (or Enter)
   puts the project back into that folder — by identity, wherever that folder is now — or the top level. A folder or
   project with the same name there refuses the restore; nothing is renamed, created or moved. Restoring never changes the
-  selection; **Back** (or selecting a tree node) returns to it.
+  selection; **Back** (or selecting a tree node) returns to it. The same list holds trashed folders (schema v9, below).
 - A project in the Trash reserves no name and is hidden from the tree, search and Move destinations. Acting on a project
   another window moved to the Trash says "This project is in the Trash." and removes it from this tree. A note editor
   keeps your text: Copy draft works, Save as new note is not offered (it would write into the same project).
-- **Remove folder** (or **Del** on a folder) permanently removes an **empty** Workspace Folder after confirmation. It is
-  refused, with the reason and without a dialog, while the folder holds anything — including a project in the Trash,
-  because restoring needs its original folder. Workspace Folders are never trashed, and there is no Undo for removal.
+- **Remove folder** (or **Del** on an empty folder) permanently removes an **empty** Workspace Folder after confirmation.
+  It is refused, with the reason and without a dialog, while the folder holds anything — including a project in the Trash,
+  because restoring needs its original folder. There is no Undo for removal. **Del** on a folder that is not empty offers
+  **Move folder to Trash** instead (below).
 - Projects and their content are never permanently deleted; there is no Empty Trash or automatic cleanup.
 
 ### Project Archive (schema v8)
@@ -137,16 +138,55 @@ is touched.
 - **Undo** (in the banner) restores the exact status it had, with the same rules as Undo after Move to Trash. It applies
   only to that archive: if another window unarchived the project, or unarchived and archived it again, Undo changes
   nothing and says so.
-- **Archived projects (n)** (LIBRARY, bottom of the left column) lists archived projects with the folder they are in. **Unarchive…** (or
+- **Archived (n)** (LIBRARY, bottom of the left column) lists archived projects with the folder they are in. **Unarchive…** (or
   Enter) asks for the status (Completed is preselected) and puts the project back into that folder, wherever it is now.
-  Unarchive never changes the selection; **Back** (or selecting a tree node) returns to it.
+  Unarchive never changes the selection; **Back** (or selecting a tree node) returns to it. The same list holds archived
+  folders (schema v9, below).
 - An archived project keeps its name: creating, renaming or moving something to the same name in that folder is refused
   with "An archived project named … already exists here." A folder that holds an archived project cannot be removed.
 - An archived project cannot be renamed, edited, moved or moved to the Trash; unarchive it first. Search still finds
-  archived projects and their content, marked "Archived"; revealing one opens Archived projects with it selected.
+  archived projects and their content, marked "Archived"; revealing one opens Archived with it selected.
 - **Older WorkHub versions.** Schema v8 makes WorkHub 1.0.0 (schema v7) refuse this data folder from the next time it
   starts. A 1.0.0 window that is already open is not stopped by this, so close every WorkHub window before the first start
   of this version.
+
+### Folder Archive and Folder Trash (schema v9)
+
+**Archive folder…** and **Move folder to Trash…** (toolbars, context menu, More, or **Del** on a folder that is not empty)
+act on a Workspace Folder **with everything in it**. Only that folder's own marker changes; nothing inside it is written,
+so every folder and project below keeps its own state (status, archive, Trash) and nothing on disk is touched — the files
+and folders that links point to are never moved, edited or deleted.
+
+- **Confirmation.** The dialog shows the folder, where it is (where it goes back to), how many folders, projects (with
+  how many of them are archived or in the Trash), links and notes it holds, and up to three of its direct children
+  ("and N more"). Cancel is the default (also Enter and Esc). If anything it describes changes before you confirm — a
+  project moved in or out, a relevant rename (also a case-only one), an item archived or trashed inside — nothing
+  happens and a **new** confirmation shows the current state; only a new click goes ahead. Edits inside (note text,
+  link targets, project details) do not count as changes.
+- **While archived**, the folder and everything below it leave the tree and are listed as one row under **Archived**. The
+  folder keeps its name (nothing else in that place may take it). Projects inside stay writable: their content can be
+  edited and open note editors keep saving. No folder or project below it can be created, renamed, edited, moved,
+  archived or moved to the Trash, and it is not a Move destination. Search still finds what is inside, marked "Archived (in folder …)"; revealing it opens Archived with the
+  folder selected.
+- **While in the Trash**, the folder and everything below it leave the tree and search and are listed as one row under
+  **Trash**. The name is free for others. Everything below is read-only, including content: an open note editor keeps
+  your text (Copy draft works; Save as new note is not offered) and saves again once the folder is restored.
+- **An archived folder must be unarchived** before it can be moved to the Trash.
+- **Unarchive** (Archived list) and **Restore** (Trash list) put the folder back exactly where it was, under its own name.
+  Nothing is created, renamed or moved instead: if another folder or project took the name, or a folder above it is
+  archived or in the Trash, the list says so and nothing changes. Archived and trashed items inside come back with
+  their own states (a trashed project inside an archived folder is listed "in archived folder …" and can be restored
+  once that folder is unarchived). Unarchive and Restore never change the selection.
+- **Undo** (in the banner) applies only to that archive or move to the Trash, with the same rules as for projects: if
+  another window cleared it, or cleared and repeated it, Undo changes nothing and says so.
+- Only the outermost archived or trashed item is listed: a folder or project inside an archived or trashed folder
+  belongs to that row. The LIBRARY counts are the numbers of rows listed.
+- **Other windows.** A window that still shows a folder another window archived or moved to the Trash removes that
+  branch as soon as it reads it again (expanding it, selecting something in it, or any change refused because of it),
+  and says why. A selection elsewhere is never affected.
+- **Older WorkHub versions.** Schema v9 makes WorkHub 1.1.0 (schema v8) refuse this data folder from the next time it
+  starts. A 1.1.0 window that is already open is not stopped by this, so close every WorkHub window before the first
+  start of this version. The upgrade keeps a validated copy of the v8 database under `Backups\Migrations`.
 
 ### Project content (schema v4–v6)
 
@@ -212,9 +252,10 @@ content. Systems and Owner Manager items are not included (the Repository tab ke
   revealed row for that.
 - Results are a snapshot. Revealing always re-reads where the item is now: if it was moved, the reveal goes there; if it
   no longer exists, the result is removed. Items in the Trash — and everything in a project in the Workspace Trash — are
-  never found; revealing one found earlier says "This item is in the Trash." (or "This item's project is in the Trash.")
-  and removes that result. Archived projects and their content are found and marked "Archived"; revealing one opens
-  **Archived projects** with that project selected (the tree selection does not change). A reveal updates only the folders on the item's path (including ones
+  never found; revealing one found earlier says "This item is in the Trash." (or "This item's project is in the Trash.",
+  "This item's folder is in the Trash.") and removes that result. Archived projects and their content, and everything in
+  an archived folder, are found and marked "Archived"; revealing one opens **Archived** with that project (or the
+  outermost archived folder) selected (the tree selection does not change). A reveal updates only the folders on the item's path (including ones
   another window changed); other folders the tree already loaded are not re-read, and re-expanding a loaded folder does
   not refresh it either.
 - Search only reads. While another program or window holds the database for writing, the search retries for up to 30

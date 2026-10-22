@@ -210,11 +210,16 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                 var excerpt = c.Field is SearchField.Description or SearchField.Target or SearchField.Content
                     ? WorkspaceSearchText.Excerpt(excerptSource, terms)
                     : null;
-                var owner = c.Item.Kind == SearchResultKind.Project ? c.Item.Id : c.ProjectNodeId;
+                var owner = c.Item.Kind is SearchResultKind.Project or SearchResultKind.WorkspaceFolder ? c.Item.Id : c.ProjectNodeId!.Value;
+                var state = nodes[owner].Effective; // never Trashed: trashed nodes (and their content) are not candidates
                 return c.Hit(Location(c, nodes, folders)) with
                 {
                     Excerpt = excerpt,
-                    InArchivedProject = owner is { } projectId && nodes.TryGetValue(projectId, out var project) && project.Archived,
+                    InArchivedProject = state.State == LifecycleState.Archived,
+                    // Content Ids are another Id space: the root is compared with the owning Workspace node, never the content row.
+                    ArchivedFolderName = state is { State: LifecycleState.Archived, RootType: WorkspaceNodeType.Folder, RootId: { } root } && root != owner
+                        ? nodes[root].Name
+                        : null,
                 };
             }).ToList();
 
@@ -274,33 +279,59 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
         return names;
     }
 
-    private static Dictionary<long, NodeRow> ReadNodes(SqliteConnection connection, SqliteTransaction transaction, CancellationToken token)
+    /// <summary>
+    /// Every Workspace node whose EFFECTIVE state (§7.1) is not Trashed, with that state. The in-memory map loads every node's
+    /// own markers (schema v9: both Folder markers too) and evaluates <see cref="EffectiveLifecycle.Of"/> per chain: a node
+    /// with a trashed Project or Folder anywhere on its chain is excluded (so is its content); archived ones stay searchable
+    /// and are marked with their root. A chain that cannot be followed within the depth bound is evaluated on the markers it
+    /// reached (Phase 6: such a hit shows "(location unavailable)"; Resolve refuses it, failing closed).
+    /// </summary>
+    private Dictionary<long, NodeRow> ReadNodes(SqliteConnection connection, SqliteTransaction transaction, CancellationToken token)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT n.Id, n.ParentId, n.NodeType, n.Name, n.NameKey, p.Owner, p.ProjectManager, p.Description, p.Status IS 'Archived'
-            FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id
-            WHERE n.TrashedAt IS NULL;
+            SELECT n.Id, n.ParentId, n.NodeType, n.Name, n.NameKey, p.Owner, p.ProjectManager, p.Description,
+                   n.TrashedAt IS NOT NULL OR n.FolderTrashedAt IS NOT NULL, p.Status IS 'Archived' OR n.FolderArchivedAt IS NOT NULL
+            FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id;
             """;
-        using var reader = command.ExecuteReader();
+        var all = new Dictionary<long, (NodeRow Row, LifecycleMarkers Markers)>();
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                token.ThrowIfCancellationRequested();
+                var row = new NodeRow(
+                    reader.GetInt64(0),
+                    NullableInt64(reader, 1),
+                    reader.GetString(2) == "Project" ? WorkspaceNodeType.Project : WorkspaceNodeType.Folder,
+                    reader.GetString(3),
+                    reader.GetString(4),
+                    NullableString(reader, 5),
+                    NullableString(reader, 6),
+                    NullableString(reader, 7));
+                all[row.Id] = (row, new LifecycleMarkers(row.Id, row.Type, reader.GetInt64(8) == 1, reader.GetInt64(9) == 1));
+            }
+        }
+
         var nodes = new Dictionary<long, NodeRow>();
-        while (reader.Read())
+        var chain = new List<LifecycleMarkers>();
+        foreach (var (id, (row, _)) in all)
         {
             token.ThrowIfCancellationRequested();
-            var row = new NodeRow(
-                reader.GetInt64(0),
-                NullableInt64(reader, 1),
-                reader.GetString(2) == "Project" ? WorkspaceNodeType.Project : WorkspaceNodeType.Folder,
-                reader.GetString(3),
-                reader.GetString(4),
-                NullableString(reader, 5),
-                NullableString(reader, 6),
-                NullableString(reader, 7))
+            chain.Clear();
+            long? current = id;
+            while (current is { } at && chain.Count <= _maxDepth && all.TryGetValue(at, out var node))
             {
-                Archived = reader.GetInt64(8) == 1, // archived Projects stay searchable (marked); trashed ones are excluded above
-            };
-            nodes[row.Id] = row;
+                chain.Add(node.Markers);
+                current = node.Row.ParentId;
+            }
+
+            chain.Reverse(); // a broken or runaway chain keeps the part it reached
+
+            var state = EffectiveLifecycle.Of(chain);
+            if (state.State != LifecycleState.Trashed)
+                nodes[id] = row with { Effective = state };
         }
 
         return nodes;
@@ -310,7 +341,9 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        // Active folders only: trashed folders are never candidates, and an active item never has a trashed ancestor.
+        // Active Project folders only: trashed ones are never candidates, and an active Project folder never has a trashed
+        // Project-folder ancestor (Phase 7). Whether its PROJECT is effectively trashed (itself or below a trashed Workspace
+        // Folder) is decided by the node map: such a Project is not in it.
         command.CommandText = "SELECT Id, ProjectNodeId, ParentFolderId, Name, NameKey FROM ProjectFolders WHERE TrashEntryId IS NULL;";
         using var reader = command.ExecuteReader();
         var folders = new Dictionary<long, FolderRow>();
@@ -346,6 +379,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
         Run(connection =>
         {
             using var transaction = connection.BeginTransaction(deferred: true);
+            var lifecycle = new NodeLifecycle(connection, transaction, _maxDepth);
             long workspaceNodeId;
             ContentRevealTarget? content = null;
             switch (item.Kind)
@@ -355,10 +389,14 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     var expected = item.Kind == SearchResultKind.Project ? "Project" : "Folder";
                     if (!string.Equals(Scalar(connection, transaction, "SELECT NodeType FROM WorkspaceNodes WHERE Id = $id;", item.Id) as string, expected, StringComparison.Ordinal))
                         return RevealResolution.NotFound;
-                    if (Scalar(connection, transaction, "SELECT TrashedAt IS NOT NULL FROM WorkspaceNodes WHERE Id = $id;", item.Id) is 1L)
-                        return RevealResolution.Trashed; // a Project in the Workspace Trash is never revealed
-                    if (item.Kind == SearchResultKind.Project && IsArchived(connection, transaction, item.Id))
-                        return RevealResolution.Archived(item.Id); // shown in the Archived panel; no snapshot is read
+
+                    // The effective state in this read transaction (§7.1, §7.9 C6): Trashed is never revealed; Archived opens the
+                    // Archived panel with the ROOT selected (the item itself, or the outermost archived Folder above it).
+                    var state = lifecycle.Effective(item.Id)!;
+                    if (state.State == LifecycleState.Trashed)
+                        return state.RootId == item.Id ? RevealResolution.Trashed : RevealResolution.FolderTrashed;
+                    if (state.State == LifecycleState.Archived)
+                        return state.RootId == item.Id ? RevealResolution.Archived(item.Id) : RevealResolution.InArchivedFolder(state.RootId!.Value);
                     workspaceNodeId = item.Id;
                     break;
                 }
@@ -380,13 +418,15 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     using var reader = command.ExecuteReader();
                     if (!reader.Read())
                         return RevealResolution.NotFound;
-                    if (Scalar(connection, transaction, "SELECT TrashedAt IS NOT NULL FROM WorkspaceNodes WHERE Id = $id;", reader.GetInt64(0)) is 1L)
-                        return RevealResolution.ProjectTrashed; // content of a Project in the Workspace Trash is never revealed
+                    var project = reader.GetInt64(0);
+                    var state = lifecycle.Effective(project)!;
+                    if (state.State == LifecycleState.Trashed) // content of a Project in the Workspace Trash, or below a trashed Folder
+                        return state.RootId == project ? RevealResolution.ProjectTrashed : RevealResolution.FolderTrashed;
                     if (reader.GetInt64(2) == 1)
                         return RevealResolution.Trashed; // never revealed; the hit is removed by (Kind, Id)
-                    if (IsArchived(connection, transaction, reader.GetInt64(0)))
-                        return RevealResolution.ProjectArchived(reader.GetInt64(0)); // its Project is shown in the Archived panel
-                    workspaceNodeId = reader.GetInt64(0);
+                    if (state.State == LifecycleState.Archived) // the archive root is shown in the Archived panel
+                        return state.RootId == project ? RevealResolution.ProjectArchived(project) : RevealResolution.InArchivedFolder(state.RootId!.Value);
+                    workspaceNodeId = project;
                     content = new ContentRevealTarget(workspaceNodeId, NullableInt64(reader, 1), item.Kind, item.Id);
                     break;
                 }
@@ -465,9 +505,6 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND {SqliteWorkspaceStore.Visible("c")}) AS HasChildren
         FROM WorkspaceNodes AS n
         """;
-
-    private static bool IsArchived(SqliteConnection connection, SqliteTransaction transaction, long projectNodeId) =>
-        Scalar(connection, transaction, "SELECT Status = 'Archived' FROM Projects WHERE NodeId = $id;", projectNodeId) is 1L;
 
     private static List<WorkspaceNode> ReadWorkspaceNodes(SqliteCommand command)
     {
@@ -548,7 +585,8 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
 
     private sealed record NodeRow(long Id, long? ParentId, WorkspaceNodeType Type, string Name, string NameKey, string? Owner, string? ProjectManager, string? Description)
     {
-        public bool Archived { get; init; }
+        /// <summary>Live or Archived (Trashed nodes are not in the map), with the archive root.</summary>
+        public EffectiveLifecycle Effective { get; init; } = EffectiveLifecycle.Live;
     }
 
     private sealed record FolderRow(long Id, long ProjectNodeId, long? ParentFolderId, string Name, string NameKey);

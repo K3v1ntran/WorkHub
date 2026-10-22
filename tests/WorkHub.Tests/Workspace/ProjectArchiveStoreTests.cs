@@ -61,7 +61,7 @@ public sealed class ProjectArchiveStoreTests : IDisposable
     }
 
     private async Task<string> Children(long? parent) =>
-        string.Join(",", (await _workspace.ListChildrenAsync(parent)).Select(n => $"{n.Name}{(n.HasChildren ? "+" : string.Empty)}"));
+        string.Join(",", (await _workspace.ListChildrenAsync(parent)).Nodes.Select(n => $"{n.Name}{(n.HasChildren ? "+" : string.Empty)}"));
 
     private void Raw(string sql, long id)
     {

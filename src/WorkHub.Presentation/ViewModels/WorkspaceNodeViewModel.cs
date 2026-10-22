@@ -84,6 +84,12 @@ public sealed class WorkspaceNodeViewModel : ObservableObject
     /// </summary>
     internal int ReconcileStamp { get; set; }
 
+    /// <summary>
+    /// The area's registration counter when this instance was registered for its Id. A read that started earlier never removes
+    /// it (Phase 13 §7.9: an effective-state result applies only to instances that existed when the read started).
+    /// </summary>
+    internal int RegisteredAt { get; init; }
+
     /// <summary>The child load in flight, if any (reused by every caller until it finishes).</summary>
     internal Task<bool>? ChildrenLoad { get; set; }
 

@@ -4,7 +4,10 @@ using WorkHub.Presentation.Mvvm;
 
 namespace WorkHub.Presentation.ViewModels;
 
-/// <summary>One trashed Project as listed: its name, the folder it will be restored to and when it was trashed.</summary>
+/// <summary>
+/// One Trash root as listed (a Project, or a Folder with its whole subtree): its name, the folder it will be restored to and when
+/// it was trashed.
+/// </summary>
 public sealed class WorkspaceTrashEntryViewModel(WorkspaceTrashEntry entry)
 {
     public WorkspaceTrashEntry Entry { get; } = entry;
@@ -13,8 +16,15 @@ public sealed class WorkspaceTrashEntryViewModel(WorkspaceTrashEntry entry)
 
     public string Name => Entry.Name;
 
-    /// <summary>"from Clients / Tokyo" (the original parent's CURRENT path) or the top level; "· archived" when it comes back archived.</summary>
-    public string FromText => (Entry.ParentPath is { } path ? $"from {path}" : "from Workspace (top level)") + (Entry.IsArchived ? " · archived" : string.Empty);
+    public bool IsFolder => Entry.Type == WorkspaceNodeType.Folder;
+
+    /// <summary>
+    /// "from Clients / Tokyo" (the original parent's CURRENT path) or the top level; "· archived" when it comes back archived;
+    /// "· in archived folder “2024”" while an ancestor is archived (Restore then waits for that Unarchive, §7.1).
+    /// </summary>
+    public string FromText => (Entry.ParentPath is { } path ? $"from {path}" : "from Workspace (top level)")
+        + (Entry.IsArchived ? " · archived" : string.Empty)
+        + (Entry.ArchivedAncestorName is { } folder ? $" · in archived folder “{folder}”" : string.Empty);
 
     public string TrashedAtText => $"{Entry.TrashedAt.LocalDateTime:yyyy-MM-dd HH:mm}";
 
@@ -22,8 +32,9 @@ public sealed class WorkspaceTrashEntryViewModel(WorkspaceTrashEntry entry)
 }
 
 /// <summary>
-/// The Workspace Trash (trashed Projects), shown in the right pane instead of the selection's details (Phase 8 proposal
-/// revision 2 §4, §8.2, §8.3.4; D6).
+/// The Workspace Trash, shown in the right pane instead of the selection's details (Phase 8 proposal revision 2 §4, §8.2,
+/// §8.3.4; D6). Since schema v9 it lists the OUTERMOST trash roots, Projects and Folders (Phase 13 §7.1); its count is the
+/// number of rows it lists.
 /// <list type="bullet">
 /// <item>Every list or count read records the area's lifecycle-completion count when it STARTS; its result is applied only if
 /// no lifecycle result was applied meanwhile, otherwise it is discarded and one fresh read starts (after the completion).</item>
@@ -52,7 +63,7 @@ public sealed class WorkspaceTrashViewModel : ObservableObject
         Entries.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
     }
 
-    public const string RestoreFailed = "Could not restore. The project is still in the Trash.";
+    public const string RestoreFailed = "Could not restore. It is still in the Trash.";
 
     public ObservableCollection<WorkspaceTrashEntryViewModel> Entries { get; } = [];
 
@@ -96,7 +107,7 @@ public sealed class WorkspaceTrashViewModel : ObservableObject
     /// <summary>The last Restore's outcome ("Restored “X” to …" or why it was refused).</summary>
     public string? Notice { get => _notice; internal set => SetProperty(ref _notice, value); }
 
-    /// <summary>Trashed Projects in the database as last read; null until the first count arrives.</summary>
+    /// <summary>Trash roots (Projects and Folders) in the database as last read; null until the first count arrives.</summary>
     public int? Count
     {
         get => _count;
@@ -107,8 +118,11 @@ public sealed class WorkspaceTrashViewModel : ObservableObject
         }
     }
 
-    /// <summary>"Trashed projects (n)" — distinct from the content pane's Phase 7 "Trash (n)".</summary>
-    public string ButtonText => Count is { } n ? $"Trashed projects ({n})" : "Trashed projects";
+    /// <summary>
+    /// "Trash (n)": the LIBRARY row and the panel title (Phase 13 §2). The content pane's Phase 7 project Trash keeps its own
+    /// button inside the content header.
+    /// </summary>
+    public string ButtonText => Count is { } n ? $"Trash ({n})" : "Trash";
 
     public AsyncRelayCommand RestoreCommand { get; }
 
@@ -258,7 +272,7 @@ public sealed class WorkspaceTrashViewModel : ObservableObject
             return; // direct invocations are ignored while a lifecycle write is pending (one store call only)
 
         Notice = null;
-        var notice = await _area.RestoreFromTrashAsync(entry.NodeId, entry.Name);
+        var notice = await _area.RestoreFromTrashAsync(entry.Entry);
         if (IsOpen)
             Notice = notice;
     }

@@ -38,7 +38,7 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
 
     public static string Children(long? parentId) => parentId is { } id ? $"children:{id}" : "children:root";
 
-    public Task<IReadOnlyList<WorkspaceNode>> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default) =>
+    public Task<WorkspaceChildrenResult> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default) =>
         Gated(Children(parentId), () => inner.ListChildrenAsync(parentId, CancellationToken.None));
 
     public Task<WorkspaceNode> CreateFolderAsync(long? parentId, string name, CancellationToken cancellationToken = default) =>
@@ -100,6 +100,27 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
 
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         Gated("countArchived", () => inner.CountArchivedAsync(CancellationToken.None));
+
+    // ---- Folder Archive and Trash (schema v9): "prepareFolder" (a held read takes its snapshot when called); "archiveFolder",
+    // "trashFolder", "unarchiveFolder", "restoreFolder", "undoFolder" (held writes run on release, or commit first with HoldCommitted).
+
+    public Task<FolderLifecyclePreview> PrepareFolderLifecycleAsync(long nodeId, FolderLifecycleKind kind, CancellationToken cancellationToken = default) =>
+        Gated("prepareFolder", () => inner.PrepareFolderLifecycleAsync(nodeId, kind, CancellationToken.None));
+
+    public Task<FolderLifecycleResult> ArchiveFolderAsync(long nodeId, string confirmationToken, CancellationToken cancellationToken = default) =>
+        Gated("archiveFolder", () => inner.ArchiveFolderAsync(nodeId, confirmationToken, cancellationToken), readFirst: false);
+
+    public Task<FolderLifecycleResult> TrashFolderAsync(long nodeId, string confirmationToken, CancellationToken cancellationToken = default) =>
+        Gated("trashFolder", () => inner.TrashFolderAsync(nodeId, confirmationToken, cancellationToken), readFirst: false);
+
+    public Task<FolderClearResult> UnarchiveFolderAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        Gated("unarchiveFolder", () => inner.UnarchiveFolderAsync(nodeId, cancellationToken), readFirst: false);
+
+    public Task<FolderClearResult> RestoreFolderAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        Gated("restoreFolder", () => inner.RestoreFolderAsync(nodeId, cancellationToken), readFirst: false);
+
+    public Task<FolderClearResult> UndoFolderLifecycleAsync(FolderLifecycleEvent lifecycleEvent, CancellationToken cancellationToken = default) =>
+        Gated("undoFolder", () => inner.UndoFolderLifecycleAsync(lifecycleEvent, cancellationToken), readFirst: false);
 
     private async Task<T> Gated<T>(string key, Func<Task<T>> call, bool readFirst = true)
     {

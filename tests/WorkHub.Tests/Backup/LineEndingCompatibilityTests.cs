@@ -46,15 +46,15 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         return cells;
     }
 
-    /// <summary>The current schema version (v8: V008 Project archive serial).</summary>
+    /// <summary>The current schema version (v9: V009 Workspace folder lifecycle).</summary>
     private static readonly int Current = SchemaMigrations.LatestVersion;
 
-    /// <summary>LE-14 (current schema, v8): the producer's database and daily backup, validated by the consumer's real paths.</summary>
+    /// <summary>LE-14 (current schema, v9): the producer's database and daily backup, validated by the consumer's real paths.</summary>
     [Theory]
     [MemberData(nameof(Cells))]
     public async Task CurrentSchema_IsAcceptedAcrossCheckouts(Checkout producer, Checkout consumer)
     {
-        Assert.Equal(8, Current);
+        Assert.Equal(9, Current);
         var paths = Produce(producer, Current, "current");
         var daily = Directory.GetFiles(paths.DailyBackupsDirectory, "*.db").Single();
         var build = Consumer(consumer, paths);
@@ -75,7 +75,7 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     public static TheoryData<Checkout, Checkout, int> OlderCells()
     {
         var cells = new TheoryData<Checkout, Checkout, int>();
-        foreach (var version in new[] { 5, 7 })
+        foreach (var version in new[] { 5, 7, 8 })
             foreach (var producer in Enum.GetValues<Checkout>())
                 foreach (var consumer in Enum.GetValues<Checkout>())
                     cells.Add(producer, consumer, version);
@@ -83,7 +83,7 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     }
 
     /// <summary>
-    /// LE-2 / LE-14 (v5, and v7 — the schema every Phase 12 upgrade starts from): Older candidates, and the upgrade to v8
+    /// LE-2 / LE-14 (v5, v7, and v8 — the schema every Phase 13B upgrade starts from): Older candidates, and the upgrade to v9
     /// that leaves a cross-build hybrid.
     /// </summary>
     [Theory]
@@ -133,12 +133,37 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     public void AV7ToV8UpgradeAcrossCheckouts_MixesLineEndingsInTheProjectsTable_AndIsAcceptedEverywhere(Checkout producer, Checkout upgrader, string fromV008, string fromV003)
     {
         var paths = Produce(producer, 7, $"hybrid-{producer}-{upgrader}");
-        var result = new DatabaseInitializer(paths, LineEndingMigrations.For(upgrader), _clock, NullAppLog.Instance).Initialize();
+        var result = new DatabaseInitializer(paths, LineEndingMigrations.For(upgrader, 8), _clock, NullAppLog.Instance).Initialize();
         BackupKit.ClearPools(paths.DatabaseFile);
         Assert.Equal((DatabaseInitializationOutcome.Migrated, 7, 8), (result.Outcome, result.PreviousSchemaVersion, result.SchemaVersion));
 
         var sql = SqlOf(paths.DatabaseFile, "Projects");
         Assert.Contains(fromV008, sql);
+        Assert.Contains(fromV003, sql);
+        var copy = Snapshot(paths.DatabaseFile);
+        foreach (var consumer in Enum.GetValues<Checkout>())
+        {
+            Assert.Equal(BackupStatus.FullyValidated, new BackupValidator(Reference(consumer), new BackupFileOps()).Check(copy, BackupCheckLevel.Full, 8).Status);
+            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 8), new CurrentDataClassifier(Reference(consumer)).ClassifyReadOnly(paths.DatabaseFile));
+        }
+    }
+
+    /// <summary>
+    /// V009 hybrids: a v8 database from one checkout upgraded by a v9 build from the other splices V009's three columns into the
+    /// V003/V007 WorkspaceNodes table text; every checkout accepts the result.
+    /// </summary>
+    [Theory]
+    [InlineData(Checkout.Lf, Checkout.Crlf, "LifecycleSerial INTEGER NOT NULL DEFAULT 0\r\n", "(\n")]
+    [InlineData(Checkout.Crlf, Checkout.Lf, "LifecycleSerial INTEGER NOT NULL DEFAULT 0\n", "(\r\n")]
+    public void AV8ToV9UpgradeAcrossCheckouts_MixesLineEndingsInTheWorkspaceNodesTable_AndIsAcceptedEverywhere(Checkout producer, Checkout upgrader, string fromV009, string fromV003)
+    {
+        var paths = Produce(producer, 8, $"hybrid9-{producer}-{upgrader}");
+        var result = new DatabaseInitializer(paths, LineEndingMigrations.For(upgrader), _clock, NullAppLog.Instance).Initialize();
+        BackupKit.ClearPools(paths.DatabaseFile);
+        Assert.Equal((DatabaseInitializationOutcome.Migrated, 8, 9), (result.Outcome, result.PreviousSchemaVersion, result.SchemaVersion));
+
+        var sql = SqlOf(paths.DatabaseFile, "WorkspaceNodes");
+        Assert.Contains(fromV009, sql);
         Assert.Contains(fromV003, sql);
         var copy = Snapshot(paths.DatabaseFile);
         foreach (var consumer in Enum.GetValues<Checkout>())
@@ -152,11 +177,14 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     {
         { "every object to CRLF", "1 = 1" },
         { "one trigger", "name = 'TR_WorkspaceNodes_DeleteOnlyEmptyFolder'" },
-        { "one partial index", "name = 'UX_WorkspaceNodes_ActiveChildName'" },
+        { "one partial index", "name = 'UX_WorkspaceNodes_LiveChildName'" },
         { "one table", "name = 'Systems'" },
         { "the V008 trigger", "name = 'TR_Projects_ArchiveSerialTransition'" },
         { "the V008 partial index", "name = 'IX_Projects_Archived'" },
         { "the altered Projects table", "name = 'Projects'" },
+        { "a V009 trigger", "name = 'TR_WorkspaceNodes_LifecycleSerialTransition'" },
+        { "a V009 partial index", "name = 'IX_WorkspaceNodes_FolderTrashed'" },
+        { "the altered WorkspaceNodes table", "name = 'WorkspaceNodes'" },
     };
 
     /// <summary>LE-1: a same-name rewrite that changes only line terminators passes every reference path.</summary>
@@ -301,8 +329,8 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     /// <summary>LE-6: unchanged preservation copies of non-reference schemas, from LF- and CRLF-built sources, are preserved.</summary>
     [Theory]
     [InlineData("foreign v0 with multi-line literals", Checkout.Lf)]
-    [InlineData("newer v9", Checkout.Lf)]
-    [InlineData("newer v9", Checkout.Crlf)]
+    [InlineData("newer v10", Checkout.Lf)]
+    [InlineData("newer v10", Checkout.Crlf)]
     [InlineData("extra table", Checkout.Crlf)]
     [InlineData("extra table", Checkout.Mixed)]
     public void Preservation_OfAnUnchangedNonReferenceCopy_Succeeds(string kind, Checkout built)
@@ -317,9 +345,9 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         {
             var paths = Produce(built, Current, Guid.NewGuid().ToString("N"), daily: false);
             source = paths.DatabaseFile;
-            version = kind == "newer v9" ? Current + 1 : Current;
+            version = kind == "newer v10" ? Current + 1 : Current;
             using var connection = BackupKit.Open(source);
-            BackupKit.Exec(connection, kind == "newer v9" ? $"PRAGMA user_version = {Current + 1};" : "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Note TEXT DEFAULT 'r\r\ns');");
+            BackupKit.Exec(connection, kind == "newer v10" ? $"PRAGMA user_version = {Current + 1};" : "CREATE TABLE Extra (Id INTEGER PRIMARY KEY, Note TEXT DEFAULT 'r\r\ns');");
         }
 
         var (candidate, facts) = PreservationCopy(source, version);

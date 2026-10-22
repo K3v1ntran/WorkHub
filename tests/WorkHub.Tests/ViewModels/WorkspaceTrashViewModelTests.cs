@@ -172,7 +172,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.True(area.IsUndoAvailable);
         Assert.True(IsTrashedInDb(alpha));
         await area.Trash.CurrentCount;
-        Assert.Equal("Trashed projects (1)", area.Trash.ButtonText);
+        Assert.Equal("Trash (1)", area.Trash.ButtonText);
     });
 
     [Fact]
@@ -211,7 +211,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         Assert.Equal("Restored “Alpha” to Workspace (top level).", area.BannerMessage);
         Assert.False(area.IsUndoAvailable);
         await area.Trash.CurrentCount;
-        Assert.Equal("Trashed projects (0)", area.Trash.ButtonText);
+        Assert.Equal("Trash (0)", area.Trash.ButtonText);
     });
 
     [Fact]
@@ -226,12 +226,13 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         var area = await Area();
 
         area.SelectedNode = Node(area.Roots, "Clients");
-        await area.DeleteCommand.ExecuteAsync(); // Del on a folder
-        Assert.Equal("“Clients” is not empty (1 item). Move or remove them first.", area.BannerMessage);
+        await area.RemoveFolderCommand.ExecuteAsync(); // Remove folder… on a non-empty folder (Del offers the subtree Trash instead, D12)
+        Assert.Equal("“Clients” is not empty (1 item). Move or remove them first, or move the folder to the Trash.", area.BannerMessage);
         area.SelectedNode = Node(area.Roots, "Holder");
         await area.RemoveFolderCommand.ExecuteAsync();
-        Assert.Equal("“Holder” still holds 1 project in the Trash. Restore it and move it elsewhere first.", area.BannerMessage);
+        Assert.Equal("“Holder” still holds 1 item in the Trash. Restore it and move it elsewhere first, or move the folder to the Trash.", area.BannerMessage);
         Assert.Empty(_dialogs.Confirmations);
+        Assert.Empty(_dialogs.FolderConfirmations);
 
         _dialogs.ConfirmAnswer = false;
         area.SelectedNode = Node(area.Roots, "Drafts");
@@ -1105,7 +1106,7 @@ public sealed class WorkspaceTrashViewModelTests : IDisposable
         await area.DeleteCommand.ExecuteAsync(); // Del again: no second store call
         Assert.Equal(1, _treeStore.Calls("trashProject"));
         area.SelectedNode = Node(area.Roots, "Q"); // selection stays available
-        Assert.Equal(WorkspaceRevealOutcome.Selected, await Reveal(area, SearchResultKind.Project, (await _other.ListChildrenAsync(null)).Single(n => n.Name == "Q").Id));
+        Assert.Equal(WorkspaceRevealOutcome.Selected, await Reveal(area, SearchResultKind.Project, (await _other.ListChildrenAsync(null)).Nodes.Single(n => n.Name == "Q").Id));
 
         gate.Release();
         await trash;

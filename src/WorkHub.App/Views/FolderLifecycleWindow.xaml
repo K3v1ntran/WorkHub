@@ -1,0 +1,52 @@
+<Window x:Class="WorkHub.App.Views.FolderLifecycleWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:FolderLifecycleConfirmationViewModel}"
+        Title="{Binding Title}"
+        Width="480" SizeToContent="Height" MaxHeight="440" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=CancelButton}">
+    <Window.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+    </Window.Resources>
+    <!--
+        Phase 13 §7.4: a bounded preview of ONE computed confirmation (fixed maximum size; never a subtree listing). Cancel is focused
+        and is both the Enter and the Esc default, so a stray key press never archives or trashes a subtree.
+    -->
+    <DockPanel Margin="20,12,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True" Command="{Binding CancelCommand}"
+                    AutomationProperties.AutomationId="FolderLifecycleCancel" />
+            <Button Content="{Binding ConfirmText}" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}"
+                    AutomationProperties.AutomationId="FolderLifecycleConfirm" />
+        </StackPanel>
+        <StackPanel>
+            <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="{StaticResource Brush.Warning}" Text="{Binding StaleText}"
+                       Visibility="{Binding IsStale, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="FolderLifecycleStale" />
+            <TextBlock TextWrapping="Wrap" Text="{Binding Message}" AutomationProperties.AutomationId="FolderLifecycleMessage" />
+            <TextBlock Style="{StaticResource FieldHint}" Margin="0,8,0,0" Text="{Binding LocationText}" TextTrimming="CharacterEllipsis"
+                       ToolTip="{Binding LocationText}" AutomationProperties.AutomationId="FolderLifecycleLocation" />
+            <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding CountsText}" AutomationProperties.AutomationId="FolderLifecycleCounts" />
+            <StackPanel Margin="0,6,0,0" Visibility="{Binding HasShownChildren, Converter={StaticResource BoolToVisibility}}">
+                <ItemsControl ItemsSource="{Binding ShownChildren}" Focusable="False" AutomationProperties.AutomationId="FolderLifecycleChildren">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Margin="8,1,0,1" Text="{Binding StringFormat='• {0}'}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Margin="8,1,0,0" Foreground="{StaticResource Brush.MutedText}" Text="{Binding MoreText}"
+                           Visibility="{Binding MoreText, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="FolderLifecycleMore" />
+            </StackPanel>
+        </StackPanel>
+    </DockPanel>
+</Window>

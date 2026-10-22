@@ -8,8 +8,12 @@ namespace WorkHub.Core.Workspace;
 /// </summary>
 public interface IWorkspaceStore
 {
-    /// <summary>Direct children of <paramref name="parentId"/> (null = root), unsorted.</summary>
-    Task<IReadOnlyList<WorkspaceNode>> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// The shown direct children of <paramref name="parentId"/> (null = root), unsorted, read in ONE read transaction with the
+    /// parent's effective state (schema v9, §7.9 C3): a parent that is archived or trashed, itself or through an ancestor, is
+    /// <see cref="ChildrenReadStatus.ParentNotLive"/> and lists nothing.
+    /// </summary>
+    Task<WorkspaceChildrenResult> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default);
 
     /// <exception cref="DuplicateWorkspaceNameException"/>
     /// <exception cref="WorkspaceParentException"/>
@@ -102,6 +106,47 @@ public interface IWorkspaceStore
     Task<IReadOnlyList<ArchivedProjectEntry>> ListArchivedAsync(CancellationToken cancellationToken = default);
 
     Task<int> CountArchivedAsync(CancellationToken cancellationToken = default);
+
+    // ---- Folder Archive and Folder Trash (schema v9; Phase 13 proposal revision 4 §7) ------------------------------------------
+    // M1: one marker on the Folder that roots the subtree; descendants are never written. Every Workspace node write above
+    // requires the node's EFFECTIVE state to be Live (an archived or trashed ancestor refuses it: WorkspaceNotLiveException or
+    // the AncestorNotLive / ParentArchived / ParentTrashed outcomes). The Trash and Archived listings above list the OUTERMOST
+    // roots of both kinds; their counts are the number of rows they list.
+
+    /// <summary>
+    /// The confirmation (§7.4) for archiving or trashing the Folder, from one read transaction: the preview and its token, or the
+    /// refusal that makes a dialog pointless. Never writes.
+    /// </summary>
+    Task<FolderLifecyclePreview> PrepareFolderLifecycleAsync(long nodeId, FolderLifecycleKind kind, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// In ONE <c>BEGIN IMMEDIATE</c> transaction: requires a live Folder under a live chain, recomputes the confirmation and
+    /// compares its token with <paramref name="confirmationToken"/> (a mismatch is <see cref="FolderLifecycleOutcome.ConfirmationStale"/>
+    /// with the fresh preview), then writes ONLY <c>FolderArchivedAt</c> and <c>LifecycleSerial + 1</c> on that Folder. Every
+    /// non-Committed outcome writes nothing.
+    /// </summary>
+    Task<FolderLifecycleResult> ArchiveFolderAsync(long nodeId, string confirmationToken, CancellationToken cancellationToken = default);
+
+    /// <summary>As <see cref="ArchiveFolderAsync"/>, writing <c>FolderTrashedAt</c>; an archived Folder is refused (D15). The name is freed.</summary>
+    Task<FolderLifecycleResult> TrashFolderAsync(long nodeId, string confirmationToken, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// State-based: in ONE <c>BEGIN IMMEDIATE</c> transaction clears the Folder's archive marker if it is listed in the Archived
+    /// panel (archived, no ancestor archived or trashed). Descendant markers are untouched; the serial is unchanged.
+    /// </summary>
+    Task<FolderClearResult> UnarchiveFolderAsync(long nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Strict Restore: in ONE <c>BEGIN IMMEDIATE</c> transaction clears the Folder's trash marker at its ORIGINAL parent and name,
+    /// only if that chain is live and no live sibling holds the name. Nothing is created, renamed or moved.
+    /// </summary>
+    Task<FolderClearResult> RestoreFolderAsync(long nodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Event-specific Undo (D13): clears the marker of <paramref name="lifecycleEvent"/> only if the Folder still carries it with
+    /// exactly that serial, under the same rules as Unarchive / Restore. Every non-Cleared outcome writes nothing.
+    /// </summary>
+    Task<FolderClearResult> UndoFolderLifecycleAsync(FolderLifecycleEvent lifecycleEvent, CancellationToken cancellationToken = default);
 }
 
 public sealed class DuplicateWorkspaceNameException(string name, Exception? inner = null)
@@ -111,6 +156,9 @@ public sealed class DuplicateWorkspaceNameException(string name, Exception? inne
 
     /// <summary>The sibling holding the name is an archived Project (hidden from the tree; Phase 12 A6).</summary>
     public bool BlockerArchived { get; init; }
+
+    /// <summary>The sibling holding the name is an archived Folder (hidden from the tree; D10: its name stays reserved).</summary>
+    public bool BlockerArchivedFolder { get; init; }
 }
 
 public enum WorkspaceParentProblem

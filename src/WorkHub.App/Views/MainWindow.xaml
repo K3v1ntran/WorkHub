@@ -87,6 +87,8 @@
             <Separator />
             <MenuItem Header="Move to Trash…" InputGestureText="Del" Command="{Binding TrashProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Archive…" Command="{Binding ArchiveProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Archive folder…" Command="{Binding ArchiveFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Move folder to Trash…" InputGestureText="Del" Command="{Binding TrashFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" /></MenuItem.Icon></MenuItem>
             <Separator />
             <MenuItem Header="Info" InputGestureText="Ctrl+I" Command="{Binding ToggleInfoCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Info}" /></MenuItem.Icon></MenuItem>
@@ -821,6 +823,16 @@
                                     ToolTip="Move the project to the Trash (Del). Its content stays with it; nothing on disk is touched.">
                                 <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
                             </Button>
+                            <Button Style="{StaticResource IconPillButton}"
+                                    Command="{Binding ArchiveFolderCommand}" AutomationProperties.Name="Archive folder" Margin="2,2"
+                                    ToolTip="Archive the folder and everything in it: it leaves the tree and is listed under Archived. Nothing on disk is touched.">
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
+                            </Button>
+                            <Button Style="{StaticResource IconPillButton}"
+                                    Command="{Binding TrashFolderCommand}" AutomationProperties.Name="Move folder to Trash" Margin="2,2"
+                                    ToolTip="Move the folder and everything in it to the Trash (Del on a non-empty folder). Nothing on disk is touched.">
+                                <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                            </Button>
                             <Button Style="{StaticResource IconPillButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove empty folder" Margin="2,2"
                                     ToolTip="Remove an empty folder (Del). Only the WorkHub folder is removed; nothing on disk is touched.">
                                 <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" />
@@ -835,9 +847,9 @@
                         <StackPanel x:Name="LibrarySection" DockPanel.Dock="Bottom" Margin="0,4,0,8" AutomationProperties.Name="Library">
                             <Border Margin="12,0,12,0" BorderThickness="0,1,0,0" BorderBrush="{StaticResource Brush.Border}" />
                             <TextBlock Style="{StaticResource SectionHeader}" Margin="12,10,12,4" Text="LIBRARY" />
-                            <Button Command="{Binding OpenArchivedCommand}" AutomationProperties.Name="Archived projects"
+                            <Button Command="{Binding OpenArchivedCommand}" AutomationProperties.Name="Archived"
                                     AutomationProperties.AutomationId="OpenArchivedProjects"
-                                    ToolTip="Archived projects (unarchive them from here) · Ctrl+Shift+A">
+                                    ToolTip="Archived folders and projects (unarchive them from here) · Ctrl+Shift+A">
                                 <Button.Style>
                                     <Style TargetType="Button" BasedOn="{StaticResource LibraryRow}">
                                         <Style.Triggers>
@@ -852,9 +864,9 @@
                                     <TextBlock Margin="10,0,0,0" VerticalAlignment="Center" Text="{Binding Archived.ButtonText}" TextTrimming="CharacterEllipsis" />
                                 </DockPanel>
                             </Button>
-                            <Button Command="{Binding OpenTrashCommand}" AutomationProperties.Name="Trashed projects"
+                            <Button Command="{Binding OpenTrashCommand}" AutomationProperties.Name="Trash"
                                     AutomationProperties.AutomationId="OpenWorkspaceTrash"
-                                    ToolTip="Projects in the Workspace Trash (restore them from here) · Ctrl+Shift+T">
+                                    ToolTip="Folders and projects in the Workspace Trash (restore them from here) · Ctrl+Shift+T">
                                 <Button.Style>
                                     <Style TargetType="Button" BasedOn="{StaticResource LibraryRow}">
                                         <Style.Triggers>
@@ -1050,17 +1062,17 @@
                                     <TextBlock Margin="6,0,0,0" Text="Back" />
                                 </StackPanel>
                             </Button>
-                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding RestoreCommand}" AutomationProperties.Name="Restore project"
-                                    ToolTip="Restore the selected project to the folder it came from (Enter)" Content="Restore" />
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding RestoreCommand}" AutomationProperties.Name="Restore"
+                                    ToolTip="Restore the selected folder or project to the folder it came from, under its own name (Enter)" Content="Restore" />
                             <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding ButtonText}" AutomationProperties.AutomationId="WorkspaceTrashTitle" />
                         </DockPanel>
                         <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="WorkspaceTrashNotice"
                                    Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
-                                   Text="Projects in the Trash keep their folders, links and notes and are kept until you restore them. Nothing on disk was moved or deleted." />
+                                   Text="Folders and projects in the Trash keep everything in them and are kept until you restore them, to the same place and name. Nothing on disk was moved or deleted." />
                         <Grid>
                             <ListView x:Name="WorkspaceTrashList" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" BorderThickness="0" Background="Transparent"
-                                      AutomationProperties.Name="Trashed projects list" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      AutomationProperties.Name="Trash list" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                       PreviewKeyDown="WorkspaceTrashList_PreviewKeyDown">
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
@@ -1077,12 +1089,17 @@
                                                 <ColumnDefinition Width="3*" />
                                                 <ColumnDefinition Width="120" />
                                             </Grid.ColumnDefinitions>
-                                            <Image VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Project}" />
+                                            <Image x:Name="Glyph" VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Project}" />
                                             <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
                                                        Text="{Binding FromText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding FromText}" />
                                             <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding TrashedAtText}" />
                                         </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Folder}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
                                 <ListView.ContextMenu>
@@ -1091,7 +1108,7 @@
                                     </ContextMenu>
                                 </ListView.ContextMenu>
                             </ListView>
-                            <TextBlock Style="{StaticResource EmptyState}" Text="No projects are in the Trash." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Nothing is in the Trash." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
                                        AutomationProperties.AutomationId="WorkspaceTrashEmpty" />
                             <TextBlock Style="{StaticResource EmptyState}" Text="Loading the Trash…" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
                             <TextBlock Style="{StaticResource EmptyState}" Foreground="{StaticResource Brush.Error}" Text="{Binding LoadError}"
@@ -1113,17 +1130,17 @@
                                     <TextBlock Margin="6,0,0,0" Text="Back" />
                                 </StackPanel>
                             </Button>
-                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding UnarchiveCommand}" AutomationProperties.Name="Unarchive project"
-                                    ToolTip="Unarchive the selected project into its folder, with a status you choose (Enter)" Content="Unarchive…" />
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding UnarchiveCommand}" AutomationProperties.Name="Unarchive"
+                                    ToolTip="Unarchive the selected folder or project into its folder (a project asks for its status) (Enter)" Content="Unarchive…" />
                             <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding ButtonText}" AutomationProperties.AutomationId="ArchivedProjectsTitle" />
                         </DockPanel>
                         <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="ArchivedProjectsNotice"
                                    Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
-                                   Text="Archived projects keep their folders, links and notes and their place and name. Nothing on disk was moved or deleted." />
+                                   Text="Archived folders and projects keep everything in them and their place and name. Nothing on disk was moved or deleted." />
                         <Grid>
                             <ListView x:Name="ArchivedProjectsList" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" BorderThickness="0" Background="Transparent"
-                                      AutomationProperties.Name="Archived projects list" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                      AutomationProperties.Name="Archived list" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                       PreviewKeyDown="ArchivedProjectsList_PreviewKeyDown">
                                 <ListView.ItemContainerStyle>
                                     <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
@@ -1140,12 +1157,17 @@
                                                 <ColumnDefinition Width="3*" />
                                                 <ColumnDefinition Width="120" />
                                             </Grid.ColumnDefinitions>
-                                            <Image VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
+                                            <Image x:Name="Glyph" VerticalAlignment="Center" Style="{StaticResource IconImage}" Source="{StaticResource Img.Project}" />
                                             <TextBlock Grid.Column="1" Margin="4,0,8,0" VerticalAlignment="Center" Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
                                             <TextBlock Grid.Column="2" Margin="0,0,8,0" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}"
                                                        Text="{Binding LocationText}" TextTrimming="CharacterEllipsis" ToolTip="{Binding LocationText}" />
                                             <TextBlock Grid.Column="3" VerticalAlignment="Center" Foreground="{StaticResource Brush.MutedText}" Text="{Binding UpdatedText}" />
                                         </Grid>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Binding="{Binding IsFolder}" Value="True">
+                                                <Setter TargetName="Glyph" Property="Source" Value="{StaticResource Img.Folder}" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ListView.ItemTemplate>
                                 <ListView.ContextMenu>
@@ -1154,7 +1176,7 @@
                                     </ContextMenu>
                                 </ListView.ContextMenu>
                             </ListView>
-                            <TextBlock Style="{StaticResource EmptyState}" Text="No projects are archived." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
+                            <TextBlock Style="{StaticResource EmptyState}" Text="Nothing is archived." Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}"
                                        AutomationProperties.AutomationId="ArchivedProjectsEmpty" />
                             <TextBlock Style="{StaticResource EmptyState}" Text="Loading archived projects…" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVisibility}}" />
                             <TextBlock Style="{StaticResource EmptyState}" Foreground="{StaticResource Brush.Error}" Text="{Binding LoadError}"
@@ -1353,7 +1375,13 @@
                                         <Button Style="{StaticResource IconPillButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move folder" ToolTip="Move to…">
                                             <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" />
                                         </Button>
-                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove folder" ToolTip="Remove empty folder… (Del)">
+                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding ArchiveFolderCommand}" AutomationProperties.Name="Archive folder (details)" ToolTip="Archive folder…">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" />
+                                        </Button>
+                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding TrashFolderCommand}" AutomationProperties.Name="Move folder to Trash (details)" ToolTip="Move folder to Trash… (Del)">
+                                            <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                                        </Button>
+                                        <Button Style="{StaticResource IconPillButton}" Command="{Binding RemoveFolderCommand}" AutomationProperties.Name="Remove folder" ToolTip="Remove empty folder…">
                                             <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" />
                                         </Button>
                                     </StackPanel>
@@ -1854,7 +1882,7 @@
                                     <TextBlock Margin="0,0,0,8" TextWrapping="Wrap" Text="{Binding SelectedNode.Path}" AutomationProperties.AutomationId="InfoFolderPath" />
                                     <TextBlock TextWrapping="Wrap" AutomationProperties.AutomationId="InfoFolderCounts"
                                                Visibility="{Binding SelectedFolderInfo, Converter={StaticResource NullToCollapsed}}">
-                                        <Run Text="{Binding SelectedFolderInfo.ActiveChildren, Mode=OneWay}" /><Run Text=" visible items · " /><Run Text="{Binding SelectedFolderInfo.ArchivedChildren, Mode=OneWay}" /><Run Text=" archived projects · " /><Run Text="{Binding SelectedFolderInfo.TrashedChildren, Mode=OneWay}" /><Run Text=" in the Trash" />
+                                        <Run Text="{Binding SelectedFolderInfo.ActiveChildren, Mode=OneWay}" /><Run Text=" visible items · " /><Run Text="{Binding SelectedFolderInfo.ArchivedChildren, Mode=OneWay}" /><Run Text=" archived · " /><Run Text="{Binding SelectedFolderInfo.TrashedChildren, Mode=OneWay}" /><Run Text=" in the Trash" />
                                     </TextBlock>
                                     <TextBlock Style="{StaticResource FieldHint}" Text="Folders are WorkHub references only; nothing on disk belongs to them." />
                                 </StackPanel>

@@ -190,7 +190,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         Assert.False(area.IsLifecycleBusy);
         Assert.Equal(("Archived", 1L), Row(p));
         await area.Archived.CurrentCount;
-        Assert.Equal("Archived projects (1)", area.Archived.ButtonText);
+        Assert.Equal("Archived (1)", area.Archived.ButtonText);
         await Settle(area);
     });
 
@@ -348,7 +348,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
 
         Assert.Equal(before, Data());
         Assert.Equal(("Archived", 2L), Row(p));
-        Assert.Equal("“P” was archived again elsewhere. Undo is no longer available; use Archived projects to unarchive it.", area.BannerMessage);
+        Assert.Equal("“P” was archived again elsewhere. Undo is no longer available; use Archived to unarchive it.", area.BannerMessage);
         Assert.False(area.IsUndoAvailable);
         Assert.Empty(Placements(area, p));
         await area.OpenArchivedCommand.ExecuteAsync();
@@ -396,7 +396,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         await area.Archived.CurrentLoad;
         var row = Assert.Single(area.Archived.Entries);
         Assert.Equal(("P", "in Clients"), (row.Name, row.LocationText));
-        Assert.Equal("Archived projects (1)", area.Archived.ButtonText);
+        Assert.Equal("Archived (1)", area.Archived.ButtonText);
         area.Archived.SelectedEntry = row;
         _dialogs.OnUnarchive = dialog =>
         {
@@ -630,9 +630,9 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         await area.Trash.RestoreCommand.ExecuteAsync();
         await area.Archived.CurrentCount;
 
-        Assert.Equal("Restored “Legacy”. It is archived: find it under Archived projects.", area.Trash.Notice);
+        Assert.Equal("Restored “Legacy”. It is archived: find it under Archived.", area.Trash.Notice);
         Assert.Empty(Placements(area, p));
-        Assert.Equal("Archived projects (1)", area.Archived.ButtonText);
+        Assert.Equal("Archived (1)", area.Archived.ButtonText);
         await Settle(area);
     });
 
@@ -647,7 +647,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
 
         await area.RemoveFolderCommand.ExecuteAsync();
 
-        Assert.Equal("“Clients” still holds 1 archived project. Unarchive it and move it elsewhere first.", area.BannerMessage);
+        Assert.Equal("“Clients” still holds 1 archived item. Unarchive it and move it elsewhere first, or move the folder to the Trash.", area.BannerMessage);
         Assert.Empty(_dialogs.Confirmations);
         Assert.Single(Placements(area, clients));
         await Settle(area);
@@ -695,7 +695,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         await search.CurrentActivation;
 
         Assert.Equal(p, area.Archived.SelectedEntry!.NodeId);
-        Assert.Equal("This item's project is archived — it is selected under Archived projects.", search.NoticeText);
+        Assert.Equal("This item's project is archived — it is selected under Archived.", search.NoticeText);
         Assert.Equal(2, search.Results.Count); // both hits stay
         await Settle(area);
     });
@@ -742,7 +742,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         resolve.Release();
         await search.CurrentActivation;
 
-        Assert.Equal("This project is no longer archived. Search again.", search.NoticeText);
+        Assert.Equal("This item is no longer archived. Search again.", search.NoticeText);
         Assert.Single(search.Results);
         search.SelectedResult = search.Results.Single();
         search.ActivateSelectedCommand.Execute(null);
@@ -886,7 +886,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         read.Fail(new InvalidOperationException("locked"));
 
         Assert.Equal(WorkspaceRevealOutcome.Failed, await reveal);
-        Assert.Equal("Archived projects could not be loaded. Nothing was changed.", area.Archived.LoadError);
+        Assert.Equal("The Archived list could not be loaded. Nothing was changed.", area.Archived.LoadError);
         Assert.Null(area.Archived.SelectedEntry);
         await Settle(area);
     });
@@ -983,7 +983,7 @@ public sealed class ProjectArchiveViewModelTests : IDisposable
         area.Archived.Entries.CollectionChanged += record;
         await area.OpenArchivedCommand.ExecuteAsync(); // the roots loaded before P and Q existed: reload them through reveals
         await area.Archived.CurrentLoad;
-        Assert.Equal(WorkspaceRevealOutcome.Selected, await Reveal(area, SearchResultKind.Project, (await _other.ListChildrenAsync(null)).Single(n => n.Name == "P").Id));
+        Assert.Equal(WorkspaceRevealOutcome.Selected, await Reveal(area, SearchResultKind.Project, (await _other.ListChildrenAsync(null)).Nodes.Single(n => n.Name == "P").Id));
 
         await ArchiveSelected(area, Node(area.Roots, "P"));
         await area.UndoCommand.ExecuteAsync();

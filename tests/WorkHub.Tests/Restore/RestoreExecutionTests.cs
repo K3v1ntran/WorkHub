@@ -125,14 +125,64 @@ public sealed class RestoreExecutionTests : RestoreTestBase
 
         Assert.Null(error);
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result!.Database.Outcome);
-        Assert.Equal((7, 8), (result.Database.PreviousSchemaVersion, result.Database.SchemaVersion));
-        Assert.StartsWith("workhub_v7_before_v8_", Path.GetFileName(result.Database.MigrationBackupFile));
+        Assert.Equal((7, SchemaMigrations.LatestVersion), (result.Database.PreviousSchemaVersion, result.Database.SchemaVersion));
+        Assert.StartsWith($"workhub_v7_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(result.Database.MigrationBackupFile));
         RestoreKit.ClearPools(Root);
         using var restored = BackupKit.Open(Db, SqliteOpenMode.ReadOnly);
-        Assert.Equal(8L, BackupKit.Scalar(restored, "PRAGMA user_version;"));
+        Assert.Equal((long)SchemaMigrations.LatestVersion, BackupKit.Scalar(restored, "PRAGMA user_version;"));
         Assert.Equal(2L, BackupKit.Scalar(restored, "SELECT count(*) FROM Projects WHERE Status = 'Archived' AND ArchiveSerial = 0;"));
         Assert.Equal(1L, BackupKit.Scalar(restored, "SELECT count(*) FROM WorkspaceNodes WHERE TrashedAt IS NOT NULL;"));
-        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(8, SchemaFingerprint.Read(restored)));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(SchemaMigrations.LatestVersion, SchemaFingerprint.Read(restored)));
+    }
+
+    /// <summary>
+    /// Phase 13 B11: a v8 daily backup with nested folders, archived and trashed Projects and content is staged as Older,
+    /// restored, and migrated to v9 with its own validated pre-migration backup. Every v8 column of every row is unchanged;
+    /// the new folder-lifecycle columns are NULL/0.
+    /// </summary>
+    [Fact]
+    public async Task G_V8CandidateWithNestedFolders_IsRestoredThenMigratedToV9_EveryV8ValueKept_LifecycleColumnsAtDefaults()
+    {
+        BackupKit.CreateDatabase(Root);
+        var entry = RestoreKit.PlaceOlderDaily(Root, version: 8);
+        List<string> v8Data;
+        using (var connection = BackupKit.Open(BackupKit.Daily(Root, entry.FileName)))
+        {
+            var clients = TestSupport.Db.InsertNode(connection, null, "Folder", "Clients");
+            var tokyo = TestSupport.Db.InsertNode(connection, clients, "Folder", "Tokyo");
+            var archived = TestSupport.Db.InsertNode(connection, tokyo, "Project", "Archived one");
+            TestSupport.Db.InsertProjectDetails(connection, archived, "0000000000000000000000000000000c");
+            var trashed = TestSupport.Db.InsertNode(connection, clients, "Project", "Trashed one");
+            TestSupport.Db.InsertProjectDetails(connection, trashed, "0000000000000000000000000000000d");
+            BackupKit.Exec(connection, $"UPDATE Projects SET Status = 'Archived', ArchiveSerial = ArchiveSerial + 1 WHERE NodeId = {archived};");
+            BackupKit.Exec(connection, $"INSERT INTO ProjectNotes (ProjectNodeId, FolderId, Title, Content, CreatedAt, UpdatedAt) VALUES ({archived}, NULL, 'N', 'kept', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');");
+            BackupKit.Exec(connection, $"UPDATE WorkspaceNodes SET TrashedAt = '2026-02-01T00:00:00.000Z' WHERE Id = {trashed};");
+            v8Data = Persistence.ProjectContentMigrationTests.DataSnapshot(connection);
+        }
+
+        var start = await RestoreKit.Requester(Root).BeginAsync(entry);
+        Assert.Equal(BackupCompatibility.Older, start.Request!.Facts.Compatibility);
+        var op = await start.Request.ConfirmAsync();
+        start.Request.Dispose();
+
+        var (result, _, error) = StartWithToken(op);
+
+        Assert.Null(error);
+        Assert.Equal(DatabaseInitializationOutcome.Migrated, result!.Database.Outcome);
+        Assert.Equal((8, 9), (result.Database.PreviousSchemaVersion, result.Database.SchemaVersion));
+        Assert.StartsWith("workhub_v8_before_v9_", Path.GetFileName(result.Database.MigrationBackupFile));
+        Assert.True(BackupKit.Validator().Check(result.Database.MigrationBackupFile!, BackupCheckLevel.Full, 8).IsFullyValidated);
+        RestoreKit.ClearPools(Root);
+        using var restored = BackupKit.Open(Db, SqliteOpenMode.ReadOnly);
+        Assert.Equal(9L, BackupKit.Scalar(restored, "PRAGMA user_version;"));
+        Assert.Equal(0L, BackupKit.Scalar(restored, "SELECT count(*) FROM WorkspaceNodes WHERE FolderArchivedAt IS NOT NULL OR FolderTrashedAt IS NOT NULL OR LifecycleSerial <> 0;"));
+        var v9Data = Persistence.ProjectContentMigrationTests.DataSnapshot(restored)
+            .Select(r => r.StartsWith("WorkspaceNodes|", StringComparison.Ordinal)
+                ? r.Replace("|FolderArchivedAt=NULL|FolderTrashedAt=NULL|LifecycleSerial=0", string.Empty, StringComparison.Ordinal)
+                : r)
+            .ToList();
+        Assert.Equal(v8Data, v9Data);
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(9, SchemaFingerprint.Read(restored)));
     }
 
     [Fact]

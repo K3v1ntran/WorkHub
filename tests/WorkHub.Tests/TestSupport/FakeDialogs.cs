@@ -69,6 +69,18 @@ internal sealed class FakeDialogs : IDialogService
         return OnUnarchive(viewModel);
     }
 
+    /// <summary>Plays the Folder Archive / Trash confirmation: by default the user clicks the action button.</summary>
+    public Func<FolderLifecycleConfirmationViewModel, bool> OnFolderLifecycle { get; set; } = _ => true;
+
+    /// <summary>Every Folder lifecycle confirmation shown, in order (a stale commit shows a fresh one).</summary>
+    public List<FolderLifecycleConfirmationViewModel> FolderConfirmations { get; } = [];
+
+    public bool ShowFolderLifecycleConfirmation(FolderLifecycleConfirmationViewModel viewModel)
+    {
+        FolderConfirmations.Add(viewModel);
+        return OnFolderLifecycle(viewModel);
+    }
+
     public Func<ProjectFolderNameEditorViewModel, bool> OnProjectFolderNameEditor { get; set; } = _ => false;
 
     public Func<ProjectLinkEditorViewModel, bool> OnProjectLinkEditor { get; set; } = _ => false;

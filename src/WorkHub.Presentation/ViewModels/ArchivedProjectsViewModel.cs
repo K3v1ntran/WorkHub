@@ -4,7 +4,10 @@ using WorkHub.Presentation.Mvvm;
 
 namespace WorkHub.Presentation.ViewModels;
 
-/// <summary>One archived Project as listed: its name, where it is and when it was last updated.</summary>
+/// <summary>
+/// One archive root as listed (a Project, or a Folder with its whole subtree): its name, where it is and when it was last updated
+/// (a Folder: when it was archived).
+/// </summary>
 public sealed class ArchivedProjectEntryViewModel(ArchivedProjectEntry entry)
 {
     public ArchivedProjectEntry Entry { get; } = entry;
@@ -13,17 +16,20 @@ public sealed class ArchivedProjectEntryViewModel(ArchivedProjectEntry entry)
 
     public string Name => Entry.Name;
 
+    public bool IsFolder => Entry.Type == WorkspaceNodeType.Folder;
+
     /// <summary>"in Clients / Tokyo" (the parent's CURRENT path) or the top level.</summary>
     public string LocationText => Entry.ParentPath is { } path ? $"in {path}" : "in Workspace (top level)";
 
-    public string UpdatedText => $"updated {Entry.UpdatedAt.LocalDateTime:yyyy-MM-dd}";
+    public string UpdatedText => Entry.ArchivedAt is { } archived ? $"archived {archived.LocalDateTime:yyyy-MM-dd}" : $"updated {Entry.UpdatedAt.LocalDateTime:yyyy-MM-dd}";
 
     public override string ToString() => Name;
 }
 
 /// <summary>
-/// The Archived projects panel, shown in the right pane instead of the selection's details (Phase 12 proposal revision 3
-/// §3.2, §3.3, §8.4; A4). Built like the Workspace Trash panel:
+/// The Archived panel, shown in the right pane instead of the selection's details (Phase 12 proposal revision 3 §3.2, §3.3,
+/// §8.4; A4). Since schema v9 it lists the OUTERMOST archive roots that are not trashed, Projects and Folders (Phase 13 §7.1);
+/// its count is the number of rows it lists. Built like the Workspace Trash panel:
 /// <list type="bullet">
 /// <item>Every list or count read records the area's lifecycle-completion count when it STARTS; its result is applied only if
 /// no lifecycle result was applied meanwhile, otherwise it is discarded and one fresh read starts.</item>
@@ -56,7 +62,7 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
         Entries.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
     }
 
-    public const string UnarchiveFailed = "Could not unarchive. The project is still archived.";
+    public const string UnarchiveFailed = "Could not unarchive. It is still archived.";
 
     public ObservableCollection<ArchivedProjectEntryViewModel> Entries { get; } = [];
 
@@ -107,7 +113,7 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
     /// <summary>The last Unarchive's outcome ("Unarchived “X” to …" or why it was refused).</summary>
     public string? Notice { get => _notice; internal set => SetProperty(ref _notice, value); }
 
-    /// <summary>Archived Projects (not in the Trash) as last read; null until the first count arrives.</summary>
+    /// <summary>Archive roots (Projects and Folders, not in the Trash) as last read; null until the first count arrives.</summary>
     public int? Count
     {
         get => _count;
@@ -118,7 +124,8 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
         }
     }
 
-    public string ButtonText => Count is { } n ? $"Archived projects ({n})" : "Archived projects";
+    /// <summary>"Archived (n)": the LIBRARY row and the panel title (Phase 13 §2).</summary>
+    public string ButtonText => Count is { } n ? $"Archived ({n})" : "Archived";
 
     public AsyncRelayCommand UnarchiveCommand { get; }
 
@@ -270,7 +277,7 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
             if (version != _version)
                 return;
             _area.Log.Error("Archived projects could not be loaded.", ex);
-            LoadError = "Archived projects could not be loaded. Nothing was changed.";
+            LoadError = "The Archived list could not be loaded. Nothing was changed.";
             IsLoading = false;
             return;
         }

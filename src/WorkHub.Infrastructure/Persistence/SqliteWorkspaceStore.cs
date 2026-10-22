@@ -5,10 +5,12 @@ using WorkHub.Core.Workspace;
 namespace WorkHub.Infrastructure.Persistence;
 
 /// <summary>
-/// SQLite implementation of <see cref="IWorkspaceStore"/> (schema v3; Workspace Trash v7; Project Archive v8). Same conventions as <see cref="SqliteOwnerStore"/>:
-/// one pooled connection per call on a worker thread, parameterized SQL, transactions for multi-row writes.
-/// Writes whose validity depends on other rows (parent checks, moves) use <c>BEGIN IMMEDIATE</c> so the checked state
-/// cannot change before the write. The schema's indexes and triggers back every rule up.
+/// SQLite implementation of <see cref="IWorkspaceStore"/> (schema v3; Workspace Trash v7; Project Archive v8; Folder Archive and
+/// Trash v9). Same conventions as <see cref="SqliteOwnerStore"/>: one pooled connection per call on a worker thread,
+/// parameterized SQL, transactions for multi-row writes. Writes whose validity depends on other rows (parent checks, moves,
+/// lifecycle) use <c>BEGIN IMMEDIATE</c> so the checked state cannot change before the write. The schema's indexes and triggers
+/// back every rule up; rules about DESCENDANTS of a marked Folder are enforced here only (Phase 13 D9): every write evaluates
+/// the effective lifecycle (<see cref="NodeLifecycle"/>) inside its own transaction.
 /// </summary>
 public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, TimeProvider? time = null) : IWorkspaceStore
 {
@@ -25,10 +27,22 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
     private const string Project = "Project";
     private readonly TimeProvider _time = time ?? TimeProvider.System;
 
-    public Task<IReadOnlyList<WorkspaceNode>> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default) =>
-        Run<IReadOnlyList<WorkspaceNode>>(connection =>
+    public Task<WorkspaceChildrenResult> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default) =>
+        Run(connection =>
         {
+            // One read transaction: the parent's effective state and its rows come from the same snapshot (§7.9 C3).
+            using var transaction = connection.BeginTransaction(deferred: true);
+            if (parentId is { } id)
+            {
+                if (new NodeLifecycle(connection, transaction, MaxDepth).Chain(id) is not { } chain)
+                    return WorkspaceChildrenResult.Missing;
+                var state = NodeLifecycle.Of(chain);
+                if (!state.IsLive)
+                    return new WorkspaceChildrenResult(ChildrenReadStatus.ParentNotLive, [], state, NodeLifecycle.FromRoot(chain, state));
+            }
+
             using var command = connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = $"""
                 SELECT n.Id, n.ParentId, n.NodeType, n.Name,
                        EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND {Visible("c")}) AS HasChildren
@@ -38,19 +52,15 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 """;
             command.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
             command.Parameters.AddWithValue("$limit", MaxRowsPerQuery);
-            using var reader = command.ExecuteReader();
             var nodes = new List<WorkspaceNode>();
-            while (reader.Read())
+            using (var reader = command.ExecuteReader())
             {
-                nodes.Add(new WorkspaceNode(
-                    reader.GetInt64(0),
-                    reader.IsDBNull(1) ? null : reader.GetInt64(1),
-                    ParseType(reader.GetString(2)),
-                    reader.GetString(3),
-                    reader.GetInt64(4) == 1));
+                while (reader.Read())
+                    nodes.Add(ReadShownNode(reader));
             }
 
-            return nodes;
+            transaction.Commit();
+            return WorkspaceChildrenResult.Listed(nodes);
         }, cancellationToken);
 
     public Task<WorkspaceNode> CreateFolderAsync(long? parentId, string name, CancellationToken cancellationToken = default) =>
@@ -58,6 +68,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         {
             using var transaction = connection.BeginTransaction(deferred: false);
             RequireFolderParent(connection, transaction, parentId);
+            RequireLive(new NodeLifecycle(connection, transaction, MaxDepth), parentId);
             var id = InsertNode(connection, transaction, parentId, Folder, name);
             transaction.Commit();
             return new WorkspaceNode(id, parentId, WorkspaceNodeType.Folder, name, false);
@@ -68,6 +79,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         {
             using var transaction = connection.BeginTransaction(deferred: false);
             RequireFolderParent(connection, transaction, parentId);
+            RequireLive(new NodeLifecycle(connection, transaction, MaxDepth), parentId);
             var id = InsertNode(connection, transaction, parentId, Project, draft.Name!);
 
             using var details = connection.CreateCommand();
@@ -95,6 +107,8 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 throw new ProjectTrashedException(nodeId); // checked first: a trashed Project is read-only
             if (state.Archived)
                 throw new ProjectArchivedException(nodeId); // Phase 12 A3: an archived Project keeps its name and place
+            var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
+            RequireLive(lifecycle, nodeId); // a marked Folder, or anything below a marked Folder (§7.6: store only for descendants)
 
             using var command = connection.CreateCommand();
             command.Transaction = transaction;
@@ -103,14 +117,27 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             command.Parameters.AddWithValue("$key", WorkspaceName.Key(name));
             command.Parameters.AddWithValue("$now", Now());
             command.Parameters.AddWithValue("$id", nodeId);
-            var changed = GuardTrashed(() => GuardDuplicateName(command.ExecuteNonQuery, name,
-                () => BlockerIsArchived(connection, transaction, state.ParentId, name, nodeId)), nodeId) == 1;
+            var changed = GuardNotLive(() => GuardTrashed(() => GuardDuplicateName(command.ExecuteNonQuery, name,
+                () => Blocker(connection, transaction, state.ParentId, name, nodeId)), nodeId), nodeId, lifecycle) == 1;
             transaction.Commit();
             return changed;
         }, cancellationToken);
 
     public Task<ProjectDetails?> GetProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
-        Run(connection => ReadProject(connection, null, nodeId), cancellationToken);
+        Run(connection =>
+        {
+            // One read transaction: the details and their effective lifecycle come from the same snapshot.
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var details = ReadProject(connection, transaction, nodeId);
+            if (details is not null && new NodeLifecycle(connection, transaction, MaxDepth).Chain(nodeId) is { } chain)
+            {
+                var state = NodeLifecycle.Of(chain);
+                details = details with { Effective = state, ChainFromRoot = NodeLifecycle.FromRoot(chain, state) };
+            }
+
+            transaction.Commit();
+            return details;
+        }, cancellationToken);
 
     public Task<ProjectDetails?> UpdateProjectAsync(long nodeId, ProjectDraft draft, CancellationToken cancellationToken = default) =>
         Run(connection =>
@@ -121,6 +148,8 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 throw new ProjectTrashedException(nodeId); // checked first: a trashed Project is read-only
             if (state is { Archived: true })
                 throw new ProjectArchivedException(nodeId); // Phase 12 A3: a stale editor never silently unarchives
+            if (state is not null)
+                RequireLive(new NodeLifecycle(connection, transaction, MaxDepth), nodeId); // below an archived or trashed Folder
 
             using (var node = connection.CreateCommand())
             {
@@ -134,7 +163,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 node.Parameters.AddWithValue("$now", Now());
                 node.Parameters.AddWithValue("$id", nodeId);
                 if (GuardTrashed(() => GuardDuplicateName(node.ExecuteNonQuery, draft.Name!,
-                        () => BlockerIsArchived(connection, transaction, state!.ParentId, draft.Name!, nodeId)), nodeId) != 1)
+                        () => Blocker(connection, transaction, state!.ParentId, draft.Name!, nodeId)), nodeId) != 1)
                     return null;
             }
 
@@ -160,15 +189,16 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         Run<IReadOnlyList<WorkspaceFolderPath>>(connection =>
         {
             using var command = connection.CreateCommand();
-            // Walking down from the roots and never entering the moving node excludes it and its whole subtree.
+            // Walking down from the roots and never entering the moving node excludes it and its whole subtree; never entering an
+            // archived or trashed Folder excludes every Folder whose effective state is not Live (§7.5).
             command.CommandText = """
                 WITH RECURSIVE folders (Id, Path, Depth) AS (
                     SELECT Id, Name, 0 FROM WorkspaceNodes
-                    WHERE ParentId IS NULL AND NodeType = 'Folder' AND Id <> $moving
+                    WHERE ParentId IS NULL AND NodeType = 'Folder' AND Id <> $moving AND FolderArchivedAt IS NULL AND FolderTrashedAt IS NULL
                     UNION ALL
                     SELECT c.Id, f.Path || ' / ' || c.Name, f.Depth + 1
                     FROM WorkspaceNodes AS c JOIN folders AS f ON c.ParentId = f.Id
-                    WHERE c.NodeType = 'Folder' AND c.Id <> $moving AND f.Depth < $maxDepth
+                    WHERE c.NodeType = 'Folder' AND c.Id <> $moving AND c.FolderArchivedAt IS NULL AND c.FolderTrashedAt IS NULL AND f.Depth < $maxDepth
                 )
                 SELECT Id, Path FROM folders LIMIT $limit;
                 """;
@@ -188,6 +218,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             // One write transaction for every check and the update: BEGIN IMMEDIATE takes the write lock first,
             // so the validated state is the state that gets updated.
             using var transaction = connection.BeginTransaction(deferred: false);
+            var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
 
             // 1. Source.
             using var source = connection.CreateCommand();
@@ -210,6 +241,8 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 currentParent = reader.IsDBNull(0) ? null : reader.GetInt64(0);
                 name = reader.GetString(1);
             }
+
+            RequireLive(lifecycle, nodeId); // the source: a marked Folder, or anything below one, stays where it is
 
             if (targetParentId is { } target)
             {
@@ -235,13 +268,16 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 ancestry.Parameters.AddWithValue("$maxDepth", MaxDepth);
                 if (Convert.ToInt64(ancestry.ExecuteScalar(), CultureInfo.InvariantCulture) == 1)
                     throw new WorkspaceMoveCycleException(nodeId, target);
+
+                // 4. The destination and its ancestors must be live (§7.5: an archived or trashed Folder is never a target).
+                RequireLive(lifecycle, target);
             }
 
-            // 4. Already there: nothing to write.
+            // 5. Already there: nothing to write.
             if (currentParent == targetParentId)
                 return false;
 
-            // 5. The update, guarded by the parent read in step 1. A destination name conflict raises 2067.
+            // 6. The update, guarded by the parent read in step 1. A destination name conflict raises 2067.
             using var update = connection.CreateCommand();
             update.Transaction = transaction;
             update.CommandText = "UPDATE WorkspaceNodes SET ParentId = $target, UpdatedAt = $now WHERE Id = $id AND ParentId IS $expected;";
@@ -250,7 +286,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             update.Parameters.AddWithValue("$id", nodeId);
             update.Parameters.AddWithValue("$expected", (object?)currentParent ?? DBNull.Value);
             var changed = GuardParentTrigger(() => GuardDuplicateName(update.ExecuteNonQuery, name,
-                () => BlockerIsArchived(connection, transaction, targetParentId, name, nodeId)), targetParentId ?? 0);
+                () => Blocker(connection, transaction, targetParentId, name, nodeId)), targetParentId ?? 0, lifecycle);
             if (changed != 1)
                 throw new WorkspaceNodeNotFoundException(nodeId);
 
@@ -274,6 +310,8 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 return ProjectTrashResult.Refused(ProjectTrashOutcome.AlreadyTrashed);
             if (state.Archived)
                 return ProjectTrashResult.Refused(ProjectTrashOutcome.Archived); // Phase 12 A7: never archived and trashed by this build
+            if (!ParentState(connection, transaction, nodeId).IsLive)
+                return ProjectTrashResult.Refused(ProjectTrashOutcome.AncestorNotLive); // below an archived or trashed Folder
 
             // 2. The marker only (the V007 triggers refuse any other change in the same statement).
             var trashedAt = Now();
@@ -317,24 +355,21 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                     throw new InvalidDataException($"The original parent of trashed Project {nodeId} is missing or not a folder; nothing was restored.");
             }
 
-            // 3. An ACTIVE sibling (Folder or Project) with the same name key refuses; nothing is renamed or re-parented.
-            var name = ReadName(connection, transaction, nodeId);
-            using (var conflict = connection.CreateCommand())
+            // 3. Strict: only into a live chain (§7.1); an archived or trashed ancestor refuses (no relocation).
+            switch (ParentState(connection, transaction, nodeId).State)
             {
-                conflict.Transaction = transaction;
-                conflict.CommandText = """
-                    SELECT Name FROM WorkspaceNodes
-                    WHERE ParentId IS $parent AND TrashedAt IS NULL AND Id <> $id
-                      AND NameKey = (SELECT NameKey FROM WorkspaceNodes WHERE Id = $id)
-                    LIMIT 1;
-                    """;
-                conflict.Parameters.AddWithValue("$parent", (object?)state.ParentId ?? DBNull.Value);
-                conflict.Parameters.AddWithValue("$id", nodeId);
-                if (conflict.ExecuteScalar() is string blocker)
-                    return ProjectRestoreResult.Refused(ProjectRestoreOutcome.NameConflict, blocker);
+                case LifecycleState.Trashed:
+                    return ProjectRestoreResult.Refused(ProjectRestoreOutcome.ParentTrashed);
+                case LifecycleState.Archived:
+                    return ProjectRestoreResult.Refused(ProjectRestoreOutcome.ParentArchived);
             }
 
-            // 4. Clear the marker only.
+            // 4. A LIVE sibling (Folder or Project) with the same name key refuses; nothing is renamed or re-parented.
+            var name = ReadName(connection, transaction, nodeId);
+            if (LiveSiblingName(connection, transaction, state.ParentId, nodeId) is { } blocker)
+                return ProjectRestoreResult.Refused(ProjectRestoreOutcome.NameConflict, blocker);
+
+            // 5. Clear the marker only.
             using (var update = connection.CreateCommand())
             {
                 update.Transaction = transaction;
@@ -351,7 +386,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 }
             }
 
-            // 5. Read back: a Project has no tree children. An archived-plus-trashed Project (earlier build) comes back archived.
+            // 6. Read back: a Project has no tree children. An archived-plus-trashed Project (earlier build) comes back archived.
             var restored = new RestoredProject(new WorkspaceNode(nodeId, state.ParentId, WorkspaceNodeType.Project, name, false),
                 ReadPath(connection, transaction, state.ParentId))
             {
@@ -364,35 +399,9 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
     public Task<IReadOnlyList<WorkspaceTrashEntry>> ListTrashAsync(CancellationToken cancellationToken = default) =>
         Run<IReadOnlyList<WorkspaceTrashEntry>>(connection =>
         {
-            // One read transaction: the entries and their parents' paths come from the same snapshot.
+            // One read transaction: the roots, their effective state and their parents' paths come from the same snapshot.
             using var transaction = connection.BeginTransaction(deferred: true);
-            var rows = new List<(long Id, string Name, long? ParentId, string TrashedAt, bool Archived)>();
-            using (var command = connection.CreateCommand())
-            {
-                command.Transaction = transaction;
-                command.CommandText = """
-                    SELECT n.Id, n.Name, n.ParentId, n.TrashedAt, p.Status IS 'Archived'
-                    FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id
-                    WHERE n.TrashedAt IS NOT NULL
-                    ORDER BY n.TrashedAt DESC, n.Id DESC
-                    LIMIT $limit;
-                    """;
-                command.Parameters.AddWithValue("$limit", MaxRowsPerQuery);
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
-                    rows.Add((reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetInt64(2), reader.GetString(3), reader.GetInt64(4) == 1));
-            }
-
-            var paths = new Dictionary<long, string?>();
-            var entries = new List<WorkspaceTrashEntry>(rows.Count);
-            foreach (var (id, name, parentId, trashedAt, archived) in rows)
-            {
-                string? path = null;
-                if (parentId is { } parent && !paths.TryGetValue(parent, out path))
-                    paths[parent] = path = ReadPath(connection, transaction, parent);
-                entries.Add(new WorkspaceTrashEntry(id, name, parentId, path, ParseTime(trashedAt)) { IsArchived = archived });
-            }
-
+            var entries = ReadTrashRoots(connection, transaction, withPaths: true);
             transaction.Commit();
             return entries;
         }, cancellationToken);
@@ -400,10 +409,68 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
     public Task<int> CountTrashAsync(CancellationToken cancellationToken = default) =>
         Run(connection =>
         {
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT count(*) FROM WorkspaceNodes WHERE TrashedAt IS NOT NULL;";
-            return (int)(long)command.ExecuteScalar()!;
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var count = ReadTrashRoots(connection, transaction, withPaths: false).Count; // the rows the panel lists
+            transaction.Commit();
+            return count;
         }, cancellationToken);
+
+    /// <summary>
+    /// The Trash panel (§7.1): every node with T(x) and no T on a strict ancestor (the OUTERMOST trash roots, Projects and
+    /// Folders), newest first. A root below an archived ancestor names it ("in archived folder …").
+    /// </summary>
+    private static List<WorkspaceTrashEntry> ReadTrashRoots(SqliteConnection connection, SqliteTransaction transaction, bool withPaths)
+    {
+        var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
+        var candidates = ReadCandidates(connection, transaction, lifecycle,
+            "SELECT Id FROM WorkspaceNodes WHERE TrashedAt IS NOT NULL UNION SELECT Id FROM WorkspaceNodes WHERE FolderTrashedAt IS NOT NULL");
+        var roots = new List<(LifecycleNodeRow Row, string? ArchivedAncestor)>();
+        foreach (var candidate in candidates)
+        {
+            var chain = lifecycle.Chain(candidate.Id)!;
+            if (NodeLifecycle.Of(chain).RootId != candidate.Id)
+                continue; // inside an outer trash root: listed (and restored) with it
+            var above = NodeLifecycle.OfParent(chain); // Live or Archived: no T above an outermost trash root
+            roots.Add((candidate, above.State == LifecycleState.Archived ? lifecycle.Row(above.RootId!.Value)!.Name : null));
+        }
+
+        var paths = new Dictionary<long, string?>();
+        return roots
+            .OrderByDescending(r => r.Row.TrashedAt ?? r.Row.FolderTrashedAt, StringComparer.Ordinal)
+            .ThenByDescending(r => r.Row.Id)
+            .Take(MaxRowsPerQuery)
+            .Select(r =>
+            {
+                string? path = null;
+                if (withPaths && r.Row.ParentId is { } parent && !paths.TryGetValue(parent, out path))
+                    paths[parent] = path = ReadPath(connection, transaction, parent);
+                return new WorkspaceTrashEntry(r.Row.Id, r.Row.Name, r.Row.ParentId, path, ParseTime((r.Row.TrashedAt ?? r.Row.FolderTrashedAt)!))
+                {
+                    IsArchived = r.Row.Status == "Archived",
+                    Type = r.Row.Type,
+                    ArchivedAncestorName = r.ArchivedAncestor,
+                };
+            })
+            .ToList();
+    }
+
+    /// <summary>Rows of the nodes <paramref name="idsSql"/> selects, remembered by the lifecycle reader (ordered by Id).</summary>
+    private static List<LifecycleNodeRow> ReadCandidates(SqliteConnection connection, SqliteTransaction transaction, NodeLifecycle lifecycle, string idsSql)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"SELECT {NodeLifecycle.Columns} {NodeLifecycle.From} WHERE n.Id IN ({idsSql}) ORDER BY n.Id;";
+        using var reader = command.ExecuteReader();
+        var rows = new List<LifecycleNodeRow>();
+        while (reader.Read())
+        {
+            var row = NodeLifecycle.Read(reader);
+            lifecycle.Remember(row);
+            rows.Add(row);
+        }
+
+        return rows;
+    }
 
     public Task<FolderRemoveResult> RemoveEmptyFolderAsync(long nodeId, CancellationToken cancellationToken = default) =>
         Run(connection =>
@@ -415,9 +482,11 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 return FolderRemoveResult.Of(FolderRemoveOutcome.NotFound);
             if (state.Type != WorkspaceNodeType.Folder)
                 return FolderRemoveResult.Of(FolderRemoveOutcome.NotAFolder);
+            if (new NodeLifecycle(connection, transaction, MaxDepth).Effective(nodeId) is not { IsLive: true })
+                return FolderRemoveResult.Of(FolderRemoveOutcome.NotLive); // only a live Folder is ever removed (V009 backs the marked row up)
 
-            // 2. Every child row counts: visible nodes, archived Projects (Unarchive needs their parent) and trashed Projects
-            // (strict restore needs their parent).
+            // 2. Every child row counts: visible nodes, archived Projects and Folders (Unarchive needs their parent) and trashed
+            // Projects and Folders (strict restore needs their parent).
             var (active, archived, trashed) = CountChildren(connection, transaction, nodeId);
             if (active + archived + trashed > 0)
                 return new FolderRemoveResult(FolderRemoveOutcome.NotEmpty, active, trashed) { ArchivedProjects = archived };
@@ -441,10 +510,20 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         {
             using var transaction = connection.BeginTransaction(deferred: true);
             var state = ReadState(connection, transaction, nodeId);
-            if (state is not null)
+            if (state is not null && new NodeLifecycle(connection, transaction, MaxDepth).Chain(nodeId) is { } chain)
             {
                 var (active, archived, trashed) = CountChildren(connection, transaction, nodeId);
-                state = state with { ActiveChildren = active, ArchivedChildren = archived, TrashedChildren = trashed };
+                var effective = NodeLifecycle.Of(chain);
+                state = state with
+                {
+                    ActiveChildren = active,
+                    ArchivedChildren = archived,
+                    TrashedChildren = trashed,
+                    FolderArchived = chain[^1].FolderArchivedAt is not null,
+                    FolderTrashed = chain[^1].FolderTrashedAt is not null,
+                    Effective = effective,
+                    ChainFromRoot = NodeLifecycle.FromRoot(chain, effective),
+                };
             }
 
             transaction.Commit();
@@ -467,6 +546,8 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 return ProjectArchiveResult.Refused(ProjectArchiveOutcome.ProjectTrashed);
             if (state.Status == ProjectStatus.Archived)
                 return ProjectArchiveResult.Refused(ProjectArchiveOutcome.AlreadyArchived);
+            if (!ParentState(connection, transaction, nodeId).IsLive)
+                return ProjectArchiveResult.Refused(ProjectArchiveOutcome.AncestorNotLive); // below an archived or trashed Folder
 
             // 2. Status and serial only, guarded by what step 1 read. THIS statement raises the serial; the V008 trigger only
             // validates the transition, and TR_Projects_TrashedReadOnly backs up step 1's Trash check.
@@ -508,7 +589,16 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             if (state.Status != ProjectStatus.Archived)
                 return ProjectUnarchiveResult.Refused(ProjectUnarchiveOutcome.NotArchived);
 
-            // 2. Status only (state-based: whichever archive event is current); the serial is left as it is.
+            // 2. Only an archive ROOT (§7.1: listed in the Archived panel): an ancestor that is archived or trashed refuses.
+            switch (ParentState(connection, transaction, nodeId).State)
+            {
+                case LifecycleState.Trashed:
+                    return ProjectUnarchiveResult.Refused(ProjectUnarchiveOutcome.ParentTrashed);
+                case LifecycleState.Archived:
+                    return ProjectUnarchiveResult.Refused(ProjectUnarchiveOutcome.ParentArchived);
+            }
+
+            // 3. Status only (state-based: whichever archive event is current); the serial is left as it is.
             RequireArchiveParent(connection, transaction, nodeId, state.ParentId);
             SetStatusFromArchived(connection, transaction, nodeId, status, serial: null);
             var unarchived = ReadUnarchived(connection, transaction, nodeId, state.ParentId);
@@ -531,6 +621,13 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 return ArchiveUndoResult.Refused(ArchiveUndoOutcome.NotArchived);
             if (state.Serial != archiveEvent.Serial)
                 return ArchiveUndoResult.Refused(ArchiveUndoOutcome.ArchivedAgain);
+            switch (ParentState(connection, transaction, nodeId).State)
+            {
+                case LifecycleState.Trashed:
+                    return ArchiveUndoResult.Refused(ArchiveUndoOutcome.ParentTrashed);
+                case LifecycleState.Archived:
+                    return ArchiveUndoResult.Refused(ArchiveUndoOutcome.ParentArchived);
+            }
 
             // 2. The previous status, guarded by status AND serial; the serial is left as it is.
             RequireArchiveParent(connection, transaction, nodeId, state.ParentId);
@@ -543,48 +640,240 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
     public Task<IReadOnlyList<ArchivedProjectEntry>> ListArchivedAsync(CancellationToken cancellationToken = default) =>
         Run<IReadOnlyList<ArchivedProjectEntry>>(connection =>
         {
-            // One read transaction: the entries and their parents' paths come from the same snapshot.
+            // One read transaction: the roots, their effective state and their parents' paths come from the same snapshot.
             using var transaction = connection.BeginTransaction(deferred: true);
-            var rows = new List<(long Id, string Name, long? ParentId, string UpdatedAt)>();
-            using (var command = connection.CreateCommand())
-            {
-                command.Transaction = transaction;
-                command.CommandText = """
-                    SELECT n.Id, n.Name, n.ParentId, n.UpdatedAt
-                    FROM Projects AS p JOIN WorkspaceNodes AS n ON n.Id = p.NodeId
-                    WHERE p.Status = 'Archived' AND n.TrashedAt IS NULL
-                    LIMIT $limit;
-                    """;
-                command.Parameters.AddWithValue("$limit", MaxRowsPerQuery);
-                using var reader = command.ExecuteReader();
-                while (reader.Read())
-                    rows.Add((reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetInt64(2), reader.GetString(3)));
-            }
-
-            var paths = new Dictionary<long, string?>();
-            var entries = new List<ArchivedProjectEntry>(rows.Count);
-            foreach (var (id, name, parentId, updatedAt) in rows)
-            {
-                string? path = null;
-                if (parentId is { } parent && !paths.TryGetValue(parent, out path))
-                    paths[parent] = path = ReadPath(connection, transaction, parent);
-                entries.Add(new ArchivedProjectEntry(id, name, parentId, path, ParseTime(updatedAt)));
-            }
-
+            var entries = ReadArchivedRoots(connection, transaction, withPaths: true);
             transaction.Commit();
-            return entries.OrderBy(e => (WorkspaceNodeType.Project, e.Name, e.NodeId), WorkspaceNodeOrder.Instance).ToList();
+            return entries;
         }, cancellationToken);
 
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         Run(connection =>
         {
-            using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT count(*) FROM Projects AS p JOIN WorkspaceNodes AS n ON n.Id = p.NodeId
-                WHERE p.Status = 'Archived' AND n.TrashedAt IS NULL;
-                """;
-            return (int)(long)command.ExecuteScalar()!;
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var count = ReadArchivedRoots(connection, transaction, withPaths: false).Count; // the rows the panel lists
+            transaction.Commit();
+            return count;
         }, cancellationToken);
+
+    /// <summary>
+    /// The Archived panel (§7.1): every node with A(x), no T anywhere on its chain and no A on a strict ancestor (the OUTERMOST
+    /// archive roots that are not trashed, Folders and Projects), in tree order.
+    /// </summary>
+    private static List<ArchivedProjectEntry> ReadArchivedRoots(SqliteConnection connection, SqliteTransaction transaction, bool withPaths)
+    {
+        var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
+        var candidates = ReadCandidates(connection, transaction, lifecycle,
+            "SELECT Id FROM WorkspaceNodes WHERE FolderArchivedAt IS NOT NULL UNION SELECT NodeId FROM Projects WHERE Status = 'Archived'");
+        var paths = new Dictionary<long, string?>();
+        var entries = new List<ArchivedProjectEntry>();
+        foreach (var candidate in candidates)
+        {
+            var state = NodeLifecycle.Of(lifecycle.Chain(candidate.Id)!);
+            if (state.State != LifecycleState.Archived || state.RootId != candidate.Id)
+                continue; // trashed (itself or above), or inside an outer archive root
+            string? path = null;
+            if (withPaths && candidate.ParentId is { } parent && !paths.TryGetValue(parent, out path))
+                paths[parent] = path = ReadPath(connection, transaction, parent);
+            entries.Add(new ArchivedProjectEntry(candidate.Id, candidate.Name, candidate.ParentId, path, ParseTime(ReadUpdatedAt(connection, transaction, candidate.Id)))
+            {
+                Type = candidate.Type,
+                ArchivedAt = candidate.FolderArchivedAt is { } at ? ParseTime(at) : null,
+            });
+        }
+
+        return entries.OrderBy(e => (e.Type, e.Name, e.NodeId), WorkspaceNodeOrder.Instance).Take(MaxRowsPerQuery).ToList();
+    }
+
+    // ---- Folder Archive and Folder Trash (schema v9; Phase 13 proposal revision 4 §7.2-§7.4) ----------------------------------
+
+    public Task<FolderLifecyclePreview> PrepareFolderLifecycleAsync(long nodeId, FolderLifecycleKind kind, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var chain = new NodeLifecycle(connection, transaction, MaxDepth).Chain(nodeId);
+            var preview = MarkRefusal(chain, kind) is { } refusal
+                ? FolderLifecyclePreview.Refused(refusal.Outcome, refusal.Blocker)
+                : new FolderLifecyclePreview(FolderLifecycleConfirmations.Compute(connection, transaction, chain!, kind, MaxDepth), null);
+            transaction.Commit();
+            return preview;
+        }, cancellationToken);
+
+    public Task<FolderLifecycleResult> ArchiveFolderAsync(long nodeId, string confirmationToken, CancellationToken cancellationToken = default) =>
+        MarkFolderAsync(nodeId, FolderLifecycleKind.Archive, confirmationToken, cancellationToken);
+
+    public Task<FolderLifecycleResult> TrashFolderAsync(long nodeId, string confirmationToken, CancellationToken cancellationToken = default) =>
+        MarkFolderAsync(nodeId, FolderLifecycleKind.Trash, confirmationToken, cancellationToken);
+
+    public Task<FolderClearResult> UnarchiveFolderAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        ClearFolderAsync(nodeId, FolderLifecycleKind.Archive, serial: null, cancellationToken);
+
+    public Task<FolderClearResult> RestoreFolderAsync(long nodeId, CancellationToken cancellationToken = default) =>
+        ClearFolderAsync(nodeId, FolderLifecycleKind.Trash, serial: null, cancellationToken);
+
+    public Task<FolderClearResult> UndoFolderLifecycleAsync(FolderLifecycleEvent lifecycleEvent, CancellationToken cancellationToken = default) =>
+        ClearFolderAsync(lifecycleEvent.NodeId, lifecycleEvent.Kind, lifecycleEvent.Serial, cancellationToken);
+
+    /// <summary>Why the Folder cannot be archived or trashed now; null when it can (a live Folder under a live chain).</summary>
+    private static (FolderLifecycleOutcome Outcome, EffectiveLifecycle? Blocker)? MarkRefusal(IReadOnlyList<LifecycleNodeRow>? chain, FolderLifecycleKind kind)
+    {
+        if (chain is null)
+            return (FolderLifecycleOutcome.NotFound, null);
+        var folder = chain[^1];
+        if (folder.Type != WorkspaceNodeType.Folder)
+            return (FolderLifecycleOutcome.NotAFolder, null);
+        if (folder.FolderTrashedAt is not null)
+            return (FolderLifecycleOutcome.FolderTrashed, null);
+        if (folder.FolderArchivedAt is not null)
+            return (kind == FolderLifecycleKind.Archive ? FolderLifecycleOutcome.AlreadyArchived : FolderLifecycleOutcome.FolderArchived, null);
+        var above = NodeLifecycle.OfParent(chain);
+        return above.IsLive ? null : (FolderLifecycleOutcome.AncestorNotLive, above);
+    }
+
+    private Task<FolderLifecycleResult> MarkFolderAsync(long nodeId, FolderLifecycleKind kind, string confirmationToken, CancellationToken cancellationToken) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+
+            // 1. The Folder and its chain, as they are now (under the write lock): Effective must be Live.
+            var chain = new NodeLifecycle(connection, transaction, MaxDepth).Chain(nodeId);
+            if (MarkRefusal(chain, kind) is { } refusal)
+                return FolderLifecycleResult.Refused(refusal.Outcome, refusal.Blocker);
+
+            // 2. The confirmation, recomputed in THIS transaction: anything it describes that changed refuses (§7.4). Nothing is
+            // written and the fresh preview goes back for a NEW explicit confirmation; it is never resubmitted.
+            var confirmation = FolderLifecycleConfirmations.Compute(connection, transaction, chain!, kind, MaxDepth);
+            if (!string.Equals(confirmation.Token, confirmationToken, StringComparison.Ordinal))
+                return new FolderLifecycleResult(FolderLifecycleOutcome.ConfirmationStale, null, confirmation);
+
+            // 3. The marker and the serial only, guarded by what step 1 read. THIS statement raises the serial; the V009 triggers
+            // validate it and refuse any other change in the same statement.
+            long serial;
+            using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                update.CommandText = $"""
+                    UPDATE WorkspaceNodes SET {MarkerColumn(kind)} = $at, LifecycleSerial = LifecycleSerial + 1
+                    WHERE Id = $id AND NodeType = 'Folder' AND FolderArchivedAt IS NULL AND FolderTrashedAt IS NULL AND LifecycleSerial = $observed
+                    RETURNING LifecycleSerial;
+                    """;
+                update.Parameters.AddWithValue("$at", Now());
+                update.Parameters.AddWithValue("$id", nodeId);
+                update.Parameters.AddWithValue("$observed", chain![^1].LifecycleSerial);
+                serial = update.ExecuteScalar() is long committed
+                    ? committed
+                    : throw new InvalidOperationException("A live Folder was not marked under the write lock; nothing was changed.");
+            }
+
+            transaction.Commit();
+            return new FolderLifecycleResult(FolderLifecycleOutcome.Committed, new FolderLifecycleEvent(nodeId, kind, serial), null);
+        }, cancellationToken);
+
+    /// <param name="serial">Undo: exactly this event; null for the state-based Unarchive / Restore.</param>
+    private Task<FolderClearResult> ClearFolderAsync(long nodeId, FolderLifecycleKind kind, long? serial, CancellationToken cancellationToken) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+
+            // 1. The Folder (cleared elsewhere → NotArchived / NotTrashed; a later event → MarkedAgain; nothing written).
+            var chain = new NodeLifecycle(connection, transaction, MaxDepth).Chain(nodeId);
+            if (chain is null)
+                return FolderClearResult.Refused(FolderClearOutcome.NotFound);
+            var folder = chain[^1];
+            if (folder.Type != WorkspaceNodeType.Folder)
+                return FolderClearResult.Refused(FolderClearOutcome.NotAFolder);
+            if ((kind == FolderLifecycleKind.Archive ? folder.FolderArchivedAt : folder.FolderTrashedAt) is null)
+                return FolderClearResult.Refused(kind == FolderLifecycleKind.Archive ? FolderClearOutcome.NotArchived : FolderClearOutcome.NotTrashed);
+            if (serial is { } expected && folder.LifecycleSerial != expected)
+                return FolderClearResult.Refused(FolderClearOutcome.MarkedAgain);
+
+            // 2. Strict: the ORIGINAL parent (never removable while it holds the Folder; a broken chain already failed closed) must
+            // be reached through a live chain (§7.1). No parent is created, nothing is relocated.
+            if (folder.ParentId is not null && chain[^2].Type != WorkspaceNodeType.Folder)
+                throw new InvalidDataException($"The parent of folder {nodeId} is not a folder; nothing was changed.");
+            switch (NodeLifecycle.OfParent(chain).State)
+            {
+                case LifecycleState.Trashed:
+                    return FolderClearResult.Refused(FolderClearOutcome.ParentTrashed);
+                case LifecycleState.Archived:
+                    return FolderClearResult.Refused(FolderClearOutcome.ParentArchived);
+            }
+
+            // 3. Restore only: a live sibling with the same name key refuses; nothing is renamed (an archived Folder kept its name).
+            if (kind == FolderLifecycleKind.Trash && LiveSiblingName(connection, transaction, folder.ParentId, nodeId) is { } blocker)
+                return FolderClearResult.Refused(FolderClearOutcome.NameConflict, blocker);
+
+            // 4. Clear ONE marker on ONE row; every descendant marker is untouched (independent states re-emerge as they were).
+            using (var update = connection.CreateCommand())
+            {
+                update.Transaction = transaction;
+                var column = MarkerColumn(kind);
+                update.CommandText = serial is null
+                    ? $"UPDATE WorkspaceNodes SET {column} = NULL WHERE Id = $id AND {column} IS NOT NULL;"
+                    : $"UPDATE WorkspaceNodes SET {column} = NULL WHERE Id = $id AND {column} IS NOT NULL AND LifecycleSerial = $serial;";
+                update.Parameters.AddWithValue("$id", nodeId);
+                if (serial is { } s)
+                    update.Parameters.AddWithValue("$serial", s);
+                try
+                {
+                    if (update.ExecuteNonQuery() != 1)
+                        throw new InvalidOperationException("A marked Folder was not cleared under the write lock; nothing was changed.");
+                }
+                catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteConstraintUnique)
+                {
+                    return FolderClearResult.Refused(FolderClearOutcome.NameConflict); // backstop: Dispose rolls back
+                }
+            }
+
+            // 5. The Folder as it now appears in the tree (collapsed; its shown children load lazily).
+            using var read = connection.CreateCommand();
+            read.Transaction = transaction;
+            read.CommandText = $"""
+                SELECT n.Id, n.ParentId, n.NodeType, n.Name,
+                       EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND {Visible("c")}) AS HasChildren
+                FROM WorkspaceNodes AS n WHERE n.Id = $id;
+                """;
+            read.Parameters.AddWithValue("$id", nodeId);
+            WorkspaceNode node;
+            using (var reader = read.ExecuteReader())
+            {
+                reader.Read();
+                node = ReadShownNode(reader);
+            }
+
+            var restored = new RestoredFolder(node, ReadPath(connection, transaction, folder.ParentId));
+            transaction.Commit();
+            return new FolderClearResult(FolderClearOutcome.Cleared, restored, null);
+        }, cancellationToken);
+
+    private static string MarkerColumn(FolderLifecycleKind kind) => kind == FolderLifecycleKind.Archive ? "FolderArchivedAt" : "FolderTrashedAt";
+
+    /// <summary>The name of a LIVE sibling (not trashed: Folders and Projects share one namespace) holding the node's name key.</summary>
+    private static string? LiveSiblingName(SqliteConnection connection, SqliteTransaction transaction, long? parentId, long nodeId)
+    {
+        using var conflict = connection.CreateCommand();
+        conflict.Transaction = transaction;
+        conflict.CommandText = """
+            SELECT Name FROM WorkspaceNodes
+            WHERE ParentId IS $parent AND TrashedAt IS NULL AND FolderTrashedAt IS NULL AND Id <> $id
+              AND NameKey = (SELECT NameKey FROM WorkspaceNodes WHERE Id = $id)
+            LIMIT 1;
+            """;
+        conflict.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
+        conflict.Parameters.AddWithValue("$id", nodeId);
+        return conflict.ExecuteScalar() as string;
+    }
+
+    /// <summary>The effective lifecycle of the node's parent chain (its strict ancestors); Live at the top level.</summary>
+    private static EffectiveLifecycle ParentState(SqliteConnection connection, SqliteTransaction transaction, long nodeId) =>
+        new NodeLifecycle(connection, transaction, MaxDepth).Chain(nodeId) is { } chain ? NodeLifecycle.OfParent(chain) : EffectiveLifecycle.Live;
+
+    /// <summary>Store enforcement (§7.6): the node (null = the top level) must be effectively Live, or nothing is written.</summary>
+    private static void RequireLive(NodeLifecycle lifecycle, long? nodeId)
+    {
+        if (nodeId is { } id && lifecycle.Effective(id) is { IsLive: false } state)
+            throw new WorkspaceNotLiveException(id, state);
+    }
 
     private sealed record ArchiveState(WorkspaceNodeType Type, long? ParentId, bool Trashed, ProjectStatus? Status, long? Serial);
 
@@ -654,6 +943,15 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         return new ArchivedProjectEntry(nodeId, name, parentId, ReadPath(connection, transaction, parentId), ParseTime(updatedAt));
     }
 
+    private static string ReadUpdatedAt(SqliteConnection connection, SqliteTransaction transaction, long nodeId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT UpdatedAt FROM WorkspaceNodes WHERE Id = $id;";
+        command.Parameters.AddWithValue("$id", nodeId);
+        return (string)command.ExecuteScalar()!;
+    }
+
     /// <summary>The Project as it now appears in the tree (a Project has no tree children).</summary>
     private static RestoredProject ReadUnarchived(SqliteConnection connection, SqliteTransaction transaction, long nodeId, long? parentId) =>
         new(new WorkspaceNode(nodeId, parentId, WorkspaceNodeType.Project, ReadName(connection, transaction, nodeId), false),
@@ -677,15 +975,18 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         };
     }
 
-    /// <returns>Direct child rows: visible (active, not archived), archived Projects that are not trashed, and trashed Projects.</returns>
+    /// <returns>
+    /// Direct child rows: visible (shown in the tree), archived (Projects and Folders that are not trashed), and trashed (Projects
+    /// and Folders).
+    /// </returns>
     private static (int Active, int Archived, int Trashed) CountChildren(SqliteConnection connection, SqliteTransaction transaction, long nodeId)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = """
-            SELECT count(*) FILTER (WHERE n.TrashedAt IS NULL AND p.Status IS NOT 'Archived'),
-                   count(*) FILTER (WHERE n.TrashedAt IS NULL AND p.Status IS 'Archived'),
-                   count(*) FILTER (WHERE n.TrashedAt IS NOT NULL)
+        command.CommandText = $"""
+            SELECT count(*) FILTER (WHERE {Visible("n")}),
+                   count(*) FILTER (WHERE n.TrashedAt IS NULL AND n.FolderTrashedAt IS NULL AND (n.FolderArchivedAt IS NOT NULL OR p.Status IS 'Archived')),
+                   count(*) FILTER (WHERE n.TrashedAt IS NOT NULL OR n.FolderTrashedAt IS NOT NULL)
             FROM WorkspaceNodes AS n LEFT JOIN Projects AS p ON p.NodeId = n.Id WHERE n.ParentId = $id;
             """;
         command.Parameters.AddWithValue("$id", nodeId);
@@ -743,6 +1044,19 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         }
     }
 
+    /// <summary>Defense in depth: the explicit effective-state check normally reports a marked Folder first (V009 trigger 8).</summary>
+    private static T GuardNotLive<T>(Func<T> execute, long nodeId, NodeLifecycle lifecycle)
+    {
+        try
+        {
+            return execute();
+        }
+        catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteConstraintTrigger && ex.Message.Contains("WH_FOLDER_NOT_LIVE", StringComparison.Ordinal))
+        {
+            throw new WorkspaceNotLiveException(nodeId, lifecycle.Effective(nodeId) ?? EffectiveLifecycle.Live, ex);
+        }
+    }
+
     private Task<T> Run<T>(Func<SqliteConnection, T> work, CancellationToken cancellationToken) =>
         Task.Run(() =>
         {
@@ -765,7 +1079,7 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         command.Parameters.AddWithValue("$key", WorkspaceName.Key(name));
         command.Parameters.AddWithValue("$now", Now());
         return GuardParentTrigger(() => GuardDuplicateName(() => (long)command.ExecuteScalar()!, name,
-            () => BlockerIsArchived(connection, transaction, parentId, name, excludingId: 0)), parentId ?? 0);
+            () => Blocker(connection, transaction, parentId, name, excludingId: 0)), parentId ?? 0, new NodeLifecycle(connection, transaction, MaxDepth));
     }
 
     /// <summary>Checks inside the caller's write transaction that a non-null parent exists and is a Folder.</summary>
@@ -826,9 +1140,9 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         command.Parameters.AddWithValue("$manager", (object?)draft.ProjectManager ?? DBNull.Value);
     }
 
-    /// <param name="blockerArchived">Read after the refused statement, inside the same transaction: is the sibling that holds
-    /// the name an archived Project (hidden from the tree)?</param>
-    private static T GuardDuplicateName<T>(Func<T> execute, string name, Func<bool> blockerArchived)
+    /// <param name="blocker">Read after the refused statement, inside the same transaction: is the sibling that holds the name an
+    /// archived Project or an archived Folder (hidden from the tree)?</param>
+    private static T GuardDuplicateName<T>(Func<T> execute, string name, Func<(bool Project, bool Folder)> blocker)
     {
         try
         {
@@ -836,35 +1150,46 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         }
         catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteConstraintUnique)
         {
-            throw new DuplicateWorkspaceNameException(name, ex) { BlockerArchived = blockerArchived() };
+            var (archivedProject, archivedFolder) = blocker();
+            throw new DuplicateWorkspaceNameException(name, ex) { BlockerArchived = archivedProject, BlockerArchivedFolder = archivedFolder };
         }
     }
 
-    /// <summary>The ACTIVE sibling under <paramref name="parentId"/> with the name key of <paramref name="name"/> is an archived Project.</summary>
-    private static bool BlockerIsArchived(SqliteConnection connection, SqliteTransaction transaction, long? parentId, string name, long excludingId)
+    /// <summary>
+    /// The LIVE sibling under <paramref name="parentId"/> with the name key of <paramref name="name"/> is an archived Project, or an
+    /// archived Folder (D10: an archived Folder keeps its name reserved).
+    /// </summary>
+    private static (bool Project, bool Folder) Blocker(SqliteConnection connection, SqliteTransaction transaction, long? parentId, string name, long excludingId)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
             SELECT EXISTS (
-                SELECT 1 FROM WorkspaceNodes AS n JOIN Projects AS p ON p.NodeId = n.Id
-                WHERE n.ParentId IS $parent AND n.NameKey = $key AND n.TrashedAt IS NULL AND n.Id <> $id AND p.Status = 'Archived');
+                       SELECT 1 FROM WorkspaceNodes AS n JOIN Projects AS p ON p.NodeId = n.Id
+                       WHERE n.ParentId IS $parent AND n.NameKey = $key AND n.TrashedAt IS NULL AND n.Id <> $id AND p.Status = 'Archived'),
+                   EXISTS (
+                       SELECT 1 FROM WorkspaceNodes AS n
+                       WHERE n.ParentId IS $parent AND n.NameKey = $key AND n.FolderTrashedAt IS NULL AND n.Id <> $id AND n.FolderArchivedAt IS NOT NULL);
             """;
         command.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
         command.Parameters.AddWithValue("$key", WorkspaceName.Key(name));
         command.Parameters.AddWithValue("$id", excludingId);
-        return (long)command.ExecuteScalar()! == 1;
+        using var reader = command.ExecuteReader();
+        reader.Read();
+        return (reader.GetInt64(0) == 1, reader.GetInt64(1) == 1);
     }
 
     /// <summary>
-    /// SQL condition: the node aliased <paramref name="alias"/> is shown in the tree — active (not in the Workspace Trash) and not an
-    /// archived Project (Phase 12). Shared by tree listings and the search store's reveal branches.
+    /// SQL condition: the node aliased <paramref name="alias"/> is shown in the tree when its parent is — no own lifecycle marker:
+    /// not in the Workspace Trash, not an archived Project (Phase 12), not an archived or trashed Folder (schema v9). Shared by tree
+    /// listings and the search store's reveal branches.
     /// </summary>
     internal static string Visible(string alias) =>
-        $"{alias}.TrashedAt IS NULL AND NOT EXISTS (SELECT 1 FROM Projects AS ap WHERE ap.NodeId = {alias}.Id AND ap.Status = 'Archived')";
+        $"{alias}.TrashedAt IS NULL AND {alias}.FolderTrashedAt IS NULL AND {alias}.FolderArchivedAt IS NULL"
+        + $" AND NOT EXISTS (SELECT 1 FROM Projects AS ap WHERE ap.NodeId = {alias}.Id AND ap.Status = 'Archived')";
 
-    /// <summary>Defense in depth: the explicit parent check normally reports these first.</summary>
-    private static T GuardParentTrigger<T>(Func<T> execute, long parentId)
+    /// <summary>Defense in depth: the explicit parent checks normally report these first.</summary>
+    private static T GuardParentTrigger<T>(Func<T> execute, long parentId, NodeLifecycle lifecycle)
     {
         try
         {
@@ -874,11 +1199,22 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
         {
             throw new WorkspaceParentException(parentId, WorkspaceParentProblem.NotAFolder, ex);
         }
+        catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteConstraintTrigger && ex.Message.Contains("WH_PARENT_NOT_LIVE", StringComparison.Ordinal))
+        {
+            throw new WorkspaceNotLiveException(parentId, lifecycle.Effective(parentId) ?? EffectiveLifecycle.Live, ex);
+        }
         catch (SqliteException ex) when (ex.SqliteExtendedErrorCode == SqliteConstraintForeignKey)
         {
             throw new WorkspaceParentException(parentId, WorkspaceParentProblem.NotFound, ex);
         }
     }
+
+    private static WorkspaceNode ReadShownNode(SqliteDataReader reader) => new(
+        reader.GetInt64(0),
+        reader.IsDBNull(1) ? null : reader.GetInt64(1),
+        ParseType(reader.GetString(2)),
+        reader.GetString(3),
+        reader.GetInt64(4) == 1);
 
     private static WorkspaceNodeType ParseType(string value) => value switch
     {

@@ -36,6 +36,13 @@ public interface IDialogService
     /// <returns>True when the user chose Unarchive (the status is <see cref="UnarchiveProjectViewModel.Status"/>).</returns>
     bool ShowUnarchive(UnarchiveProjectViewModel viewModel);
 
+    /// <summary>
+    /// Phase 13: the Folder Archive / Folder Trash confirmation (bounded preview of one computed confirmation, fixed maximum
+    /// size). Cancel is the default; Enter and Esc both mean Cancel.
+    /// </summary>
+    /// <returns>True only when the user clicked the action button.</returns>
+    bool ShowFolderLifecycleConfirmation(FolderLifecycleConfirmationViewModel viewModel);
+
     /// <returns>True when the ProjectFolder was created or renamed.</returns>
     bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel);
 

@@ -81,7 +81,7 @@ public sealed class WorkspaceTrashMigrationTests : IDisposable
     {
         Assert.Equal(7, new V007_WorkspaceProjectTrash().Version);
         Assert.Equal("Workspace project trash", new V007_WorkspaceProjectTrash().Description);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], SchemaMigrations.All.Select(m => m.Version));
         Assert.IsType<V007_WorkspaceProjectTrash>(SchemaMigrations.All[6]);
         var sql = V007_WorkspaceProjectTrash.Sql.ReplaceLineEndings("\n") + "\n";
         Assert.Equal(ApprovedSqlSha256, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sql))));
