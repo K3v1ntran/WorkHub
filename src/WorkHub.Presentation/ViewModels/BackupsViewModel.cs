@@ -327,6 +327,7 @@ public sealed class BackupRowViewModel : ObservableObject
         BackupKind.PreMigration => Entry.MigratedToVersion is { } to ? $"Before upgrade to v{to}" : "Pre-migration",
         BackupKind.PreRestore => "Before restore (validated safety backup)",
         BackupKind.Preserved => "Before restore (preserved copy, not a validated backup)",
+        BackupKind.PreDelete => "Before permanent deletion (whole database)",
         _ => $"Other file ({Entry.Folder})",
     };
 

@@ -332,14 +332,29 @@ public partial class MainWindow : Window
             Dispatcher.BeginInvoke(DispatcherPriority.Input, () => ContentList.Focus()); // keep keyboard navigation in the list
     }
 
-    /// <summary>Enter restores the selected Trash entry (the same command as the Restore button; it never runs twice at once).</summary>
+    /// <summary>
+    /// Enter restores the selected Trash entry (the same command as the Restore button; it never runs twice at once).
+    /// Shift+Del (Phase 14, this list only) opens the permanent-deletion confirmation for the selected entries.
+    /// </summary>
     private void TrashList_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (ProjectContent is not { } content || e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
+        if (ProjectContent is not { } content)
             return;
-        content.Trash.RestoreCommand.Execute(null);
+
+        var command = e.Key switch
+        {
+            Key.Enter when Keyboard.Modifiers == ModifierKeys.None => content.Trash.RestoreCommand,
+            Key.Delete when Keyboard.Modifiers == ModifierKeys.Shift => content.Trash.DeletePermanentlyCommand,
+            _ => (System.Windows.Input.ICommand?)null,
+        };
+        if (command is null)
+            return;
+        command.Execute(null);
         e.Handled = true;
     }
+
+    private void TrashList_SelectionChanged(object sender, SelectionChangedEventArgs e) =>
+        ProjectContent?.Trash.UpdateSelection(TrashList.SelectedItems.OfType<TrashEntryViewModel>());
 
     private void WorkspaceTrashList_PreviewKeyDown(object sender, KeyEventArgs e)
     {

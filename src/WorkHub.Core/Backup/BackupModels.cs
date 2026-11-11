@@ -16,6 +16,9 @@ public enum BackupKind
 
     /// <summary>Any other file in those folders. Listed by name and size only; never opened.</summary>
     Unrecognized,
+
+    /// <summary>Phase 14: a validated copy of the whole database made before a permanent deletion (<c>workhub_predelete_…</c>).</summary>
+    PreDelete,
 }
 
 /// <summary>Result of checking one backup file (Phase 9 §4.6). Only <see cref="FullyValidated"/> counts as verified.</summary>
@@ -116,9 +119,12 @@ public enum BackupFolder
 
     /// <summary>Phase 10 <c>Backups\PreRestore</c>: safety backups and preserved copies made before a restore.</summary>
     PreRestore,
+
+    /// <summary>Phase 14 <c>Backups\PreDelete</c>: validated copies made before a permanent deletion from a Project's Trash.</summary>
+    PreDelete,
 }
 
-/// <summary>One file found in <c>Backups\Daily</c>, <c>Backups\Migrations</c> or <c>Backups\PreRestore</c>.</summary>
+/// <summary>One file found in <c>Backups\Daily</c>, <c>Backups\Migrations</c>, <c>Backups\PreRestore</c> or <c>Backups\PreDelete</c>.</summary>
 /// <param name="Taken">When the backup was taken, as Tokyo time (migration names carry UTC and are converted).</param>
 /// <param name="NameVersion">Schema version in the name (daily: the backup's; migration: the version before the upgrade).</param>
 public sealed record BackupEntry(

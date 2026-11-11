@@ -29,6 +29,9 @@ using WorkHub.Infrastructure.Restore;
 //   folder-lifecycle <databaseFile> archive|trash|restore <nodeId>
 //                                                           run the operation (archive/trash confirm their own fresh preview);
 //                                                           stop right AFTER its marker UPDATE, before COMMIT
+//
+// Phase 14 (permanent deletion from a Project's Trash; the real ProjectTrashPurge with its PreDelete copy):
+//   purge <dataRoot> <projectNodeId> all|<entryIds> <point>  stop at a backup checkpoint or after a delete statement
 
 if (args.Length < 2)
 {
@@ -199,6 +202,36 @@ switch (args[0])
                 break;
         }
 
+        Console.WriteLine("FINISHED");
+        return 1;
+    }
+
+    case "purge":
+    {
+        // Phase 14: the real ProjectTrashPurge on its own fresh preview, parked at a checkpoint ("in-snapshot",
+        // "candidate-validated", "published", "before-delete") or right after a delete statement inside the write transaction
+        // ("purge:notes", "purge:links", "purge:folders:{depth}", "purge:entries").
+        //   purge <dataRoot> <projectNodeId> all|<entryId,entryId,...> <point>
+        var paths = new WorkHubPaths(args[1]);
+        var project = long.Parse(args[2], CultureInfo.InvariantCulture);
+        var request = args[3] == "all"
+            ? WorkHub.Core.Workspace.Content.PurgeRequest.EntireTrash(project)
+            : WorkHub.Core.Workspace.Content.PurgeRequest.Selected(project, args[3].Split(',').Select(id => long.Parse(id, CultureInfo.InvariantCulture)));
+        var point = args[4];
+        var purge = new ProjectTrashPurge(paths, new SqliteConnectionFactory(paths.DatabaseFile), NullAppLog.Instance, TimeProvider.System,
+            SchemaReference.Frozen, new BackupFileOps(), SqliteProjectContentStore.MaxDepth)
+        {
+            OnCheckpoint = reached => { if (reached == point) Ready(); },
+            OnWriteStep = reached => { if (reached == point) Ready(); },
+        };
+        var preview = purge.PreparePurgeAsync(request).GetAwaiter().GetResult();
+        if (!preview.IsReady)
+        {
+            Console.Error.WriteLine($"preview refused: {preview.Status}");
+            return 4;
+        }
+
+        purge.PurgeAsync(request, preview.Preview!.Token).GetAwaiter().GetResult();
         Console.WriteLine("FINISHED");
         return 1;
     }

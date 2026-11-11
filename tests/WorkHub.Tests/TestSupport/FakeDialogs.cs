@@ -81,6 +81,18 @@ internal sealed class FakeDialogs : IDialogService
         return OnFolderLifecycle(viewModel);
     }
 
+    /// <summary>Plays the purge confirmation: by default the user clicks Delete permanently.</summary>
+    public Func<PurgeConfirmationViewModel, bool> OnPurgeConfirmation { get; set; } = _ => true;
+
+    /// <summary>Every purge confirmation shown, in order.</summary>
+    public List<PurgeConfirmationViewModel> PurgeConfirmations { get; } = [];
+
+    public bool ShowPurgeConfirmation(PurgeConfirmationViewModel viewModel)
+    {
+        PurgeConfirmations.Add(viewModel);
+        return OnPurgeConfirmation(viewModel);
+    }
+
     public Func<ProjectFolderNameEditorViewModel, bool> OnProjectFolderNameEditor { get; set; } = _ => false;
 
     public Func<ProjectLinkEditorViewModel, bool> OnProjectLinkEditor { get; set; } = _ => false;

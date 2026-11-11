@@ -164,8 +164,10 @@ public sealed class RestoreRequester : IRestoreRequester
                 return (Path.Combine(_paths.MigrationBackupsDirectory, entry.FileName), from);
             case (BackupFolder.PreRestore, BackupKind.PreRestore or BackupKind.Preserved) when PreRestoreNames.TryParse(entry.FileName, out _, out var version, out _):
                 return (Path.Combine(_paths.PreRestoreBackupsDirectory, entry.FileName), version);
+            case (BackupFolder.PreDelete, BackupKind.PreDelete) when PreDeleteNames.TryParse(entry.FileName, out var preDeleteVersion, out _):
+                return (Path.Combine(_paths.PreDeleteBackupsDirectory, entry.FileName), preDeleteVersion);
             default:
-                throw new RestoreRefusedException("Only recognized backups in Daily, Migrations or PreRestore can be restored.");
+                throw new RestoreRefusedException("Only recognized backups in Daily, Migrations, PreRestore or PreDelete can be restored.");
         }
     }
 

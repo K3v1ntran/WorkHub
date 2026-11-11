@@ -42,6 +42,7 @@ public sealed class RestoreConfirmationViewModel : ObservableObject
                 BackupKind.PreMigration => "Pre-migration backup",
                 BackupKind.PreRestore => "Safety backup made before a restore",
                 BackupKind.Preserved => "Preserved copy made before a restore",
+                BackupKind.PreDelete => "Copy of the whole database made before a permanent deletion",
                 _ => "Backup",
             };
             var taken = Facts.Source.Taken is { } t ? t.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) + " (Japan time)" : "unknown time";

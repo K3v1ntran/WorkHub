@@ -59,7 +59,9 @@ internal sealed class SqliteSnapshotter(SchemaReference references, IBackupFileO
 {
     public const int DefaultLockWaitSeconds = 10;
 
-    public SourceFacts Copy(string sourceFile, string candidateFile, SnapshotRules rules)
+    /// <param name="inSnapshot">Phase 14: runs on the source inside the pinned snapshot, after the source checks and before the
+    /// candidate is created. Throwing stops the run with no candidate written.</param>
+    public SourceFacts Copy(string sourceFile, string candidateFile, SnapshotRules rules, Action<SqliteConnection, SqliteTransaction>? inSnapshot = null)
     {
         if (!files.FileExists(sourceFile))
             throw new BackupStepException(DailyBackupFailure.SourceMissing, "The database file does not exist.");
@@ -97,6 +99,7 @@ internal sealed class SqliteSnapshotter(SchemaReference references, IBackupFileO
             {
                 hook?.Invoke(BackupStage.SourcePinned);
                 var facts = CheckSource(source, pin, rules);   // S3
+                inSnapshot?.Invoke(source, pin);
                 CopyAndNormalize(source, candidateFile);      // S4–S6
                 pin.Commit();                                  // S7 (read-only transaction: releases the pin)
                 return VerifyStandalone(candidateFile, facts); // S8

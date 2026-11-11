@@ -7,8 +7,8 @@ using WorkHub.Infrastructure.Launching;
 namespace WorkHub.Infrastructure.Backup;
 
 /// <summary>
-/// Read-only discovery and checking of <c>Backups\Daily</c>, <c>Backups\Migrations</c> and (Phase 10) <c>Backups\PreRestore</c>
-/// (Phase 9 §8.1). Listing never
+/// Read-only discovery and checking of <c>Backups\Daily</c>, <c>Backups\Migrations</c>, (Phase 10) <c>Backups\PreRestore</c> and
+/// (Phase 14) <c>Backups\PreDelete</c> (Phase 9 §8.1). Listing never
 /// opens a file; a check opens one file with an unpooled read-only connection after the pre-open gates and closes it
 /// before returning. There is no operation that writes, replaces or deletes anything.
 /// </summary>
@@ -43,12 +43,14 @@ public sealed class BackupCatalog : IBackupCatalog
             var daily = List(BackupFolder.Daily, _paths.DailyBackupsDirectory);
             var migrations = List(BackupFolder.Migrations, _paths.MigrationBackupsDirectory);
             var preRestore = List(BackupFolder.PreRestore, _paths.PreRestoreBackupsDirectory);
+            var preDelete = List(BackupFolder.PreDelete, _paths.PreDeleteBackupsDirectory);
             return
             [
                 .. daily.Where(e => e.Kind == BackupKind.Daily).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
                 .. migrations.Where(e => e.Kind == BackupKind.PreMigration).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
                 .. preRestore.Where(e => e.Kind is BackupKind.PreRestore or BackupKind.Preserved).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
-                .. daily.Concat(migrations).Concat(preRestore).Where(e => e.Kind == BackupKind.Unrecognized).OrderBy(e => e.Folder).ThenBy(e => e.FileName, StringComparer.OrdinalIgnoreCase),
+                .. preDelete.Where(e => e.Kind == BackupKind.PreDelete).OrderByDescending(e => e.Taken).ThenByDescending(e => e.FileName, StringComparer.Ordinal),
+                .. daily.Concat(migrations).Concat(preRestore).Concat(preDelete).Where(e => e.Kind == BackupKind.Unrecognized).OrderBy(e => e.Folder).ThenBy(e => e.FileName, StringComparer.OrdinalIgnoreCase),
             ];
         }, cancellationToken);
 
@@ -84,6 +86,7 @@ public sealed class BackupCatalog : IBackupCatalog
         {
             BackupFolder.Daily => _paths.DailyBackupsDirectory,
             BackupFolder.Migrations => _paths.MigrationBackupsDirectory,
+            BackupFolder.PreDelete => _paths.PreDeleteBackupsDirectory,
             _ => _paths.PreRestoreBackupsDirectory,
         },
         entry.FileName);
@@ -99,6 +102,8 @@ public sealed class BackupCatalog : IBackupCatalog
             var path = Path.Combine(directory, name);
             if (folder == BackupFolder.Daily && string.Equals(path, _paths.DailyBackupLockFile, StringComparison.OrdinalIgnoreCase))
                 continue; // the feature's own lock file
+            if (folder == BackupFolder.PreDelete && string.Equals(path, _paths.PreDeleteLockFile, StringComparison.OrdinalIgnoreCase))
+                continue; // Phase 14's own lock file
 
             long size;
             try
@@ -122,6 +127,10 @@ public sealed class BackupCatalog : IBackupCatalog
             else if (folder == BackupFolder.PreRestore && PreRestoreNames.TryParse(name, out var kind, out var version, out var preRestoreUtc))
             {
                 entries.Add(new BackupEntry(name, folder, kind, size, _calendar.ToTokyo(preRestoreUtc), version));
+            }
+            else if (folder == BackupFolder.PreDelete && PreDeleteNames.TryParse(name, out var preDeleteVersion, out var preDeleteUtc))
+            {
+                entries.Add(new BackupEntry(name, folder, BackupKind.PreDelete, size, _calendar.ToTokyo(preDeleteUtc), preDeleteVersion));
             }
             else
             {

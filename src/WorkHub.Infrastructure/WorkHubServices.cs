@@ -44,7 +44,7 @@ public sealed class WorkHubServices : IDisposable
         Owners = new OwnerService(new SqliteOwnerStore(Connections), new ProcessOwnerLauncher());
         LegacyImport = new LegacyImportService(new LegacyXmlParser(), new SqliteLegacyImportStore(Connections), Log);
         Workspace = new WorkspaceService(new SqliteWorkspaceStore(Connections));
-        ProjectContent = new ProjectContentService(new SqliteProjectContentStore(Connections), new ProcessProjectLinkLauncher());
+        ProjectContent = new ProjectContentService(new SqliteProjectContentStore(Connections), new ProcessProjectLinkLauncher(), new ProjectTrashPurge(paths, Connections, Log));
         WorkspaceSearch = new WorkspaceSearchService(new SqliteWorkspaceSearchStore(Connections));
         LinkChecker = new LinkHealthChecker(Log);
     }

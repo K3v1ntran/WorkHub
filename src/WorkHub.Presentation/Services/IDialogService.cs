@@ -43,6 +43,12 @@ public interface IDialogService
     /// <returns>True only when the user clicked the action button.</returns>
     bool ShowFolderLifecycleConfirmation(FolderLifecycleConfirmationViewModel viewModel);
 
+    /// <summary>
+    /// Phase 14: the permanent-deletion confirmation of one ready preview. Cancel is the default; Enter and Esc both mean Cancel.
+    /// </summary>
+    /// <returns>True only when the user clicked Delete permanently.</returns>
+    bool ShowPurgeConfirmation(PurgeConfirmationViewModel viewModel);
+
     /// <returns>True when the ProjectFolder was created or renamed.</returns>
     bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel);
 

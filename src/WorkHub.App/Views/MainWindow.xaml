@@ -1614,16 +1614,32 @@
                                 </Button>
                                 <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding RestoreCommand}" AutomationProperties.Name="Restore"
                                         ToolTip="Restore the selected entry to the folder it came from (Enter)" Content="Restore" />
+                                <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding DeletePermanentlyCommand}" AutomationProperties.Name="Delete permanently"
+                                        AutomationProperties.AutomationId="TrashDeletePermanently"
+                                        ToolTip="Remove the selected entries from WorkHub's database after a confirmation; a backup is made first (Shift+Del)">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
+                                        <TextBlock Margin="6,0,0,0" Text="Delete permanently…" />
+                                    </StackPanel>
+                                </Button>
+                                <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding EmptyTrashCommand}" AutomationProperties.Name="Empty Trash"
+                                        AutomationProperties.AutomationId="TrashEmptyTrash"
+                                        ToolTip="Remove every entry of this project's Trash from WorkHub's database after a confirmation; a backup is made first" Content="Empty Trash…" />
                                 <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding Title}" AutomationProperties.AutomationId="TrashTitle" />
+                            </DockPanel>
+                            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" Visibility="{Binding PurgeStatus, Converter={StaticResource NullToCollapsed}}">
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding CancelPurgeCommand}" Content="Cancel"
+                                        AutomationProperties.Name="Cancel permanent deletion" AutomationProperties.AutomationId="TrashPurgeCancel" />
+                                <TextBlock VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding PurgeStatus}" AutomationProperties.AutomationId="TrashPurgeStatus" />
                             </DockPanel>
                             <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="TrashNotice"
                                        Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
                             <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
-                                       Text="Items in the Trash are kept until you restore them. Nothing on disk was moved or deleted." />
+                                       Text="Items in the Trash are kept until you restore them or delete them permanently. Nothing on disk was moved or deleted." />
                             <Grid>
                                 <ListView x:Name="TrashList" ItemsSource="{Binding Entries}" SelectedItem="{Binding SelectedEntry}" BorderThickness="0" Background="Transparent"
-                                          AutomationProperties.Name="Trash entries" SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                          PreviewKeyDown="TrashList_PreviewKeyDown">
+                                          AutomationProperties.Name="Trash entries" SelectionMode="Extended" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                          PreviewKeyDown="TrashList_PreviewKeyDown" SelectionChanged="TrashList_SelectionChanged">
                                     <ListView.ItemContainerStyle>
                                         <Style TargetType="ListViewItem" BasedOn="{StaticResource ListRow}">
                                             <Setter Property="Padding" Value="8,5" />
@@ -1660,6 +1676,9 @@
                                     <ListView.ContextMenu>
                                         <ContextMenu>
                                             <MenuItem Header="Restore" InputGestureText="Enter" Command="{Binding RestoreCommand}" />
+                                            <Separator />
+                                            <MenuItem Header="Delete permanently…" InputGestureText="Shift+Del" Command="{Binding DeletePermanentlyCommand}" />
+                                            <MenuItem Header="Empty Trash…" Command="{Binding EmptyTrashCommand}" />
                                         </ContextMenu>
                                     </ListView.ContextMenu>
                                 </ListView>

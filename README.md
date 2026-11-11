@@ -231,10 +231,41 @@ change: files, folders and web pages a link points to are never moved, renamed o
   Move destinations and search; a folder in the Trash reserves no names. Acting on an item another window moved to the
   Trash says "This item is in the Trash." A note editor keeps your text when its note was moved to the Trash: Copy draft
   works, and Save as new note saves next to the original only if that folder is not in the Trash.
-- There is no permanent delete, Empty Trash or automatic cleanup: the Trash keeps everything until it is restored.
+- The Trash keeps everything until it is restored or deleted permanently; there is no automatic cleanup.
 
-Not available yet: permanent delete of projects or content, bulk Archive, tags, rich text, drag-and-drop, manual ordering,
-autosave and moving content between projects.
+### Deleting permanently from a project's Trash
+
+In a project's Trash, **Delete permanently…** (toolbar, context menu or **Shift+Del** in the Trash list; one or more
+selected entries) and **Empty Trash…** (every entry of that project) remove entries from WorkHub's database after a
+confirmation.
+
+- An item that was moved to the Trash separately from inside a folder (for example a note trashed before its folder) is
+  deleted together with that folder. The confirmation lists such items under the folder they are in, with the totals. Selecting
+  only such an item deletes only that item.
+- The confirmation shows exactly what will be deleted: each entry with its kind, name, item count, when it was trashed and
+  where it came from, the project (marked "(archived)" if it is archived) and the totals. **Cancel** is the default; Enter
+  and Esc never delete anything. An archived project's Trash can be emptied like any other.
+- **Before deleting, WorkHub makes a copy of the whole database** in `Backups\PreDelete\` (validated like a daily backup,
+  and checked to contain exactly the confirmed items). If the copy cannot be made, nothing is deleted.
+- If anything shown in the confirmation changes before the deletion (another window restores, trashes or deletes an entry
+  of that selection, renames the project or a folder the items came from, archives or trashes the project or a folder
+  above it), nothing is deleted and the message says so. Review the list and confirm again; WorkHub never retries on
+  its own. Items trashed meanwhile that are not part of the selection do not stop a **Delete permanently**, but they do
+  stop an **Empty Trash** (which must cover exactly the Trash you confirmed).
+- While "Making a backup…" is shown you can **Cancel**: nothing is deleted, and a copy that was already made is kept and
+  named in the message. The message says "Cancelled" even if the backup then fails or times out (the reason is written to
+  the log). Once "Deleting…" is shown the deletion finishes (or, on an error, is rolled back completely), and
+  the message says what happened.
+- There is **no Undo**. Deleting removes the items from the **active database only**:
+  - the PreDelete copy and your other backups (daily, pre-migration, pre-restore and earlier PreDelete copies) still
+    contain them;
+  - it is not a secure erasure: the database file and the disk may still hold the old bytes;
+  - files, folders and web pages that links point to are never touched.
+- To get deleted items back, restore a backup with **Restore…** (below). That returns the **whole database** to the
+  moment the backup was taken: every later change (in any project) is undone too. It is not an item-level Undo.
+
+Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags, rich text,
+drag-and-drop, manual ordering, autosave and moving content between projects.
 
 ### Workspace search
 
@@ -329,8 +360,9 @@ On every start WorkHub ensures `%LOCALAPPDATA%\WorkHub\` contains:
 Data\workhub.db        SQLite database (schema version in PRAGMA user_version)
 Config\settings.json   application configuration (safe defaults, no secrets)
 Logs\                  daily diagnostic logs
-Backups\               database backups: Daily\ (daily backups), Migrations\ (pre-migration copies) and
-                       PreRestore\ (copies of your data made before a restore)
+Backups\               database backups: Daily\ (daily backups), Migrations\ (pre-migration copies),
+                       PreRestore\ (copies of your data made before a restore) and PreDelete\ (copies of the whole
+                       database made before a permanent deletion from a project's Trash)
 ```
 
 WorkHub also keeps three small lock files in `Data\` (`workhub-startup.lock`, `workhub-instance.lock` and
@@ -371,8 +403,14 @@ computer's own time zone), after the database has been opened or upgraded, WorkH
 **Pre-migration backups (`Backups\Migrations\`).** Before a schema upgrade WorkHub makes the same kind of standalone,
 validated copy at the old version. If it cannot, the database is **not** upgraded and startup stops, as before.
 
+**PreDelete copies (`Backups\PreDelete\`).** Before every permanent deletion from a project's Trash WorkHub makes the same
+kind of standalone, fully validated copy of the whole database (`workhub_predelete_v<schema>_<time>.db`) and checks that it
+contains exactly the confirmed items. They are listed in Settings → Backups, can be restored with **Restore…**, and are
+never removed automatically (also not when the deletion was then cancelled, refused or rolled back). Changes made after
+the copy was taken are not in it. `Backups\PreDelete\predelete.lock` coordinates windows; never delete or edit it.
+
 **Settings → Backups** starts with this start's status line (database schema version and today's backup), then lists the
-three folders and shows, for each backup, its date (Japan time), schema version, size,
+backup folders and shows, for each backup, its date (Japan time), schema version, size,
 status and whether this version can use it. *Quick-checked* is a light check made when the list loads; **Validate**
 runs the full check (*Fully validated*). **Restore…** is described below. Nothing on the page deletes or overwrites a
 backup.

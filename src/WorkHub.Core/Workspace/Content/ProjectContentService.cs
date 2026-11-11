@@ -5,7 +5,7 @@ namespace WorkHub.Core.Workspace.Content;
 /// Content is WorkHub metadata: creating, renaming, editing or moving a ProjectFolder or Link never creates, moves,
 /// renames or deletes anything on disk, and opening a Link only hands its target to Windows.
 /// </summary>
-public sealed class ProjectContentService(IProjectContentStore store, IProjectLinkLauncher launcher)
+public sealed class ProjectContentService(IProjectContentStore store, IProjectLinkLauncher launcher, IProjectTrashPurge? purge = null)
 {
     public const string NameField = ProjectLinkValidator.Fields.Name;
 
@@ -281,6 +281,51 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
         };
     }
 
+    // ---- Phase 14: permanent deletion from a Project's Trash ------------------------------------------------------------
+
+    /// <summary>One read snapshot: a Ready preview (plan, displayed values, token) or a typed refusal. Never writes.</summary>
+    public Task<PurgePreviewResult> PreparePurgeAsync(PurgeRequest request, CancellationToken cancellationToken = default) =>
+        Purge.PreparePurgeAsync(request, cancellationToken);
+
+    /// <summary>PreDelete copy, then one revalidated deletion; cancellation is honoured until <see cref="PurgeStage.Deleting"/>.</summary>
+    public Task<PurgeResult> PurgeAsync(PurgeRequest request, string confirmedToken, IProgress<PurgeStage>? progress = null, CancellationToken cancellationToken = default) =>
+        Purge.PurgeAsync(request, confirmedToken, progress, cancellationToken);
+
+    private IProjectTrashPurge Purge => purge ?? throw new InvalidOperationException("Permanent deletion is not configured.");
+
+    /// <summary>Why a preview or a commit was refused (nothing was deleted).</summary>
+    public static string PurgeRefusalText(PurgePreviewStatus status) => status switch
+    {
+        PurgePreviewStatus.EmptySelection => "Select one or more items in the Trash first.",
+        PurgePreviewStatus.TrashEmpty => "The Trash is empty.",
+        PurgePreviewStatus.ProjectNotFound => "This project no longer exists.",
+        PurgePreviewStatus.ProjectTrashed => "This project is in the Trash. Nothing was deleted.",
+        PurgePreviewStatus.EntryNotFound => "One of the selected items is no longer in the Trash (it may have been restored or deleted in another window). Nothing was deleted.",
+        PurgePreviewStatus.AncestryUnverified or PurgePreviewStatus.TrashDataInconsistent => "WorkHub could not verify these items, so nothing was deleted.",
+        _ => PurgeFailed,
+    };
+
+    /// <summary>The message for a purge result. A committed purge is always reported as committed.</summary>
+    public static string PurgeResultText(PurgeResult result)
+    {
+        var kept = result.BackupKept ? $" A copy of the whole database was made first and is kept: {result.BackupFileName}." : string.Empty;
+        return result.Outcome switch
+        {
+            PurgeOutcome.Purged when result.Deleted is { } counts =>
+                $"Removed from the database: {Plural(counts.Entries, "entry", "entries")} ({Plural(counts.Folders, "folder", "folders")}, {Plural(counts.Links, "link", "links")}, {Plural(counts.Notes, "note", "notes")}). Backup made first: {result.BackupFileName}.",
+            PurgeOutcome.Cancelled => "Cancelled. Nothing was deleted." + kept,
+            PurgeOutcome.Refused when result.Refusal is { } refusal => PurgeRefusalText(refusal) + kept,
+            PurgeOutcome.ConfirmationStale => "The Trash changed since you confirmed. Nothing was deleted. Review the items and confirm again." + kept,
+            PurgeOutcome.BackupFailed => $"The backup could not be made ({result.Detail}). Nothing was deleted.",
+            PurgeOutcome.DatabaseBusy => "The database is busy. Nothing was deleted. Try again." + kept,
+            _ => PurgeFailed + kept,
+        };
+    }
+
+    /// <summary>Unexpected purge failure: the deletion was rolled back.</summary>
+    public const string PurgeFailed = "The items could not be deleted. Nothing was deleted.";
+
+    private static string Plural(int count, string one, string many) => count == 1 ? $"1 {one}" : $"{count} {many}";
     /// <summary>Unexpected Trash failure (database busy, I/O): nothing was written.</summary>
     public const string TrashFailed = "Could not move to the Trash. Nothing was changed.";
 

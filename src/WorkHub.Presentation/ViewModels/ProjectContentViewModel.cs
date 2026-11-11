@@ -91,6 +91,9 @@ public sealed class ProjectContentViewModel : ObservableObject
     private int _operationSequence;
     private UndoOffer? _undo;
     private int _trashCount;
+    private int _countTicket;      // issue order of Trash-count reads and of committed count-changing writes
+    private int _countApplied;     // the ticket whose state "Trash (n)" shows
+    private int _latestCountRead;  // the most recently issued count read (listing load or reconciliation)
 
     public ProjectContentViewModel(
         ProjectContentService content,
@@ -294,7 +297,7 @@ public sealed class ProjectContentViewModel : ObservableObject
 
     public bool IsTrashOpen => Trash.IsOpen;
 
-    /// <summary>"Trash (3)": entries in the Project's Trash, from the latest listing (adjusted by this view's own writes).</summary>
+    /// <summary>"Trash (3)": entries in the Project's Trash, from the most recently issued count read or committed write (see the ordering rule below).</summary>
     public string TrashButtonText => _trashCount > 0 ? $"Trash ({_trashCount})" : "Trash";
 
     internal int TrashCount
@@ -369,6 +372,67 @@ public sealed class ProjectContentViewModel : ObservableObject
 
     internal ProjectContentService Content => _content;
 
+    internal IDialogService Dialogs => _dialogs;
+
+    // ---- Ordering of "Trash (n)" -------------------------------------------------------------------------------------
+    // One rule for every source of the count: each count read (a listing load or a reconciliation) takes a ticket when it is
+    // ISSUED, and each committed count-changing write (Move to Trash, Undo, Restore, purge) takes one when its commit is
+    // observed. A read is applied only when its ticket is newer than the shown state, so an older reconciliation never
+    // overwrites a newer listing or write and an older listing never overwrites a newer reconciliation. A write adjusts the
+    // shown count only when that count is exact for it (no read was applied while it ran and none is outstanding); otherwise it
+    // issues a fresh read AFTER its commit, which is authoritative. Nothing is applied after deactivation; no polling.
+
+    /// <summary>The shown count's state, captured when a count-changing write is submitted.</summary>
+    internal int CountBasis => _countApplied;
+
+    /// <summary>The most recent count reconciliation (completed when none); lets tests await it.</summary>
+    internal Task CurrentCountReconciliation { get; private set; } = Task.CompletedTask;
+
+    private int IssueCountRead() => _latestCountRead = ++_countTicket;
+
+    private void ApplyCountRead(int ticket, int count)
+    {
+        if (_isDeactivated || ticket <= _countApplied)
+            return; // a newer read or committed write owns the count
+        _countApplied = ticket;
+        TrashCount = count;
+    }
+
+    /// <summary>
+    /// A count-changing write of this Project view committed. <paramref name="delta"/> is applied when <paramref name="exact"/> (the
+    /// write's result belongs to the view that is still shown) and the count is still the one the write started from with no read
+    /// outstanding; otherwise the count is re-read now. Every read issued before this commit is superseded either way.
+    /// </summary>
+    internal void CountChangeCommitted(int basis, int delta, bool exact)
+    {
+        if (_isDeactivated)
+            return;
+        exact = exact && basis == _countApplied && _latestCountRead <= basis;
+        _countApplied = ++_countTicket;
+        if (exact)
+            TrashCount = Math.Max(0, TrashCount + delta);
+        else
+            CurrentCountReconciliation = ReconcileTrashCountAsync();
+    }
+
+    /// <summary>
+    /// Re-reads this Project's Trash count (after a committed write whose shown count was not exact, such as a purge whose Trash
+    /// view is gone). Applied only under the ordering rule above; never after deactivation.
+    /// </summary>
+    private async Task ReconcileTrashCountAsync()
+    {
+        var ticket = IssueCountRead();
+        try
+        {
+            var entries = await _content.ListTrashAsync(ProjectNodeId);
+            ApplyCountRead(ticket, entries.Count);
+        }
+        catch (Exception ex)
+        {
+            _log.Error("The Trash count could not be refreshed.", ex);
+        }
+    }
+
     internal IAppLog Log => _log;
 
     /// <summary>The most recent Move to Trash or Undo; lets tests await it.</summary>
@@ -418,10 +482,10 @@ public sealed class ProjectContentViewModel : ObservableObject
         ContainerMessage = null;
         OnPropertyChanged(nameof(IsFolderMissing));
         IsLoading = true;
-        return CurrentLoad = LoadAsync(folderId, version, cts.Token);
+        return CurrentLoad = LoadAsync(folderId, version, IssueCountRead(), cts.Token);
     }
 
-    private async Task LoadAsync(long? folderId, int version, CancellationToken token)
+    private async Task LoadAsync(long? folderId, int version, int countTicket, CancellationToken token)
     {
         ProjectContentListResult result;
         try
@@ -471,7 +535,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         foreach (var note in listing.Notes)
             Items.Add(new ProjectContentItemViewModel(note));
 
-        TrashCount = listing.TrashCount;
+        ApplyCountRead(countTicket, listing.TrashCount);
         _isLoaded = true;
         IsLoading = false;
         OnPropertyChanged(nameof(IsEmpty));
@@ -758,6 +822,7 @@ public sealed class ProjectContentViewModel : ObservableObject
 
             ClearUndo(); // the write starts now: an older Undo is never offered after it
             var sequence = ++_operationSequence;
+            var countBasis = CountBasis;
             TrashResult result;
             try
             {
@@ -772,13 +837,18 @@ public sealed class ProjectContentViewModel : ObservableObject
             }
 
             if (!IsEligible(token))
-                return; // committed or not, nothing changes in another container, Project or visit
+            {
+                // Nothing changes in another container or visit; only this Project's count is re-read after a commit.
+                if (result.Outcome == TrashOutcome.Trashed)
+                    CountChangeCommitted(countBasis, +1, exact: false);
+                return;
+            }
 
             switch (result.Outcome)
             {
                 case TrashOutcome.Trashed:
                     RemoveRow(target); // only this (Kind, Id); other rows and their link checks are untouched
-                    TrashCount++;
+                    CountChangeCommitted(countBasis, +1, exact: true);
                     BannerMessage = null;
                     if (sequence == _operationSequence)
                         OfferUndo(new UndoOffer(result.Entry!.Id, sequence, token, TrashedText(target.Kind, result.Entry.RootName, result.Entry.ItemCount)));
@@ -812,6 +882,7 @@ public sealed class ProjectContentViewModel : ObservableObject
             return;
 
         BeginWrite();
+        var countBasis = CountBasis;
         try
         {
             RestoreResult result;
@@ -828,7 +899,11 @@ public sealed class ProjectContentViewModel : ObservableObject
             }
 
             if (!IsEligible(undo.Token))
+            {
+                if (result.Outcome == RestoreOutcome.Restored)
+                    CountChangeCommitted(countBasis, -1, exact: false);
                 return;
+            }
 
             if (result.Outcome != RestoreOutcome.Restored)
             {
@@ -838,7 +913,7 @@ public sealed class ProjectContentViewModel : ObservableObject
                 return;
             }
 
-            TrashCount = Math.Max(0, TrashCount - 1);
+            CountChangeCommitted(countBasis, -1, exact: true);
             var restored = result.Restored!;
             if (restored.ProjectNodeId != ProjectNodeId || restored.ContainerFolderId != CurrentFolderId)
             {

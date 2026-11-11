@@ -1,0 +1,65 @@
+<Window x:Class="WorkHub.App.Views.PurgeConfirmationWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:PurgeConfirmationViewModel}"
+        Title="{Binding Title}"
+        Width="560" SizeToContent="Height" MaxHeight="600" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=CancelButton}">
+    <Window.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+        <views:DepthToIndentConverter x:Key="DependentIndent" Indent="16" />
+    </Window.Resources>
+    <!--
+        Phase 14: the permanent-deletion confirmation of ONE ready preview (every value shown is covered by its token). Cancel is
+        focused and is both the Enter and the Esc default, so a stray key press never deletes anything.
+    -->
+    <DockPanel Margin="20,12,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True" Command="{Binding CancelCommand}"
+                    AutomationProperties.AutomationId="PurgeCancel" />
+            <Button Content="{Binding ConfirmText}" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}"
+                    AutomationProperties.AutomationId="PurgeConfirm" />
+        </StackPanel>
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,12,0,0" TextWrapping="Wrap" Text="{Binding ExplanationText}" AutomationProperties.AutomationId="PurgeExplanation" />
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,8,0,0" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding TotalsText}" AutomationProperties.AutomationId="PurgeTotals" />
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,6,0,0" Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding DependentsText}"
+                   Visibility="{Binding HasDependents, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="PurgeDependentsHint" />
+        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,8" TextTrimming="CharacterEllipsis" Text="{Binding ProjectText, StringFormat='Project: {0}'}"
+                   ToolTip="{Binding ProjectText}" AutomationProperties.AutomationId="PurgeProject" />
+        <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="300" Focusable="False">
+            <ItemsControl ItemsSource="{Binding Rows}" Focusable="False" AutomationProperties.AutomationId="PurgeEntries">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:PurgeConfirmationRowViewModel}">
+                        <Grid Margin="{Binding Depth, Converter={StaticResource DependentIndent}}">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                                <TextBlock Width="46" Foreground="{StaticResource Brush.MutedText}" Text="{Binding KindText}" />
+                                <TextBlock FontWeight="SemiBold" MaxWidth="250" TextTrimming="CharacterEllipsis" Text="{Binding Name}" ToolTip="{Binding Name}" />
+                                <TextBlock Margin="8,0,0,0" Foreground="{StaticResource Brush.MutedText}" Text="{Binding ItemsText}" />
+                                <TextBlock Margin="8,0,0,0" Foreground="{StaticResource Brush.MutedText}" Text="{Binding TrashedAtText}" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="46,0,0,2">
+                                <TextBlock Foreground="{StaticResource Brush.MutedText}" Text="{Binding InsideText}" Margin="0,0,8,0"
+                                           Visibility="{Binding InsideText, Converter={StaticResource NullToCollapsed}}" />
+                                <TextBlock Foreground="{StaticResource Brush.MutedText}" MaxWidth="400" TextTrimming="CharacterEllipsis" Text="{Binding FromText}" ToolTip="{Binding FromText}" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

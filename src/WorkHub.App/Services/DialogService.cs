@@ -85,6 +85,13 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
+    public bool ShowPurgeConfirmation(PurgeConfirmationViewModel viewModel)
+    {
+        var window = new PurgeConfirmationWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, confirmed) => window.DialogResult = confirmed;
+        return window.ShowDialog() == true;
+    }
+
     public bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel)
     {
         // Same window as the Workspace name editor: the view model exposes the same binding surface.

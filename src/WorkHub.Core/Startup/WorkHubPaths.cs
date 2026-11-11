@@ -41,6 +41,12 @@ public sealed class WorkHubPaths
     /// <summary>Phase 10: safety backups and preserved copies made before a restore. Outside daily retention; kept forever.</summary>
     public string PreRestoreBackupsDirectory => Path.Combine(BackupsDirectory, "PreRestore");
 
+    /// <summary>Phase 14: validated copies made before a permanent deletion from a Project's Trash. Outside retention; kept forever.</summary>
+    public string PreDeleteBackupsDirectory => Path.Combine(BackupsDirectory, "PreDelete");
+
+    /// <summary>Held exclusively while a PreDelete copy is made (one at a time per data root).</summary>
+    public string PreDeleteLockFile => Path.Combine(PreDeleteBackupsDirectory, "predelete.lock");
+
     public string DatabaseFile => Path.Combine(DataDirectory, "workhub.db");
 
     /// <summary>Phase 10 startup Gate (G). Held by every start through reconciliation and database initialization.</summary>

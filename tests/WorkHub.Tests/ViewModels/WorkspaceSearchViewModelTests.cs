@@ -63,7 +63,7 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         };
         if (area.SelectedContent is { } content)
             tasks.AddRange([("Content.CurrentLoad", content.CurrentLoad), ("Content.CurrentPreviewLoad", content.CurrentPreviewLoad),
-                ("Content.CurrentTrashOperation", content.CurrentTrashOperation), ("Content.CurrentReconciliation", content.CurrentReconciliation)]);
+                ("Content.CurrentTrashOperation", content.CurrentTrashOperation), ("Content.CurrentReconciliation", content.CurrentReconciliation), ("Content.CurrentCountReconciliation", content.CurrentCountReconciliation)]);
         return tasks.Select(t => (prefix + t.Name, t.Task)).ToList();
     }
 
