@@ -1503,6 +1503,8 @@
                                     <Button Style="{StaticResource ToolButton}" Command="{Binding MoveCommand}" AutomationProperties.Name="Move content item" ToolTip="Move to… — within this project">
                                         <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" />
                                     </Button>
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding CopyToProjectCommand}" AutomationProperties.Name="Copy to another project" ToolTip="Copy to another project…" Content="Copy to project…" />
+                                    <Button Style="{StaticResource ToolButton}" Command="{Binding MoveToProjectCommand}" AutomationProperties.Name="Move to another project" ToolTip="Move to another project… — the original goes to this project's Trash" Content="Move to project…" />
                                     <Button Style="{StaticResource ToolButton}" Command="{Binding MoveToTrashCommand}" AutomationProperties.Name="Move to Trash" ToolTip="Move to the Trash (Del). Files on disk are not touched.">
                                         <Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" />
                                     </Button>
@@ -1550,6 +1552,8 @@
                                             <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Open}" /></MenuItem.Icon></MenuItem>
                                             <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" /></MenuItem.Icon></MenuItem>
                                             <MenuItem Header="Move to…" Command="{Binding MoveCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" /></MenuItem.Icon></MenuItem>
+                                            <MenuItem Header="Copy to another project…" Command="{Binding CopyToProjectCommand}" />
+                                            <MenuItem Header="Move to another project…" Command="{Binding MoveToProjectCommand}" />
                                             <MenuItem Header="Move to Trash" InputGestureText="Del" Command="{Binding MoveToTrashCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
                                             <Separator />
                                             <MenuItem Header="Check" Command="{Binding CheckCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Check}" /></MenuItem.Icon></MenuItem>
@@ -1592,6 +1596,18 @@
                                 <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}"
                                         AutomationProperties.Name="Undo move to Trash" Content="Undo" FontWeight="SemiBold" />
                                 <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding UndoMessage}" AutomationProperties.AutomationId="UndoMessage" />
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Phase 15: Copy / Move to another project. Open destination only; there is no Undo across projects. -->
+                        <Border DockPanel.Dock="Top" Style="{StaticResource Banner}" Background="{StaticResource Brush.WarningBackground}" BorderBrush="{StaticResource Brush.Border}"
+                                Visibility="{Binding HasDestination, Converter={StaticResource BoolToVisibility}}" AutomationProperties.Name="Destination notice">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding DismissDestinationCommand}"
+                                        AutomationProperties.Name="Dismiss destination notice" Content="Dismiss" />
+                                <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding OpenDestinationCommand}"
+                                        AutomationProperties.Name="Open destination" Content="Open destination" FontWeight="SemiBold" />
+                                <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding DestinationMessage}" AutomationProperties.AutomationId="DestinationMessage" />
                             </DockPanel>
                         </Border>
 
@@ -1746,6 +1762,8 @@
                                         <MenuItem Header="Open" InputGestureText="Enter" Command="{Binding OpenCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Open}" /></MenuItem.Icon></MenuItem>
                                         <MenuItem Header="Edit…" InputGestureText="F2" Command="{Binding EditCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Edit}" /></MenuItem.Icon></MenuItem>
                                         <MenuItem Header="Move to…" Command="{Binding MoveCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Move}" /></MenuItem.Icon></MenuItem>
+                                        <MenuItem Header="Copy to another project…" Command="{Binding CopyToProjectCommand}" />
+                                        <MenuItem Header="Move to another project…" Command="{Binding MoveToProjectCommand}" />
                                         <MenuItem Header="Move to Trash" InputGestureText="Del" Command="{Binding MoveToTrashCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
                                         <MenuItem Header="Check" Command="{Binding CheckCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Check}" /></MenuItem.Icon></MenuItem>
                                         <Separator />

@@ -49,6 +49,9 @@ public interface IDialogService
     /// <returns>True only when the user clicked Delete permanently.</returns>
     bool ShowPurgeConfirmation(PurgeConfirmationViewModel viewModel);
 
+    /// <summary>Phase 15: Copy / Move to another project. True only after Confirm on a Ready preview (the view model holds the request and token).</summary>
+    bool ShowCrossProject(CrossProjectDialogViewModel viewModel);
+
     /// <returns>True when the ProjectFolder was created or renamed.</returns>
     bool ShowProjectFolderNameEditor(ProjectFolderNameEditorViewModel viewModel);
 

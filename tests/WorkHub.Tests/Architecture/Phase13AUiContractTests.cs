@@ -152,6 +152,7 @@ public sealed class Phase13AUiContractTests
         Assert.Same(row, toolbar.Parent);
         var names = toolbar.Elements(P + "Button").Select(b => (string?)b.Attribute("AutomationProperties.Name")).ToList();
         Assert.Equal(["Up one level", "New content folder", "New link", "New note", "Open", "Edit content item", "Move content item",
+            "Copy to another project", "Move to another project", // Phase 15
             "Move to Trash", "Check link", "Check all links", "Stop checking", "Open Trash"], names);
         Assert.All(toolbar.Elements(P + "Button"), b => Assert.False(string.IsNullOrWhiteSpace((string?)b.Attribute("ToolTip"))));
     }

@@ -11,7 +11,7 @@ namespace WorkHub.Infrastructure.Persistence;
 /// <c>BEGIN IMMEDIATE</c> for writes whose validity depends on other rows, so the checked state is the written state.
 /// The schema's composite foreign keys, unique indexes and triggers back every rule up.
 /// </summary>
-public sealed class SqliteProjectContentStore : IProjectContentStore
+public sealed partial class SqliteProjectContentStore : IProjectContentStore
 {
     /// <summary>Bound for one container listing and for the Move destination list.</summary>
     public const int MaxRowsPerQuery = 10000;
@@ -458,7 +458,19 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
         Run(connection =>
         {
             using var transaction = connection.BeginTransaction(deferred: false);
+            var result = TrashInTransaction(connection, transaction, item);
+            if (result.Outcome == TrashOutcome.Trashed)
+                transaction.Commit(); // every other outcome wrote nothing (Dispose rolls back)
+            return result;
+        }, cancellationToken);
 
+    /// <summary>
+    /// The Move to Trash steps inside the CALLER'S write transaction (Phase 15 reuses them for Move): refusals write nothing;
+    /// a marked count different from the counted set throws, and the caller's transaction is rolled back.
+    /// </summary>
+    private TrashResult TrashInTransaction(SqliteConnection connection, SqliteTransaction transaction, ContentRef item)
+    {
+        {
             // 1. The row of that KIND and Id, as it is now (identity-based: no container or revision precondition).
             var root = ReadRoot(connection, transaction, item);
             if (root is null)
@@ -513,9 +525,9 @@ public sealed class SqliteProjectContentStore : IProjectContentStore
             if (marked != set.Count)
                 throw new InvalidOperationException($"Trash marked {marked} rows but counted {set.Count}; nothing was changed.");
 
-            transaction.Commit();
             return TrashResult.Done(new TrashEntry(entryId, root.ProjectNodeId, item, root.Name, root.ContainerFolderId, set.Count, ParseTime(trashedAt)));
-        }, cancellationToken);
+        }
+    }
 
     public Task<IReadOnlyList<TrashEntry>> ListTrashAsync(long projectNodeId, CancellationToken cancellationToken = default) =>
         Run<IReadOnlyList<TrashEntry>>(connection =>

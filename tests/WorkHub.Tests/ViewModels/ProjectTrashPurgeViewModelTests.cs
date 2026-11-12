@@ -303,25 +303,44 @@ public sealed class ProjectTrashPurgeViewModelTests : IDisposable
         Assert.Contains(trash.Entries, e => e.Id == _w.E_L1);
     }
 
+    /// <summary>
+    /// Runs on a <see cref="SingleThreadContext"/>, as the app runs on the WPF dispatcher: the purge's <c>Progress&lt;PurgeStage&gt;</c>
+    /// captures the context it is created on and delivers the stage reports IN ORDER there. Without a context every report was a
+    /// separate thread-pool callback, so a late "Backup made. Deleting…" could overwrite "Deleting…" (an intermittent Release
+    /// failure of this test, 2026-11-12); the app never had that ordering.
+    /// </summary>
     [Fact]
     public async Task OnceDeletingBegan_CancelIsDisabled_ALateCancelIsIgnored_TheCommitIsReported()
     {
         await _w.BuildAsync();
         var (content, gate) = Gated("purge:notes", writeStep: true);
-        var trash = await OpenTrash(content);
-        trash.UpdateSelection([Entry(trash, _w.E_N1)]);
+        var context = new SingleThreadContext();
+        try
+        {
+            await context.RunAsync(async () =>
+            {
+                var trash = await OpenTrash(content); // the view model (and its Progress) live on the ordered context
+                trash.UpdateSelection([Entry(trash, _w.E_N1)]);
 
-        var running = trash.DeletePermanentlyCommand.ExecuteAsync();
-        Assert.True(await gate.Reached.WaitAsync(Wait));
-        Assert.True(SpinWait.SpinUntil(() => !trash.CanCancelPurge, Wait), "Deleting… disables Cancel");
-        Assert.Equal("Deleting…", trash.PurgeStatus);
-        trash.CancelPurgeCommand.Execute(null); // ignored
-        gate.Release.Set();
-        await running;
-        await trash.CurrentPurge;
+                var running = trash.DeletePermanentlyCommand.ExecuteAsync();
+                Assert.True(await gate.Reached.WaitAsync(Wait));
+                // The deletion is held inside its transaction; the stage reports are queued on the context: pump until Deleting.
+                Assert.True(SingleThreadContext.WaitOrPump(() => !trash.CanCancelPurge, _ => false, Wait), "Deleting… disables Cancel");
+                Assert.Equal("Deleting…", trash.PurgeStatus); // ordered: BackupPublished was applied before Deleting, never after
+                trash.CancelPurgeCommand.Execute(null); // ignored
+                gate.Release.Set();
+                await running;
+                await trash.CurrentPurge;
 
-        Assert.StartsWith("Removed from the database: 1 entry (0 folders, 0 links, 1 note).", trash.Notice);
-        Assert.DoesNotContain("Nothing was deleted", trash.Notice);
+                Assert.StartsWith("Removed from the database: 1 entry (0 folders, 0 links, 1 note).", trash.Notice);
+                Assert.DoesNotContain("Nothing was deleted", trash.Notice);
+            }, TimeSpan.FromSeconds(60));
+        }
+        finally
+        {
+            gate.Release.Set();
+            Assert.True(context.Stop(TimeSpan.FromSeconds(30)), "the test context stopped");
+        }
     }
 
     [Fact]

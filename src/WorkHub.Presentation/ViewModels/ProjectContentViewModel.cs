@@ -133,6 +133,10 @@ public sealed class ProjectContentViewModel : ObservableObject
         DismissUndoCommand = new RelayCommand(ClearUndo);
         OpenTrashCommand = new AsyncRelayCommand(OpenTrashAsync, () => !_isDeactivated && !Trash.IsOpen, onError);
         CloseTrashCommand = new AsyncRelayCommand(() => NavigateAsync(CurrentFolderId), () => Trash.IsOpen, onError);
+        CopyToProjectCommand = new AsyncRelayCommand(() => CrossProjectAsync(CrossProjectMode.Copy), () => HasSelection() && !IsWriteBusy, onError);
+        MoveToProjectCommand = new AsyncRelayCommand(() => CrossProjectAsync(CrossProjectMode.Move), () => HasSelection() && !IsWriteBusy, onError);
+        OpenDestinationCommand = new RelayCommand(OpenDestination, () => _destination is not null && !_isDeactivated);
+        DismissDestinationCommand = new RelayCommand(ClearDestination);
         Items.CollectionChanged += (_, _) =>
         {
             OnPropertyChanged(nameof(IsEmpty));
@@ -181,6 +185,8 @@ public sealed class ProjectContentViewModel : ObservableObject
             MoveCommand.RaiseCanExecuteChanged();
             MoveToTrashCommand.RaiseCanExecuteChanged();
             CheckCommand.RaiseCanExecuteChanged();
+            CopyToProjectCommand.RaiseCanExecuteChanged();
+            MoveToProjectCommand.RaiseCanExecuteChanged();
             OnPropertyChanged(nameof(IsPreviewVisible));
             StartPreviewLoad();
         }
@@ -328,6 +334,8 @@ public sealed class ProjectContentViewModel : ObservableObject
             MoveToTrashCommand.RaiseCanExecuteChanged();
             UndoCommand.RaiseCanExecuteChanged();
             Trash.RaiseCommands();
+            CopyToProjectCommand.RaiseCanExecuteChanged();
+            MoveToProjectCommand.RaiseCanExecuteChanged();
         }
     }
 
@@ -459,6 +467,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         CancelChecks();
         InvalidatePreview();
         ClearUndo();
+        ClearDestination();
         CloseTrash();
         OpenTrashCommand.RaiseCanExecuteChanged();
     }
@@ -472,6 +481,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         var cts = _loadCts = new CancellationTokenSource();
         CancelChecks();
         ClearUndo(); // an Undo is offered only in the visit that produced it
+        ClearDestination(); // so is the Open destination notice
         CloseTrash();
 
         CurrentFolderId = folderId;
@@ -931,6 +941,157 @@ public sealed class ProjectContentViewModel : ObservableObject
         }
     }
 
+    // ---- Phase 15: Copy / Move to another Project ------------------------------------------------------------------------
+
+    private DestinationNotice? _destination;
+
+    /// <summary>Copy the selected row (a folder with its active subtree) to another project, after the dialog's confirmation.</summary>
+    public AsyncRelayCommand CopyToProjectCommand { get; }
+
+    /// <summary>Copy, then put the original in this project's Trash, in one transaction (no Undo across projects).</summary>
+    public AsyncRelayCommand MoveToProjectCommand { get; }
+
+    /// <summary>Reveals the copy by its new identity, at its CURRENT location (a fresh read through the Workspace reveal).</summary>
+    public RelayCommand OpenDestinationCommand { get; }
+
+    public RelayCommand DismissDestinationCommand { get; }
+
+    /// <summary>"Copied “Specs” (7 items) to Beta › Inbox." with Open destination; null when none. There is never an Undo here.</summary>
+    public string? DestinationMessage => _destination?.Message;
+
+    public bool HasDestination => _destination is not null;
+
+    /// <summary>The identity of the copy the notice points to (tests).</summary>
+    internal ContentRef? DestinationRoot => _destination?.Root;
+
+    /// <summary>The most recent Copy/Move (completed when none); lets tests await it.</summary>
+    internal Task CurrentCrossProject { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Set by the Workspace area: reveals a content item by (Kind, Id) at its current location. Never called after deactivation.
+    /// </summary>
+    internal Func<ContentRef, Task>? DestinationRequested { get; set; }
+
+    private Task CrossProjectAsync(CrossProjectMode mode) => CurrentCrossProject = CrossProjectCoreAsync(mode);
+
+    /// <summary>
+    /// Destination list → dialog (previews; Confirm returns its Ready request and token) → one store commit. The write slot is held
+    /// from the destination read to the commit's completion, so repeated invocations issue no second store call. Results apply only
+    /// while the originating visit is shown; otherwise the database result stands and only this Project's Trash count follows.
+    /// </summary>
+    private async Task CrossProjectCoreAsync(CrossProjectMode mode)
+    {
+        if (IsWriteBusy || !HasSelection() || SelectedItem is not { } item)
+            return;
+
+        var token = CaptureToken();
+        var source = item.Ref;
+        IsWriteBusy = true; // the current Undo stays visible (disabled) until the write itself starts
+        try
+        {
+            IReadOnlyList<CrossProjectTarget> targets;
+            try
+            {
+                targets = await _content.ListCrossProjectTargetsAsync(ProjectNodeId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("The destination projects could not be read.", ex);
+                if (IsEligible(token))
+                    BannerMessage = ProjectContentService.CrossProjectFailed;
+                return;
+            }
+
+            if (!IsEligible(token) || SelectedItem?.Ref != source)
+                return; // no dialog for a visit that is no longer shown or a selection that changed meanwhile
+
+            var dialog = new CrossProjectDialogViewModel(_content, mode, source, item.Name, ProjectName, targets);
+            if (!_dialogs.ShowCrossProject(dialog) || dialog.ConfirmedRequest is not { } request || dialog.ConfirmedToken is not { } confirmed)
+                return;
+
+            ClearUndo(); // the write starts now: an older Move to Trash Undo is never offered after it
+            var countBasis = CountBasis;
+            CrossProjectResult result;
+            try
+            {
+                result = await _content.CrossProjectAsync(request, confirmed);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Copy or move to another project failed.", ex); // operation only; no names, targets or content
+                if (IsEligible(token))
+                    BannerMessage = ProjectContentService.CrossProjectFailed;
+                return;
+            }
+
+            var moved = result.Outcome == CrossProjectOutcome.Moved;
+            if (!IsEligible(token))
+            {
+                if (moved)
+                    CountChangeCommitted(countBasis, +1, exact: false); // the source's Trash gained the original
+                return;
+            }
+
+            if (result.Committed)
+            {
+                if (moved)
+                {
+                    RemoveRow(source);
+                    CountChangeCommitted(countBasis, +1, exact: true);
+                }
+
+                BannerMessage = null;
+                SetDestination(new DestinationNotice(result.NewRoot!.Value, ProjectContentService.CrossProjectResultText(result)));
+                return;
+            }
+
+            BannerMessage = ProjectContentService.CrossProjectResultText(result); // nothing was written; never resubmitted
+            switch (result.Refusal)
+            {
+                case CrossProjectStatus.SourceProjectTrashed:
+                    ObserveProjectTrashed();
+                    break;
+                case CrossProjectStatus.SourceNotFound or CrossProjectStatus.SourceTrashed:
+                    RemoveRow(source);
+                    break;
+            }
+        }
+        finally
+        {
+            IsWriteBusy = false;
+        }
+    }
+
+    private void OpenDestination()
+    {
+        if (_destination is not { } destination || _isDeactivated || DestinationRequested is not { } reveal)
+            return;
+        _ = reveal(destination.Root);
+    }
+
+    private void SetDestination(DestinationNotice notice)
+    {
+        _destination = notice;
+        OnDestinationChanged();
+    }
+
+    private void ClearDestination()
+    {
+        if (_destination is null)
+            return;
+        _destination = null;
+        OnDestinationChanged();
+    }
+
+    private void OnDestinationChanged()
+    {
+        OnPropertyChanged(nameof(DestinationMessage));
+        OnPropertyChanged(nameof(HasDestination));
+        OpenDestinationCommand.RaiseCanExecuteChanged();
+    }
+
+    private sealed record DestinationNotice(ContentRef Root, string Message);
+
     private Task OpenTrashAsync()
     {
         if (_isDeactivated || Trash.IsOpen)
@@ -942,6 +1103,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         _loadCts = null;
         CancelChecks();
         ClearUndo();
+        ClearDestination();
         SelectedItem = null;
         Items.Clear();
         _isLoaded = false;
@@ -1348,6 +1510,8 @@ public sealed class ProjectContentViewModel : ObservableObject
         EditCommand.RaiseCanExecuteChanged();
         MoveCommand.RaiseCanExecuteChanged();
         MoveToTrashCommand.RaiseCanExecuteChanged();
+        CopyToProjectCommand.RaiseCanExecuteChanged();
+        MoveToProjectCommand.RaiseCanExecuteChanged();
         RetryCommand.RaiseCanExecuteChanged();
         RaiseCheckCommands();
     }

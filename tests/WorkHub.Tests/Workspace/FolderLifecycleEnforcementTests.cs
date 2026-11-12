@@ -48,7 +48,7 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
     /// <summary>The objects every case works on. F is the top folder whose state varies; everything else is below F/D.</summary>
     private sealed record Fixture(
         long F, long D, long P, long ArchivedProject, long TrashedProject, long ArchivedFolder, long TrashedFolder, long EmptyFolder,
-        long Outside, long OutsideFolder, long ContentFolder, long ContentFolder2, long Link, long Note, long TrashEntry,
+        long Outside, long OutsideFolder, long OutsideNote, long ContentFolder, long ContentFolder2, long Link, long Note, long TrashEntry,
         ArchiveEvent ProjectArchiveEvent, FolderLifecycleEvent FolderArchiveEvent, string ArchiveDToken, string TrashDToken);
 
     private static string W(string method) => $"{nameof(IWorkspaceStore)}.{method}";
@@ -89,6 +89,9 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         ["ContentMoveNote"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.MoveNoteAsync)), async (t, x) => (await t._content.MoveNoteAsync(x.Note, null, x.ContentFolder)).Outcome == ContentMoveOutcome.Moved),
         ["ContentTrash"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.TrashAsync)), async (t, x) => (await t._content.TrashAsync(new ContentRef(ContentKind.Link, x.Link))).Outcome == TrashOutcome.Trashed),
         ["ContentRestore"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.RestoreAsync)), async (t, x) => (await t._content.RestoreAsync(x.TrashEntry)).Outcome == RestoreOutcome.Restored),
+        // Phase 15: Copy/Move across Projects. The target below F is refused while F is trashed (allowed while archived), and so is a source below F.
+        ["ContentCrossProjectTarget"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.CrossProjectAsync)), async (t, x) => await t.CrossProject(new CrossProjectRequest(CrossProjectMode.Copy, new ContentRef(ContentKind.Note, x.OutsideNote), x.P, null))),
+        ["ContentCrossProjectSource"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.CrossProjectAsync)), async (t, x) => await t.CrossProject(new CrossProjectRequest(CrossProjectMode.Move, new ContentRef(ContentKind.Link, x.Link), x.Outside, null))),
     };
 
     public static TheoryData<string, LifecycleState> Matrix()
@@ -135,7 +138,13 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         var covered = Cases.Values.Select(c => c.Method).Distinct().Order(StringComparer.Ordinal).ToList();
 
         Assert.Equal(writes, covered);
-        Assert.Equal(28, writes.Count); // 16 Workspace writes (Move has a source and a destination case) and 12 content writes
+        Assert.Equal(29, writes.Count); // 16 Workspace writes (Move has a source and a destination case) and 13 content writes (Phase 15 CrossProject: source and target cases)
+    }
+
+    private async Task<bool> CrossProject(CrossProjectRequest request)
+    {
+        var preview = await _content.PrepareCrossProjectAsync(request);
+        return preview.IsReady && (await _content.CrossProjectAsync(request, preview.Token!)).Committed;
     }
 
     private List<string> Data()
@@ -160,6 +169,7 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         var empty = await Folder("Empty", d);
         var outside = await Project("Outside", null);
         var outsideFolder = await Folder("OutsideFolder", null);
+        var outsideNote = (await _content.CreateNoteAsync(outside, null, new ProjectNoteDraft("ON", "outside body"))).Note!.Id;
         var contentFolder = (await _content.CreateFolderAsync(p, null, "CF")).Value!.Id;
         var contentFolder2 = (await _content.CreateFolderAsync(p, null, "CF2")).Value!.Id;
         var link = (await _content.CreateLinkAsync(p, null, new ProjectLinkDraft("L", ProjectLinkType.Web, "https://l.test/"))).Value!.Id;
@@ -182,7 +192,7 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
                 break;
         }
 
-        return new Fixture(f, d, p, archivedProject, trashedProject, archivedFolder, trashedFolder, empty, outside, outsideFolder,
+        return new Fixture(f, d, p, archivedProject, trashedProject, archivedFolder, trashedFolder, empty, outside, outsideFolder, outsideNote,
             contentFolder, contentFolder2, link, note, entry, archiveEvent, folderEvent, archiveD, trashD);
     }
 }

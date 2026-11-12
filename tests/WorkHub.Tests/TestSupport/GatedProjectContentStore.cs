@@ -108,6 +108,26 @@ internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IPr
         return Gated("restore", () => inner.RestoreAsync(entryId, cancellationToken), readFirst: false);
     }
 
+    /// <summary>Key "crossTargets": the destination Project list (snapshot when called, delivered on release).</summary>
+    public Task<IReadOnlyList<CrossProjectTarget>> ListCrossProjectTargetsAsync(long sourceProjectNodeId, CancellationToken cancellationToken = default) =>
+        Gated("crossTargets", () => inner.ListCrossProjectTargetsAsync(sourceProjectNodeId, CancellationToken.None));
+
+    /// <summary>Key "crossPreview": the preview read (snapshot when called, delivered on release).</summary>
+    public Task<CrossProjectPreview> PrepareCrossProjectAsync(CrossProjectRequest request, CancellationToken cancellationToken = default) =>
+        Gated("crossPreview", () => inner.PrepareCrossProjectAsync(request, CancellationToken.None));
+
+    /// <summary>Key "cross": the Copy/Move write runs only when released (a held write).</summary>
+    public Task<CrossProjectResult> CrossProjectAsync(CrossProjectRequest request, string confirmedToken, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _crossCalls);
+        return Gated("cross", () => inner.CrossProjectAsync(request, confirmedToken, cancellationToken), readFirst: false);
+    }
+
+    private int _crossCalls;
+
+    /// <summary>Store calls of Copy/Move so far (duplicate-prevention checks).</summary>
+    public int CrossCalls => Volatile.Read(ref _crossCalls);
+
     private int _trashCalls;
     private int _restoreCalls;
 

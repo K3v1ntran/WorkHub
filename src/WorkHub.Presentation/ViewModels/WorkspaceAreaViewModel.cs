@@ -497,6 +497,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         var projectId = project.Id;
         content.ProjectTrashedObserved = () => _ = ReconcileNodeAsync(projectId); // trashed by another window
         content.ProjectArchivedObserved = () => _ = ReconcileNodeAsync(projectId); // archived by another window (its listing says so)
+        content.DestinationRequested = item => CurrentDestinationReveal = RevealDestinationAsync(item); // Phase 15: Open destination
         SelectedContent = content;
         _ = content.ActivateAsync();
     }
@@ -1943,6 +1944,38 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// Never writes, never reloads the whole tree, never opens a link or the note editor.
     /// </summary>
     internal Task<WorkspaceRevealOutcome> RevealAsync(SearchItemRef item) => CurrentReveal = RevealCoreAsync(item);
+
+    /// <summary>The most recent Open destination (Phase 15); lets tests await it.</summary>
+    internal Task CurrentDestinationReveal { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Phase 15 Open destination: the copy is found by its NEW identity (Kind, Id) and revealed at its CURRENT location, through
+    /// the same fresh resolve as a search result. A copy that was trashed, purged or moved meanwhile is reported, never guessed.
+    /// </summary>
+    private async Task RevealDestinationAsync(ContentRef item)
+    {
+        var kind = item.Kind switch
+        {
+            ContentKind.Folder => SearchResultKind.ProjectFolder,
+            ContentKind.Link => SearchResultKind.Link,
+            _ => SearchResultKind.Note,
+        };
+        var outcome = await RevealAsync(new SearchItemRef(kind, item.Id));
+        BannerMessage = outcome switch
+        {
+            WorkspaceRevealOutcome.Selected or WorkspaceRevealOutcome.Superseded => BannerMessage,
+            WorkspaceRevealOutcome.NotFound => "The copy no longer exists.",
+            WorkspaceRevealOutcome.Trashed => "The copy is in the Trash.",
+            WorkspaceRevealOutcome.FolderTrashed => "The copy's folder is in the Trash.",
+            WorkspaceRevealOutcome.ProjectTrashed => "The copy's project is in the Trash.",
+            WorkspaceRevealOutcome.Archived => "The copy's project is archived — it is selected under Archived.",
+            WorkspaceRevealOutcome.InArchivedFolder => "The copy's project is in an archived folder — that folder is selected under Archived.",
+            WorkspaceRevealOutcome.MovedMeanwhile or WorkspaceRevealOutcome.ContainerMissing or WorkspaceRevealOutcome.WorkspaceChanged or WorkspaceRevealOutcome.NoLongerArchived
+                => "The copy was moved or changed meanwhile. Try Open destination again.",
+            WorkspaceRevealOutcome.Busy => "The database stayed busy (another program or window is writing). Try again.",
+            _ => "The copy could not be shown. Try again.",
+        };
+    }
 
     private async Task<WorkspaceRevealOutcome> RevealCoreAsync(SearchItemRef item)
     {

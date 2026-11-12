@@ -325,6 +325,57 @@ public sealed class ProjectContentService(IProjectContentStore store, IProjectLi
     /// <summary>Unexpected purge failure: the deletion was rolled back.</summary>
     public const string PurgeFailed = "The items could not be deleted. Nothing was deleted.";
 
+    // ---- Phase 15: Copy / Move to another Project -----------------------------------------------------------------------
+
+    public Task<IReadOnlyList<CrossProjectTarget>> ListCrossProjectTargetsAsync(long sourceProjectNodeId, CancellationToken cancellationToken = default) =>
+        store.ListCrossProjectTargetsAsync(sourceProjectNodeId, cancellationToken);
+
+    /// <summary>One read snapshot: a Ready preview (displayed values and token) or the first typed refusal. Never writes.</summary>
+    public Task<CrossProjectPreview> PrepareCrossProjectAsync(CrossProjectRequest request, CancellationToken cancellationToken = default) =>
+        store.PrepareCrossProjectAsync(request, cancellationToken);
+
+    /// <summary>One revalidated transaction: the copy and (Move) the source's Move to Trash, or nothing at all.</summary>
+    public Task<CrossProjectResult> CrossProjectAsync(CrossProjectRequest request, string confirmedToken, CancellationToken cancellationToken = default) =>
+        store.CrossProjectAsync(request, confirmedToken, cancellationToken);
+
+    /// <summary>Why a preview or a commit was refused (nothing was copied or moved).</summary>
+    public static string CrossProjectRefusalText(CrossProjectStatus status, string? rootName = null) => status switch
+    {
+        CrossProjectStatus.SourceNotFound => "This item no longer exists. Nothing was copied.",
+        CrossProjectStatus.SourceProjectTrashed => "This project is in the Trash. Nothing was copied.",
+        CrossProjectStatus.SourceTrashed => "This item is in the Trash. Nothing was copied.",
+        CrossProjectStatus.TargetProjectNotFound => "The destination project no longer exists. Nothing was copied.",
+        CrossProjectStatus.SameProject => "Choose another project. To move within this project, use Move to….",
+        CrossProjectStatus.TargetProjectTrashed => "The destination project is in the Trash. Nothing was copied.",
+        CrossProjectStatus.TargetFolderNotFound => "The destination folder no longer exists. Nothing was copied.",
+        CrossProjectStatus.TargetFolderWrongProject => "The destination folder is not in the chosen project. Nothing was copied.",
+        CrossProjectStatus.TargetFolderTrashed => "The destination folder is in the Trash. Nothing was copied.",
+        CrossProjectStatus.InvalidName => "Enter a valid folder name (1–200 characters, no control characters).",
+        CrossProjectStatus.NameConflict => rootName is { Length: > 0 }
+            ? $"A folder named “{rootName}” already exists there. Choose another name; nothing is renamed or merged automatically."
+            : "A folder with this name already exists there. Choose another name; nothing is renamed or merged automatically.",
+        CrossProjectStatus.SourceUnverified => "WorkHub could not verify this folder's contents, so nothing was copied.",
+        CrossProjectStatus.DepthExceeded => "The folders would be nested too deeply at the destination. Choose a destination nearer the top. Nothing was copied.",
+        CrossProjectStatus.TooLarge => $"This is too much to copy at once (more than {CrossProjectLimits.MaxRows:N0} items or {CrossProjectLimits.MaxPayloadBytes / (1024 * 1024)} MB of text). Nothing was copied.",
+        _ => CrossProjectFailed,
+    };
+
+    /// <summary>The message for a commit result. Only a committed result says something was copied or moved.</summary>
+    public static string CrossProjectResultText(CrossProjectResult result) => result.Outcome switch
+    {
+        CrossProjectOutcome.Copied => $"Copied “{result.RootName}”{ItemsSuffix(result.Rows)} to {result.TargetPath}.",
+        CrossProjectOutcome.Moved => $"Moved “{result.RootName}”{ItemsSuffix(result.Rows)} to {result.TargetPath}. The original is in the Trash of {result.SourceProjectName} and can be restored there.",
+        CrossProjectOutcome.Refused when result.Refusal is { } refusal => CrossProjectRefusalText(refusal, result.RootName),
+        CrossProjectOutcome.ConfirmationStale => "Something changed since you confirmed. Nothing was copied. Review and try again.",
+        CrossProjectOutcome.DatabaseBusy => "The database is busy. Nothing was copied. Try again.",
+        _ => CrossProjectFailed,
+    };
+
+    /// <summary>Unexpected failure: the transaction was rolled back.</summary>
+    public const string CrossProjectFailed = "The item could not be copied. Nothing was changed.";
+
+    private static string ItemsSuffix(int rows) => rows > 1 ? $" ({rows} items)" : string.Empty;
+
     private static string Plural(int count, string one, string many) => count == 1 ? $"1 {one}" : $"{count} {many}";
     /// <summary>Unexpected Trash failure (database busy, I/O): nothing was written.</summary>
     public const string TrashFailed = "Could not move to the Trash. Nothing was changed.";

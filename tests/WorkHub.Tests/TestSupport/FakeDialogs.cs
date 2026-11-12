@@ -93,6 +93,18 @@ internal sealed class FakeDialogs : IDialogService
         return OnPurgeConfirmation(viewModel);
     }
 
+    /// <summary>Plays the Copy / Move dialog: by default the user cancels.</summary>
+    public Func<CrossProjectDialogViewModel, bool> OnCrossProject { get; set; } = _ => false;
+
+    /// <summary>Every Copy / Move dialog shown, in order.</summary>
+    public List<CrossProjectDialogViewModel> CrossProjectDialogs { get; } = [];
+
+    public bool ShowCrossProject(CrossProjectDialogViewModel viewModel)
+    {
+        CrossProjectDialogs.Add(viewModel);
+        return OnCrossProject(viewModel);
+    }
+
     public Func<ProjectFolderNameEditorViewModel, bool> OnProjectFolderNameEditor { get; set; } = _ => false;
 
     public Func<ProjectLinkEditorViewModel, bool> OnProjectLinkEditor { get; set; } = _ => false;

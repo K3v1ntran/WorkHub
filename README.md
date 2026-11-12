@@ -197,7 +197,7 @@ folder) with a breadcrumb. Project folders, links and notes never appear in the 
 - **Links** point to a Folder, File (full local or UNC path) or Web page (http/https). Link names may repeat. Only
   surrounding spaces are trimmed; the target is otherwise stored exactly as typed. **Open** hands the target to
   Explorer, the default app or the browser; a link never creates, moves, renames or deletes its target.
-- **Move to…** stays within the Project. If someone else moved the item after the dialog opened, nothing moves and the
+- **Move to…** stays within the Project (for another project, see "Copy or move content to another project" below). If someone else moved the item after the dialog opened, nothing moves and the
   dialog says so.
 - **Check** / **Check all** are manual (no polling or watchers). *Missing* means the location answered "not found";
   *Unreachable*, *Inaccessible*, *Timed out*, *Location busy* and *Checker busy* mean it could not be verified. At most
@@ -264,8 +264,30 @@ confirmation.
 - To get deleted items back, restore a backup with **Restore…** (below). That returns the **whole database** to the
   moment the backup was taken: every later change (in any project) is undone too. It is not an item-level Undo.
 
+### Copy or move content to another project
+
+**Copy to another project…** and **Move to another project…** (content toolbar, More (⋯) and the right-click menu, next to
+**Move to…**) act on the selected folder, link or note:
+
+- Pick the destination **project** (archived projects are marked "(archived)"; projects in the Trash and the current project
+  are not offered) and its root or one of its folders. The dialog shows what will be copied ("3 folders, 2 links, 2 notes"),
+  how many items in the Trash inside a folder are **not** included, and both locations. **Cancel** is the default.
+- Only active content is copied: a folder brings everything active inside it. Items in its Trash stay in this project's Trash.
+  Copies are new items in the destination; they keep their creation date, and copied notes start at revision 1. Link targets
+  are copied as text: files, folders and web pages are never touched.
+- **Move** copies, then puts the original in **this project's Trash**, in one step: either both happen or nothing does. The
+  original can be restored from the Trash as usual; restoring it does not remove or change the copy.
+- A folder needs a name that is unique among the destination's folders (same rule as everywhere: "Specs", "SPECS" and
+  "ＳＰＥＣＳ" collide). On a conflict the dialog suggests a name such as "Specs (2)"; nothing is renamed or merged until you
+  confirm a name.
+- If anything shown in the dialog changes before you confirm (another window renames, moves, trashes or edits it), nothing is
+  copied and the message asks you to try again; the dialog is never resubmitted automatically. At most 10,000 items or 32 MB
+  of text are copied at once, and folders cannot end up nested deeper than the usual limit at the destination.
+- The message after a copy or move offers **Open destination**, which shows the copy where it is now. There is **no Undo**
+  across projects.
+
 Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags, rich text,
-drag-and-drop, manual ordering, autosave and moving content between projects.
+drag-and-drop, manual ordering and autosave.
 
 ### Workspace search
 

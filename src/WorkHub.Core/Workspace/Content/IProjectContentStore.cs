@@ -118,6 +118,25 @@ public interface IProjectContentStore
     /// renamed or moved.
     /// </summary>
     Task<RestoreResult> RestoreAsync(long entryId, CancellationToken cancellationToken = default);
+
+    // ---- Phase 15: Copy / Move to another Project ----------------------------------------------------------------------
+
+    /// <summary>
+    /// Projects that can receive content from <paramref name="sourceProjectNodeId"/>: every Project whose effective state is Live
+    /// or Archived (labelled), except the source. Sorted by displayed path; one read transaction. Never writes.
+    /// </summary>
+    Task<IReadOnlyList<CrossProjectTarget>> ListCrossProjectTargetsAsync(long sourceProjectNodeId, CancellationToken cancellationToken = default);
+
+    /// <summary>One read transaction: a Ready preview with its token, or the first typed refusal in the §3.6 order. Never writes.</summary>
+    Task<CrossProjectPreview> PrepareCrossProjectAsync(CrossProjectRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// ONE <c>BEGIN IMMEDIATE</c> transaction: recomputes the preview (a typed refusal is reported first, then a token mismatch as
+    /// <see cref="CrossProjectOutcome.ConfirmationStale"/>), inserts the copy (folders parents first, then links, then notes at
+    /// Revision 1; <c>CreatedAt</c> kept, <c>UpdatedAt</c> = commit time) and, for Move, runs the transaction-scoped Move to Trash
+    /// steps on the source root. Any failure rolls everything back; refused, stale and busy results write nothing.
+    /// </summary>
+    Task<CrossProjectResult> CrossProjectAsync(CrossProjectRequest request, string confirmedToken, CancellationToken cancellationToken = default);
 }
 
 

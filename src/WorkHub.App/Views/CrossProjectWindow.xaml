@@ -1,0 +1,79 @@
+<Window x:Class="WorkHub.App.Views.CrossProjectWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:CrossProjectDialogViewModel}"
+        Title="{Binding Title}"
+        Width="600" SizeToContent="Height" MaxHeight="640" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=CancelButton}">
+    <Window.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+        <views:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibility" />
+    </Window.Resources>
+    <!--
+        Phase 15: Copy / Move one content item to ANOTHER project. Nothing is written here: Confirm (enabled only for a Ready
+        preview) closes the dialog with that preview's request and token, and the project view commits them. Cancel is focused
+        and is both the Enter and the Esc default. There is no Undo across projects; a moved original stays restorable in the
+        source project's Trash.
+    -->
+    <DockPanel Margin="20,12,20,16">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="CancelButton" Content="Cancel" IsCancel="True" IsDefault="True" Command="{Binding CancelCommand}"
+                    AutomationProperties.AutomationId="CrossCancel" />
+            <Button Content="{Binding ConfirmText}" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}"
+                    AutomationProperties.AutomationId="CrossConfirm" />
+        </StackPanel>
+
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,10,0,0" TextWrapping="Wrap" Text="{Binding MoveNote}"
+                   Visibility="{Binding MoveNote, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="CrossMoveNote" />
+        <TextBlock DockPanel.Dock="Bottom" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="{StaticResource Brush.Error}" Text="{Binding Message}"
+                   Visibility="{Binding Message, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="CrossMessage" />
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,6,0,0" Orientation="Horizontal" Visibility="{Binding HasSuggestion, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="400" Text="{Binding SuggestionText}" AutomationProperties.AutomationId="CrossSuggestion" />
+            <Button Margin="8,0,0,0" Style="{StaticResource ToolButton}" Content="Use suggested name" Command="{Binding UseSuggestedNameCommand}"
+                    AutomationProperties.AutomationId="CrossUseSuggestion" />
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding CountsText}"
+                       Visibility="{Binding CountsText, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="CrossCounts" />
+            <TextBlock Margin="0,4,0,0" Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding SkippedText}"
+                       Visibility="{Binding SkippedText, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="CrossSkipped" />
+            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding PathText}"
+                       Visibility="{Binding PathText, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="CrossPaths" />
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0" Visibility="{Binding IsFolder, Converter={StaticResource BoolToVisibility}}">
+            <TextBlock Text="Folder name at the destination" Margin="0,0,0,4" />
+            <!-- No binding Delay: every edit reaches the view model at once and starts a new preview, so Confirm is disabled until
+                 the name shown here is the name the token binds. -->
+            <TextBox Text="{Binding RootName, UpdateSourceTrigger=PropertyChanged}" MaxLength="400"
+                     AutomationProperties.Name="Folder name at the destination" AutomationProperties.AutomationId="CrossRootName" />
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Top">
+            <TextBlock Text="Destination project" Margin="0,0,0,4" />
+            <ListBox ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject}" DisplayMemberPath="Display" Height="150"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Destination project" AutomationProperties.AutomationId="CrossProjects" />
+            <TextBlock Margin="0,4,0,0" Style="{StaticResource FieldHint}" Text="No other project can receive content."
+                       Visibility="{Binding HasProjects, Converter={StaticResource InverseBoolToVisibility}}" />
+            <TextBlock Text="Destination folder" Margin="0,10,0,4" />
+            <ListBox ItemsSource="{Binding Folders}" SelectedItem="{Binding SelectedFolder}" DisplayMemberPath="Display" Height="130"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Destination folder" AutomationProperties.AutomationId="CrossFolders">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="ToolTip" Value="{Binding Display}" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+            </ListBox>
+        </StackPanel>
+    </DockPanel>
+</Window>
