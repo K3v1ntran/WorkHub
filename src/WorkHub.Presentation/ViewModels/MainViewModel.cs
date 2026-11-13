@@ -70,6 +70,20 @@ public sealed class MainViewModel(
 
     public bool IsReady => State == ShellState.Ready;
 
+    /// <summary>Phase 16A: true once the shell reached Ready in this process (startup succeeded).</summary>
+    public bool HasBeenReady { get; private set; }
+
+    /// <summary>Phase 16A: the saved start tab read before the window was shown; applied when the shell becomes Ready (D3).</summary>
+    public string? StartTab { get; init; }
+
+    /// <summary>
+    /// Phase 16A (§4.2 point 2): the tab to save at close — "Workspace" or "Repository" — or null when the shell never reached
+    /// Ready (startup failed or ended in the restore screen), so the saved tab stays as it was.
+    /// </summary>
+    public string? PrimaryTabToSave => HasBeenReady
+        ? (Workspace.IsTabSelected ? UiSettings.WorkspacePrimaryTab : UiSettings.DefaultPrimaryTab)
+        : null;
+
     /// <summary>The <c>--data-root</c> folder when WorkHub runs on isolated data; null for the normal profile.</summary>
     public string? CustomDataRoot { get; init; }
 
@@ -184,6 +198,10 @@ public sealed class MainViewModel(
                 : $"Ready · schema v{result.Database.SchemaVersion}";
             TechnicalStatus = TechnicalStatusFor(result.Database.SchemaVersion, result.DailyBackup);
             State = ShellState.Ready;
+            HasBeenReady = true;
+            // Phase 16A: the tabs are enabled only now. Selecting Workspace runs its existing first-open load.
+            if (UiSettings.OpensWorkspace(StartTab))
+                Workspace.IsTabSelected = true;
         }
         catch (RestoreStartupException ex)
         {

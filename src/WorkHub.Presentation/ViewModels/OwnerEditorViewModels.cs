@@ -301,5 +301,8 @@ public sealed class OwnerGroupViewModel(long id, string name) : ObservableObject
 
     public string Name { get => _name; set => SetProperty(ref _name, value); }
 
+    /// <summary>Phase 16B: the fixed Favorites entry above the Owner groups (not a group; never stored).</summary>
+    public bool IsFavorites { get; init; }
+
     public override string ToString() => Name;
 }

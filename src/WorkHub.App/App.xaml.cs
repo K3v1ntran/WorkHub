@@ -1,5 +1,6 @@
 using System.Windows;
 using WorkHub.App.Services;
+using WorkHub.Presentation.Services;
 using WorkHub.Presentation.ViewModels;
 using WorkHub.App.Views;
 using WorkHub.Core.Startup;
@@ -37,7 +38,12 @@ public partial class App : Application
         };
 
         var dialogs = new DialogService();
-        var lifetime = new AppLifetime(options.Options);
+        // Phase 16A: one window-state saver per process. Trigger (b) is inside Shutdown(); Relaunch is passed through, so the
+        // Restore/Put back order Relaunch → Shutdown is unchanged.
+        var saver = new WindowStateSaver(services.Settings, services.Log);
+        var lifetime = new SavingAppLifetime(new AppLifetime(options.Options), saver);
+        // Read-only: never creates, locks or writes the settings file (that stays with startup initialization).
+        var savedUi = services.SettingsStore.PeekUi();
         MainViewModel? main = null;
         // Phase 13A: the Backups page shows this start's technical status (formerly in the header).
         BackupsViewModel Backups() => new(services.Backups, services.RestoreRequester, dialogs, lifetime, services.Log)
@@ -63,11 +69,17 @@ public partial class App : Application
         {
             CustomDataRoot = options.Options.IsCustomDataRoot ? services.Paths.Root : null,
             AppVersion = AppVersionText(),
+            StartTab = savedUi?.LastPrimaryTab,
         };
         if (options.Options.RestoreContinueOp is { } op)
             services.Log.Info($"Started to continue restore operation {op}.");
-        MainWindow = new MainWindow { DataContext = viewModel };
-        MainWindow.Show();
+        var window = new MainWindow { DataContext = viewModel, WindowStateSaver = saver };
+        MainWindow = window;
+        var placement = WindowPlacement.Apply(window, savedUi?.Window);
+        if (savedUi is not null && !placement.UseSaved && savedUi.Window.Left is not null)
+            services.Log.Info("The saved window position is not usable on the current monitors; the default position is used.");
+        saver.Capture = window.CaptureUiState;
+        window.Show();
 
         await viewModel.InitializeAsync();
     }

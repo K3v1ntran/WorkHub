@@ -18,7 +18,19 @@ public enum OwnerActionType
 public sealed record OwnerGroup(long Id, string Name, int SortOrder);
 
 /// <summary>One row of an Owner group's launcher list. Flat and small: details are loaded only for edit/open.</summary>
-public sealed record OwnerItemListItem(long Id, long GroupId, string Name, OwnerActionType ActionType, string Target);
+/// <param name="IsFavorite">Phase 16B: the launcher is marked as a favorite.</param>
+/// <param name="GroupName">Phase 16B: the launcher's group, set only in the Favorites list.</param>
+public sealed record OwnerItemListItem(long Id, long GroupId, string Name, OwnerActionType ActionType, string Target,
+    bool IsFavorite = false, string? GroupName = null);
+
+/// <summary>Phase 16B: the result of Add to / Remove from Favorites.</summary>
+public enum OwnerFavoriteResult
+{
+    Saved,
+
+    /// <summary>The launcher no longer exists (deleted, possibly by another window); nothing was written.</summary>
+    NotFound,
+}
 
 public sealed record OwnerItemDetails(
     long Id,

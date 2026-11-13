@@ -106,6 +106,14 @@ public sealed class OwnerService(IOwnerStore store, IOwnerLauncher launcher)
     public Task<bool> MoveItemAsync(long itemId, int offset, CancellationToken cancellationToken = default) =>
         store.MoveItemAsync(itemId, offset, cancellationToken);
 
+    /// <summary>Phase 16B: Add to / Remove from Favorites. Changes only the mark; the launcher stays in its group.</summary>
+    public Task<OwnerFavoriteResult> SetFavoriteAsync(long itemId, bool isFavorite, CancellationToken cancellationToken = default) =>
+        store.SetFavoriteAsync(itemId, isFavorite, cancellationToken);
+
+    /// <summary>Phase 16B: the Favorites list (group order, then item order).</summary>
+    public Task<IReadOnlyList<OwnerItemListItem>> ListFavoritesAsync(CancellationToken cancellationToken = default) =>
+        store.ListFavoritesAsync(cancellationToken);
+
     /// <summary>Loads the current item and launches it; existence checks and process start run off the caller's thread.</summary>
     public async Task<OwnerLaunchResult> OpenAsync(long itemId, CancellationToken cancellationToken = default)
     {

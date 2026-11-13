@@ -25,6 +25,7 @@ public sealed class OwnerAreaViewModel : ObservableObject
     private string? _bannerTarget;
     private long? _bannerItemId;
     private CancellationTokenSource? _loadCts;
+    private OwnerGroupViewModel? _groupBeforeFavorites;
 
     public OwnerAreaViewModel(OwnerService owners, IDialogService dialogs, IAppLog log)
     {
@@ -39,19 +40,68 @@ public sealed class OwnerAreaViewModel : ObservableObject
         MoveGroupUpCommand = new AsyncRelayCommand(() => MoveGroupAsync(-1), HasGroup, onError);
         MoveGroupDownCommand = new AsyncRelayCommand(() => MoveGroupAsync(+1), HasGroup, onError);
 
+        // Phase 16B: Favorites has no ordering of its own, so Add item, Move up/down and Move to group are disabled there.
         AddItemCommand = new AsyncRelayCommand(AddItemAsync, HasGroup, onError);
         OpenItemCommand = new AsyncRelayCommand(OpenSelectedAsync, HasItem, onError);
         EditItemCommand = new AsyncRelayCommand(() => EditItemAsync(SelectedItem?.Id), HasItem, onError);
         DeleteItemCommand = new AsyncRelayCommand(DeleteItemAsync, HasItem, onError);
-        MoveItemToGroupCommand = new AsyncRelayCommand(MoveItemToGroupAsync, () => HasItem() && Groups.Count > 1, onError);
-        MoveItemUpCommand = new AsyncRelayCommand(() => MoveItemAsync(-1), HasItem, onError);
-        MoveItemDownCommand = new AsyncRelayCommand(() => MoveItemAsync(+1), HasItem, onError);
+        MoveItemToGroupCommand = new AsyncRelayCommand(MoveItemToGroupAsync, () => HasItem() && !IsFavoritesOpen && Groups.Count > 1, onError);
+        MoveItemUpCommand = new AsyncRelayCommand(() => MoveItemAsync(-1), () => HasItem() && !IsFavoritesOpen, onError);
+        MoveItemDownCommand = new AsyncRelayCommand(() => MoveItemAsync(+1), () => HasItem() && !IsFavoritesOpen, onError);
         CopyTargetCommand = new RelayCommand(() => _dialogs.CopyToClipboard(SelectedItem!.Target), HasItem);
         EditFromBannerCommand = new AsyncRelayCommand(() => EditItemAsync(_bannerItemId), () => _bannerItemId is not null, onError);
         DismissBannerCommand = new RelayCommand(ClearBanner);
+        AddToFavoritesCommand = new AsyncRelayCommand(() => SetFavoriteAsync(true), () => SelectedItem is { IsFavorite: false }, onError);
+        RemoveFromFavoritesCommand = new AsyncRelayCommand(() => SetFavoriteAsync(false), () => SelectedItem is { IsFavorite: true }, onError);
+        ToggleFavoriteCommand = new AsyncRelayCommand(() => SetFavoriteAsync(!SelectedItem!.IsFavorite), HasItem, onError);
     }
 
     public ObservableCollection<OwnerGroupViewModel> Groups { get; } = [];
+
+    /// <summary>Phase 16B: the fixed Favorites entry (shown above the groups only while at least one favorite exists; D4).</summary>
+    public OwnerGroupViewModel FavoritesEntry { get; } = new(0, "Favorites") { IsFavorites = true };
+
+    /// <summary>Phase 16B: the sidebar's Favorites list: <see cref="FavoritesEntry"/> while favorites exist, otherwise empty.</summary>
+    public ObservableCollection<OwnerGroupViewModel> FavoritesEntries { get; } = [];
+
+    public bool HasFavorites => FavoritesEntries.Count > 0;
+
+    /// <summary>Phase 16B: the Favorites entry is the open Owner entry.</summary>
+    public bool IsFavoritesOpen => _selectedGroup?.IsFavorites == true;
+
+    /// <summary>
+    /// The group list's selection: the open group, or null while Favorites or a Repository group is open. Setting null is
+    /// ignored (the list clears its selection when another entry becomes active).
+    /// </summary>
+    public OwnerGroupViewModel? SelectedOwnerGroup
+    {
+        get => IsFavoritesOpen ? null : _selectedGroup;
+        set
+        {
+            if (value is not null)
+                SelectedGroup = value;
+        }
+    }
+
+    /// <summary>The Favorites list's selection (see <see cref="SelectedOwnerGroup"/>).</summary>
+    public OwnerGroupViewModel? SelectedFavoritesEntry
+    {
+        get => IsFavoritesOpen ? FavoritesEntry : null;
+        set
+        {
+            if (value is not null)
+                SelectedGroup = value;
+        }
+    }
+
+    /// <summary>Toolbar: "Add to Favorites" or "Remove from Favorites" for the selected launcher.</summary>
+    public string FavoriteActionText => SelectedItem?.IsFavorite == true ? "Remove from Favorites" : "Add to Favorites";
+
+    public AsyncRelayCommand AddToFavoritesCommand { get; }
+
+    public AsyncRelayCommand RemoveFromFavoritesCommand { get; }
+
+    public AsyncRelayCommand ToggleFavoriteCommand { get; }
 
     public AsyncRelayCommand AddGroupCommand { get; }
 
@@ -86,19 +136,30 @@ public sealed class OwnerAreaViewModel : ObservableObject
     /// <summary>The most recent item load; lets tests await it.</summary>
     internal Task CurrentLoad { get; private set; } = Task.CompletedTask;
 
-    /// <summary>Selecting a group loads only that group's items. Null when a Repository group is active.</summary>
+    /// <summary>
+    /// Selecting a group loads only that group's items; selecting <see cref="FavoritesEntry"/> loads the favorites. Null when
+    /// a Repository group is active.
+    /// </summary>
     public OwnerGroupViewModel? SelectedGroup
     {
         get => _selectedGroup;
         set
         {
+            var previous = _selectedGroup;
             if (!SetProperty(ref _selectedGroup, value))
                 return;
 
+            if (value?.IsFavorites == true && previous is { IsFavorites: false })
+                _groupBeforeFavorites = previous; // §5.3: where to return when the last favorite goes
+            else if (value?.IsFavorites == true && previous is null)
+                _groupBeforeFavorites = null;
             SelectedItem = null;
             ClearBanner();
             RaiseGroupCommands();
             OnPropertyChanged(nameof(EmptyStateText));
+            OnPropertyChanged(nameof(IsFavoritesOpen));
+            OnPropertyChanged(nameof(SelectedOwnerGroup));
+            OnPropertyChanged(nameof(SelectedFavoritesEntry));
             if (value is null)
             {
                 _loadCts?.Cancel();
@@ -129,14 +190,23 @@ public sealed class OwnerAreaViewModel : ObservableObject
             if (!SetProperty(ref _selectedItem, value))
                 return;
 
-            OpenItemCommand.RaiseCanExecuteChanged();
-            EditItemCommand.RaiseCanExecuteChanged();
-            DeleteItemCommand.RaiseCanExecuteChanged();
-            MoveItemToGroupCommand.RaiseCanExecuteChanged();
-            MoveItemUpCommand.RaiseCanExecuteChanged();
-            MoveItemDownCommand.RaiseCanExecuteChanged();
-            CopyTargetCommand.RaiseCanExecuteChanged();
+            RaiseItemCommands();
         }
+    }
+
+    private void RaiseItemCommands()
+    {
+        OpenItemCommand.RaiseCanExecuteChanged();
+        EditItemCommand.RaiseCanExecuteChanged();
+        DeleteItemCommand.RaiseCanExecuteChanged();
+        MoveItemToGroupCommand.RaiseCanExecuteChanged();
+        MoveItemUpCommand.RaiseCanExecuteChanged();
+        MoveItemDownCommand.RaiseCanExecuteChanged();
+        CopyTargetCommand.RaiseCanExecuteChanged();
+        AddToFavoritesCommand.RaiseCanExecuteChanged();
+        RemoveFromFavoritesCommand.RaiseCanExecuteChanged();
+        ToggleFavoriteCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(FavoriteActionText));
     }
 
     public bool IsLoading
@@ -151,9 +221,12 @@ public sealed class OwnerAreaViewModel : ObservableObject
 
     public bool IsEmpty => SelectedGroup is not null && !IsLoading && Items.Count == 0;
 
-    public string EmptyStateText => SelectedGroup is null
-        ? string.Empty
-        : $"No launchers in {SelectedGroup.Name} yet. Use “Add Item” to add a web page, file, folder or program.";
+    public string EmptyStateText => SelectedGroup switch
+    {
+        null => string.Empty,
+        { IsFavorites: true } => "No favorites.",
+        _ => $"No launchers in {SelectedGroup.Name} yet. Use “Add Item” to add a web page, file, folder or program.",
+    };
 
     public string CountText => Items.Count == 1 ? "1 item" : $"{Items.Count} items";
 
@@ -172,6 +245,7 @@ public sealed class OwnerAreaViewModel : ObservableObject
             Groups.Clear();
             foreach (var group in groups)
                 Groups.Add(new OwnerGroupViewModel(group.Id, group.Name));
+            await RefreshFavoritesPresenceAsync();
         }
         catch (Exception ex)
         {
@@ -184,22 +258,36 @@ public sealed class OwnerAreaViewModel : ObservableObject
     {
         _loadCts?.Cancel();
         var cts = _loadCts = new CancellationTokenSource();
-        CurrentLoad = LoadAsync(SelectedGroup!.Id, selectId, cts);
+        CurrentLoad = LoadAsync(SelectedGroup!, selectId, cts);
     }
 
-    private async Task LoadAsync(long groupId, long? selectId, CancellationTokenSource cts)
+    private async Task LoadAsync(OwnerGroupViewModel entry, long? selectId, CancellationTokenSource cts)
     {
         var token = cts.Token;
         try
         {
             IsLoading = true;
-            var items = await _owners.ListItemsAsync(groupId, token);
+            var items = entry.IsFavorites
+                ? await _owners.ListFavoritesAsync(token)
+                : await _owners.ListItemsAsync(entry.Id, token);
             token.ThrowIfCancellationRequested();
+            if (entry.IsFavorites && items.Count == 0)
+            {
+                await LeaveEmptyFavoritesAsync(entry, token); // §5.3: Favorites never stays open (or reappears) empty
+                return;
+            }
+
             Items = items;
             SelectedItem = items.FirstOrDefault(i => i.Id == selectId) ?? items.FirstOrDefault();
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
+        }
+        catch (Exception ex) when (!IsCurrentLoad(cts))
+        {
+            // A load the user already left (another group, Favorites again or a Repository group) failed late, e.g. the
+            // empty-Favorites group query. It is logged only: the banner belongs to the screen now shown.
+            _log.Warn($"A superseded launcher load failed and was ignored ({ex.GetType().Name}: {ex.Message}).");
         }
         catch (Exception ex)
         {
@@ -215,12 +303,109 @@ public sealed class OwnerAreaViewModel : ObservableObject
         }
     }
 
+    /// <summary>The load of <paramref name="cts"/> is still the one the screen shows: not cancelled and not replaced.</summary>
+    private bool IsCurrentLoad(CancellationTokenSource cts) => !cts.IsCancellationRequested && ReferenceEquals(_loadCts, cts);
+
     private Task ReloadItemsAsync(long? selectId)
     {
         if (SelectedGroup is null)
             return Task.CompletedTask;
         StartLoad(selectId);
         return CurrentLoad;
+    }
+
+    // ---- Favorites (Phase 16B) ------------------------------------------------------------------------------------
+
+    /// <summary>Shows or hides the Favorites entry from the database (after changes made in this window).</summary>
+    private async Task RefreshFavoritesPresenceAsync()
+    {
+        var favorites = await _owners.ListFavoritesAsync();
+        SetHasFavorites(favorites.Count > 0);
+    }
+
+    private void SetHasFavorites(bool value)
+    {
+        if (value == HasFavorites)
+            return;
+        if (value)
+            FavoritesEntries.Add(FavoritesEntry);
+        else
+            FavoritesEntries.Clear();
+        OnPropertyChanged(nameof(HasFavorites));
+    }
+
+    /// <summary>
+    /// §5.3 (D14): Favorites is open and a reload found no favorite (after Remove from Favorites, a confirmed Delete, an
+    /// "already deleted" refusal, or another window's change). In this order: the entry disappears; the launcher selection
+    /// is cleared; the group open before Favorites is selected if it still exists, otherwise the first existing group;
+    /// with no group left the Owner area becomes inactive (the Repository group shown before comes back). A message shown
+    /// by the refusal is kept.
+    /// <para>
+    /// <paramref name="token"/> belongs to the load that found Favorites empty. Selecting another Owner group, Favorites
+    /// again or a Repository group cancels it (<see cref="SelectedGroup"/>), so a group list that arrives after the user moved
+    /// on is dropped: it changes neither <see cref="Groups"/>, the selection, the launcher list nor the banner of the screen
+    /// now shown.
+    /// </para>
+    /// </summary>
+    private async Task LeaveEmptyFavoritesAsync(OwnerGroupViewModel favorites, CancellationToken token)
+    {
+        var keptMessage = BannerMessage;
+        SetHasFavorites(false);
+        SelectedItem = null;
+        Items = [];
+        var groups = await _owners.ListGroupsAsync(token); // groups another window deleted are gone from the database
+        if (token.IsCancellationRequested || !ReferenceEquals(_selectedGroup, favorites))
+            return; // stale: the user left Favorites while the groups were read
+        SyncGroups(groups);
+        var target = Groups.FirstOrDefault(g => g.Id == _groupBeforeFavorites?.Id) ?? Groups.FirstOrDefault();
+        _groupBeforeFavorites = null;
+        SelectedGroup = target; // null → RepositoryNavigationViewModel falls back to the Repository group
+        if (keptMessage is not null)
+            ShowBanner(keptMessage, null, null);
+        if (target is not null)
+            await CurrentLoad;
+    }
+
+    /// <summary>Makes <see cref="Groups"/> match the database order, keeping the view models of groups that still exist.</summary>
+    private void SyncGroups(IReadOnlyList<OwnerGroup> groups)
+    {
+        var existing = Groups.ToDictionary(g => g.Id);
+        var updated = groups.Select(g =>
+        {
+            if (existing.TryGetValue(g.Id, out var vm))
+            {
+                vm.Name = g.Name;
+                return vm;
+            }
+
+            return new OwnerGroupViewModel(g.Id, g.Name);
+        }).ToList();
+        if (updated.SequenceEqual(Groups))
+            return;
+        Groups.Clear();
+        foreach (var group in updated)
+            Groups.Add(group);
+        MoveItemToGroupCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>Add to / Remove from Favorites: no confirmation; only the mark changes (D5, §5.2).</summary>
+    private async Task SetFavoriteAsync(bool favorite)
+    {
+        var item = SelectedItem!;
+        var result = await _owners.SetFavoriteAsync(item.Id, favorite);
+        if (result == OwnerFavoriteResult.NotFound)
+            ShowBanner("This launcher no longer exists.", null, null);
+        else
+            ClearBanner();
+
+        if (IsFavoritesOpen)
+        {
+            await ReloadItemsAsync(favorite ? item.Id : null); // an empty result leaves Favorites (§5.3)
+            return;
+        }
+
+        await ReloadItemsAsync(item.Id);
+        await RefreshFavoritesPresenceAsync(); // a group stays open; only the entry appears or disappears (F13)
     }
 
     // ---- Groups -------------------------------------------------------------------------------------------------
@@ -270,6 +455,7 @@ public sealed class OwnerAreaViewModel : ObservableObject
         Groups.Remove(group);
         SelectedGroup = Groups.Count == 0 ? null : Groups[Math.Min(index, Groups.Count - 1)];
         MoveItemToGroupCommand.RaiseCanExecuteChanged();
+        await RefreshFavoritesPresenceAsync(); // its favorites went with it (cascade)
     }
 
     private async Task MoveGroupAsync(int offset)
@@ -315,13 +501,32 @@ public sealed class OwnerAreaViewModel : ObservableObject
     private async Task DeleteItemAsync()
     {
         var item = SelectedItem!;
-        if (!_dialogs.Confirm("Delete Launcher",
-                $"Remove \"{item.Name}\" from WorkHub?\n\nOnly the WorkHub entry is removed. The {Describe(item.ActionType)} itself is NOT deleted.",
-                "Delete"))
-            return;
+        var fromFavorites = IsFavoritesOpen;
+        if (!_dialogs.Confirm("Delete Launcher", DeleteMessage(item, fromFavorites), "Delete"))
+            return; // Cancel (the default button) writes nothing
 
         await _owners.DeleteItemAsync(item.Id);
-        await ReloadItemsAsync(null);
+        await ReloadItemsAsync(null); // in Favorites, an empty result leaves Favorites (§5.3)
+        if (!fromFavorites && item.IsFavorite)
+            await RefreshFavoritesPresenceAsync();
+    }
+
+    /// <summary>
+    /// §5.2 (D6): from Favorites, Delete names the launcher's group and says it removes the launcher from WorkHub, not only
+    /// from Favorites. From a group: today's text, plus one line when the launcher is a favorite.
+    /// </summary>
+    internal static string DeleteMessage(OwnerItemListItem item, bool fromFavorites)
+    {
+        var notDeleted = $"Only the WorkHub entry is removed. The {Describe(item.ActionType)} itself is NOT deleted.";
+        if (fromFavorites)
+        {
+            var group = item.GroupName ?? string.Empty;
+            return $"Delete \"{item.Name}\" from the group \"{group}\"?\n\n" +
+                   $"This removes the launcher from WorkHub, not only from Favorites. To keep it in \"{group}\", choose Cancel and use Remove from Favorites.\n\n" +
+                   notDeleted;
+        }
+
+        return $"Remove \"{item.Name}\" from WorkHub?\n\n{notDeleted}" + (item.IsFavorite ? "\nIt is also removed from Favorites." : string.Empty);
     }
 
     private async Task MoveItemToGroupAsync()
@@ -374,7 +579,8 @@ public sealed class OwnerAreaViewModel : ObservableObject
         ShowBanner(message, null, null);
     }
 
-    private bool HasGroup() => SelectedGroup is not null;
+    /// <summary>A real group is open (not Favorites): group commands and Add item.</summary>
+    private bool HasGroup() => SelectedGroup is { IsFavorites: false };
 
     private bool HasItem() => SelectedItem is not null;
 
@@ -385,6 +591,9 @@ public sealed class OwnerAreaViewModel : ObservableObject
         MoveGroupUpCommand.RaiseCanExecuteChanged();
         MoveGroupDownCommand.RaiseCanExecuteChanged();
         AddItemCommand.RaiseCanExecuteChanged();
+        MoveItemToGroupCommand.RaiseCanExecuteChanged();
+        MoveItemUpCommand.RaiseCanExecuteChanged();
+        MoveItemDownCommand.RaiseCanExecuteChanged();
     }
 
     private void OnListStateChanged()

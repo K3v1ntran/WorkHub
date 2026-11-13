@@ -227,6 +227,30 @@
             </DrawingGroup>
         </DrawingImage.Drawing>
     </DrawingImage>
+    <!-- Phase 16B: Favorites (original five-point star, same 20 x 20 grid and gradient style). -->
+    <DrawingImage x:Key="Img.Favorite">
+        <DrawingImage.Drawing>
+            <DrawingGroup ClipGeometry="M0,0 H20 V20 H0 Z">
+                <GeometryDrawing Brush="Transparent"><GeometryDrawing.Geometry><RectangleGeometry Rect="0,0,20,20" /></GeometryDrawing.Geometry></GeometryDrawing>
+                <GeometryDrawing>
+                  <GeometryDrawing.Brush>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Offset="0" Color="#FFFFD45C" />
+                        <GradientStop Offset="1" Color="#FFE29A0B" />
+                    </LinearGradientBrush>
+                  </GeometryDrawing.Brush>
+                  <GeometryDrawing.Pen>
+                    <Pen Thickness="0.8" LineJoin="Round">
+                      <Pen.Brush>
+                        <SolidColorBrush Color="#FFB97800" />
+                      </Pen.Brush>
+                    </Pen>
+                  </GeometryDrawing.Pen>
+                  <GeometryDrawing.Geometry><PathGeometry Figures="M10,1.5 L12.12,7.09 L18.08,7.37 L13.42,11.11 L15,16.88 L10,13.6 L5,16.88 L6.58,11.11 L1.92,7.37 L7.88,7.09 Z" /></GeometryDrawing.Geometry>
+                </GeometryDrawing>
+            </DrawingGroup>
+        </DrawingImage.Drawing>
+    </DrawingImage>
     <DrawingImage x:Key="Img.FileLink">
         <DrawingImage.Drawing>
             <DrawingGroup ClipGeometry="M0,0 H20 V20 H0 Z">

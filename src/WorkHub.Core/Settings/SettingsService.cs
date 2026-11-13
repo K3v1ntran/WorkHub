@@ -12,6 +12,32 @@ public interface ISettingsService
 
 public sealed record SettingsSaveResult(bool Saved, IReadOnlyList<SettingsIssue> Issues, string? Error = null);
 
+/// <summary>Phase 16: how a close-time window-state save ended. Every outcome but Saved wrote nothing.</summary>
+public enum WindowStateSaveOutcome
+{
+    Saved,
+
+    /// <summary>Another save in this process held the gate; dropped at once (no wait, no Update, no retry).</summary>
+    GateBusy,
+
+    /// <summary>Another WorkHub process held the settings lock past the lock ceiling.</summary>
+    LockTimeout,
+
+    /// <summary>The 3 s budget ran out before writing started.</summary>
+    DeadlineExpired,
+
+    /// <summary>settings.json could not be read; the window save never replaces it.</summary>
+    FileUnreadable,
+
+    /// <summary>An I/O or JSON error.</summary>
+    Failed,
+}
+
+public sealed record WindowStateSaveResult(WindowStateSaveOutcome Outcome, string? Error = null)
+{
+    public bool Saved => Outcome == WindowStateSaveOutcome.Saved;
+}
+
 /// <summary>
 /// Holds the in-memory settings snapshot and performs explicit Save. Editing happens on a draft copy,
 /// so Cancel needs no undo: an unsaved draft simply never reaches <see cref="Current"/> or disk.
@@ -72,6 +98,52 @@ public sealed class SettingsService(ISettingsStore store, Func<string, bool>? fi
     /// </summary>
     public Task<SettingsSaveResult> SaveWorkspaceToolbarAsync(WorkspaceToolbar toolbar, bool show) =>
         CommitAsync(new SettingsEdit { Toolbars = WorkspaceToolbarChanges.For(toolbar, show) }, []);
+
+    /// <summary>
+    /// Phase 16 (§4.2, D12): the close-time save of the window placement and start tab. Synchronous, on the calling thread,
+    /// so nothing can write <c>settings.json</c> after this returns.
+    /// <list type="number">
+    /// <item>The save gate is tried <b>once</b>, without waiting (<c>Wait(0)</c>). A toolbar save started from the UI releases
+    /// the gate only after its continuation returns to the UI thread, so waiting for it here, on that thread, could delay
+    /// the close and still not get the gate. Busy → <see cref="WindowStateSaveOutcome.GateBusy"/>: no <c>Update</c>, no
+    /// background save, no retry.</item>
+    /// <item>With the gate: <see cref="ISettingsStore.Update(SettingsEdit, AppSettings, SaveBudget)"/> with
+    /// <paramref name="budget"/> (the 3 s before writing, started on the monotonic timestamp at the snapshot).</item>
+    /// </list>
+    /// <see cref="Changed"/> is not raised: no view observes the window state.
+    /// </summary>
+    public WindowStateSaveResult SaveWindowState(UiStateChanges ui, SaveBudget budget)
+    {
+        ArgumentNullException.ThrowIfNull(ui);
+        ArgumentNullException.ThrowIfNull(budget);
+        if (!_gate.Wait(0))
+            return new WindowStateSaveResult(WindowStateSaveOutcome.GateBusy);
+        try
+        {
+            var update = store.Update(new SettingsEdit { Ui = ui }, Current, budget);
+            switch (update.Status)
+            {
+                case SettingsUpdateStatus.Saved:
+                    Volatile.Write(ref _current, update.Settings!);
+                    return new WindowStateSaveResult(WindowStateSaveOutcome.Saved);
+                case SettingsUpdateStatus.FileUnreadable:
+                    return new WindowStateSaveResult(WindowStateSaveOutcome.FileUnreadable);
+                case SettingsUpdateStatus.DeadlineExpired:
+                    return new WindowStateSaveResult(WindowStateSaveOutcome.DeadlineExpired);
+                default:
+                    return new WindowStateSaveResult(WindowStateSaveOutcome.LockTimeout);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                                       or System.Text.Json.JsonException)
+        {
+            return new WindowStateSaveResult(WindowStateSaveOutcome.Failed, ex.Message);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 
     private async Task<SettingsSaveResult> CommitAsync(SettingsEdit edit, IReadOnlyList<SettingsIssue> issues)
     {

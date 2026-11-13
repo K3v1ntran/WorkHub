@@ -16,6 +16,10 @@ public sealed class JsonSettingsStore(string settingsFile, TimeProvider? time = 
     /// <summary>How long a save waits for another WorkHub process that holds the settings lock.</summary>
     public static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromSeconds(2);
 
+    private static readonly TimeSpan LockPollInterval = TimeSpan.FromMilliseconds(25);
+
+    private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -81,13 +85,64 @@ public sealed class JsonSettingsStore(string settingsFile, TimeProvider? time = 
     /// <summary>The cross-process settings lock (held exclusively while a save re-reads, merges and replaces the file).</summary>
     public string LockFile => settingsFile + ".lock";
 
-    public SettingsUpdateResult Update(SettingsEdit edit, AppSettings fallback)
+    /// <summary>The temp-file write and the atomic replace of <see cref="Update(SettingsEdit, AppSettings)"/> (a test seam).</summary>
+    internal SettingsFileOps Files { get; init; } = SettingsFileOps.Default;
+
+    /// <summary>
+    /// Test seam (budgeted saves only): runs inside the write preparation (after the JSON text is serialized, before the
+    /// folder and temp path are prepared) and so before the last budget check, e.g. to move a fake clock past the budget
+    /// while the write is being prepared.
+    /// </summary>
+    internal Action? DuringWritePreparation { get; init; }
+
+    /// <summary>Test seam (budgeted saves only): runs immediately before the last budget check, which directly precedes the
+    /// temp-file write.</summary>
+    internal Action? BeforeLastBudgetCheck { get; init; }
+
+    public SettingsUpdateResult Update(SettingsEdit edit, AppSettings fallback) => UpdateCore(edit, fallback, budget: null);
+
+    /// <inheritdoc />
+    public SettingsUpdateResult Update(SettingsEdit edit, AppSettings fallback, SaveBudget budget)
+    {
+        ArgumentNullException.ThrowIfNull(budget);
+        return UpdateCore(edit, fallback, budget);
+    }
+
+    /// <summary>
+    /// Phase 16: reads only <c>ui</c> for the start-up placement and tab. Opens the file for reading with full sharing and
+    /// never creates, locks or writes anything; a missing, unreadable or mistyped file gives null.
+    /// </summary>
+    public UiSettings? PeekUi()
+    {
+        try
+        {
+            if (!File.Exists(settingsFile))
+                return null;
+            string text;
+            using (var stream = new FileStream(settingsFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+                text = reader.ReadToEnd();
+            if (JsonNode.Parse(text, NodeOptions, DocumentOptions) is not JsonObject root)
+                return null;
+            SettingsUpgrader.UpgradeInPlace(root);
+            return root.Deserialize<AppSettings>(JsonOptions)?.Normalize().Ui;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or IOException
+                                       or UnauthorizedAccessException or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private SettingsUpdateResult UpdateCore(SettingsEdit edit, AppSettings fallback, SaveBudget? budget)
     {
         ArgumentNullException.ThrowIfNull(edit);
         ArgumentNullException.ThrowIfNull(fallback);
-        using var settingsLock = AcquireLock();
+        var expired = false;
+        var acquired = budget is not null ? AcquireLock(budget, out expired) : AcquireLock();
+        using var settingsLock = acquired;
         if (settingsLock is null)
-            return new SettingsUpdateResult(SettingsUpdateStatus.LockTimeout);
+            return new SettingsUpdateResult(expired ? SettingsUpdateStatus.DeadlineExpired : SettingsUpdateStatus.LockTimeout);
 
         // 1. The document as it is now: what other processes saved meanwhile is kept, not overwritten from our snapshot.
         var root = TryReadDocument();
@@ -113,21 +168,50 @@ public sealed class JsonSettingsStore(string settingsFile, TimeProvider? time = 
             if (toolbars.Content is { } content)
                 workspace["showContentToolbar"] = content;
         }
+        if (edit.Ui is { } ui)
+        {
+            // Phase 16: only these members; unknown members inside ui.window keep their values.
+            var uiObject = Child(root, "ui");
+            var window = Child(uiObject, "window");
+            window["left"] = ui.Left;
+            window["top"] = ui.Top;
+            window["width"] = ui.Width;
+            window["height"] = ui.Height;
+            window["isMaximized"] = ui.IsMaximized;
+            if (ui.LastPrimaryTab is { } tab)
+                uiObject["lastPrimaryTab"] = tab;
+        }
         var version = root["settingsVersion"] is JsonValue v && v.TryGetValue<int>(out var parsed) ? parsed : 0;
         root["settingsVersion"] = Math.Max(version, AppSettings.CurrentSettingsVersion); // a newer file's version is kept
 
         // 3. The saved snapshot is the merged document itself (it must deserialize, or nothing is written).
         var saved = root.Deserialize<AppSettings>(JsonOptions)!.Normalize();
 
-        // 4. Atomic replace. Only this operation's own temp file is ever removed.
+        // 4. Everything the write needs is prepared first: the JSON text, the folder and the temp path. Nothing here
+        // creates the temp file or touches settings.json.
+        var json = root.ToJsonString(JsonOptions);
+        if (budget is not null)
+            DuringWritePreparation?.Invoke();
         Directory.CreateDirectory(Path.GetDirectoryName(settingsFile)!);
         var temp = $"{settingsFile}.{Guid.NewGuid():N}.tmp";
+
+        // Phase 16 (D12): the last check, immediately before the temp file is written, on the budget's monotonic timestamp
+        // (a wall-clock change never moves it). Past the budget nothing is written. After this point the write (temp file,
+        // then atomic replace) runs to completion.
+        if (budget is not null)
+        {
+            BeforeLastBudgetCheck?.Invoke();
+            if (budget.IsExpired)
+                return new SettingsUpdateResult(SettingsUpdateStatus.DeadlineExpired);
+        }
+
+        // 5. Atomic replace. Only this operation's own temp file is ever removed.
         try
         {
-            File.WriteAllText(temp, root.ToJsonString(JsonOptions), Utf8NoBom);
+            Files.WriteAllText(temp, json, Utf8NoBom);
             if (replacingUnreadable)
                 PreserveUnreadableFile(force: true); // the dialog-save recovery: a copy of the unreadable file is kept
-            File.Move(temp, settingsFile, overwrite: true);
+            Files.Move(temp, settingsFile, overwrite: true);
         }
         catch
         {
@@ -174,6 +258,45 @@ public sealed class JsonSettingsStore(string settingsFile, TimeProvider? time = 
             }
             catch (IOException)
             {
+                return null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Phase 16 (D12): the lock wait for a save with a budget. It lasts at most the lock ceiling (the store's lock timeout,
+    /// 2 s by default) or what is left of <paramref name="budget"/>, whichever is shorter. Both are measured on the budget's
+    /// monotonic timestamp, the same source the saver started the budget on; the wall clock is never read. Null with
+    /// <paramref name="expired"/> = true when the budget, not the ceiling, ended the wait.
+    /// </summary>
+    private FileStream? AcquireLock(SaveBudget budget, out bool expired)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(settingsFile)!);
+        var time = budget.Time;
+        var timeout = lockTimeout ?? DefaultLockTimeout;
+        var started = time.GetTimestamp();
+        while (true)
+        {
+            if (budget.IsExpired)
+            {
+                expired = true;
+                return null;
+            }
+
+            try
+            {
+                expired = false;
+                return new FileStream(LockFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException) when (time.GetElapsedTime(started) < timeout)
+            {
+                // Held by another WorkHub process. Never sleep past the budget or the ceiling.
+                var left = Min(budget.Remaining, timeout - time.GetElapsedTime(started));
+                Thread.Sleep(left <= TimeSpan.Zero ? TimeSpan.Zero : Min(left, LockPollInterval));
+            }
+            catch (IOException)
+            {
+                expired = budget.IsExpired; // the budget and the ceiling ran out together: the budget wins
                 return null;
             }
         }

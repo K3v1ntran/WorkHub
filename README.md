@@ -55,6 +55,20 @@ User-defined launcher groups below the fixed Repository groups (schema v2). Item
 a file (default app), a folder (Explorer) or a program (.exe started directly, no shell). Targets are used as entered;
 WorkHub never deletes or modifies them. Passwords are never stored; `CredentialId` is reserved for a future vault.
 
+**Favorites.** **Add to Favorites** (toolbar, More (⋯), right-click) marks a launcher; **Favorites** then appears above
+the Owner groups and lists every favorite, ordered by group then by the launcher's place in its group, with its group's
+name. It has no order of its own, so Add Item, Move Up/Down and Move to… are unavailable there; Open, Edit, Copy target
+and Delete work as in a group.
+- **Remove from Favorites** only removes the mark, without asking: the launcher stays in its group, unchanged.
+- **Delete** in Favorites deletes the launcher itself from its group (and from WorkHub). Its confirmation names the
+  group and points to Remove from Favorites; Cancel is the default.
+- Marking or unmarking does not change the launcher's Updated date. Editing or moving a launcher keeps the mark;
+  deleting it or its group removes it. The mark is stored in the existing database column (no schema change), so
+  backups and Restore carry it and older WorkHub versions ignore it.
+- Favorites is shown only while at least one favorite exists. When the last one is removed or deleted while Favorites
+  is open, Favorites disappears and the group you came from is selected again (or the first group; with no group left,
+  the Repository group shown before). Another window's changes are seen when Favorites or a group is opened again.
+
 ## Workspace
 
 The **Workspace** tab is a logical tree of Workspace Folders and Projects (schema v3). It is WorkHub metadata only:
@@ -99,6 +113,20 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   font or system icon is used, so no third-party licence notice applies.
 - **Status details.** The window header shows only the WorkHub mark, plus problems and the test-data-root indicator.
   The database schema version and today's backup are shown in **Settings → Backups** and in the mark's tooltip.
+
+**Window position and start tab.** When WorkHub closes it saves the window's position and size (or that it was
+maximized) and whether Repository or Workspace was open, as `ui.window` and `ui.lastPrimaryTab` in `settings.json`; the
+next start opens the same way. Nothing else in the file is changed by this save.
+- A saved position is used only while at least 120 × 32 pixels of its title bar fit on one monitor; otherwise (monitor
+  removed, resolution lowered, edited values) WorkHub opens at the default size, centered. A window larger than its
+  monitor is shrunk to fit. Monitors left of or above the main one are supported.
+- Workspace opens at start only once startup has finished; a start that failed keeps the tab saved before it.
+- A close that is refused (for example while a restore moves files) saves nothing. If the settings file cannot be read,
+  or another WorkHub window holds it for more than about 2 seconds, the position is not saved this time (noted in the
+  log) and the window still closes. With several windows open, the one whose save succeeded last wins.
+- After **Restore**, **Put back** or a restart, the new window starts before the closing one saves its position, so it
+  opens with the position saved before (normally by the previous normal close); the next normal start uses the latest.
+  Logging off or shutting down Windows with WorkHub open does not save the position.
 
 ### Workspace Trash (schema v7)
 
@@ -281,13 +309,13 @@ confirmation.
   "ＳＰＥＣＳ" collide). On a conflict the dialog suggests a name such as "Specs (2)"; nothing is renamed or merged until you
   confirm a name.
 - If anything shown in the dialog changes before you confirm (another window renames, moves, trashes or edits it), nothing is
-  copied and the message asks you to try again; the dialog is never resubmitted automatically. At most 10,000 items or 32 MB
-  of text are copied at once, and folders cannot end up nested deeper than the usual limit at the destination.
+  copied and the message asks you to try again; the dialog is never resubmitted automatically. At most 10,000 items or
+  32 MiB (33,554,432 bytes of UTF-8) of text are copied at once, and folders cannot end up nested deeper than the usual limit at the destination.
 - The message after a copy or move offers **Open destination**, which shows the copy where it is now. There is **no Undo**
   across projects.
 
 Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags, rich text,
-drag-and-drop, manual ordering and autosave.
+drag-and-drop, manual ordering (including of Favorites) and autosave.
 
 ### Workspace search
 

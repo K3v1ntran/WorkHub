@@ -35,7 +35,7 @@ public sealed class WorkHubServices : IDisposable
         RestoreRequester = new RestoreRequester(paths, Log);
         Connections = new SqliteConnectionFactory(paths.DatabaseFile);
 
-        var settingsStore = new JsonSettingsStore(paths.SettingsFile);
+        var settingsStore = SettingsStore = new JsonSettingsStore(paths.SettingsFile);
         Initializer = new AppInitializer(paths, new LocalStorage(paths), settingsStore, new DatabaseInitializer(paths, Log, InitialSystemsSeed.Apply), Log, new DailyBackupService(paths, Log), restore);
         Backups = new BackupCatalog(paths);
         Settings = new SettingsService(settingsStore);
@@ -66,6 +66,9 @@ public sealed class WorkHubServices : IDisposable
     public AppInitializer Initializer { get; }
 
     public SettingsService Settings { get; }
+
+    /// <summary>Phase 16A: the settings file itself, for the read-only start-up peek of the window placement and tab.</summary>
+    public ISettingsStore SettingsStore { get; }
 
     public SystemService Systems { get; }
 

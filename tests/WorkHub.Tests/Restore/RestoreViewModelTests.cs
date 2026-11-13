@@ -246,6 +246,29 @@ public sealed class RestoreViewModelTests : RestoreTestBase
         Assert.True(confirmedRaised);
     }
 
+    /// <summary>
+    /// Phase 16A L7 (D15): with the window-state saver in place, Restore confirm still relaunches first; the save happens inside
+    /// Shutdown, after the new process was started and before Application.Shutdown is queued. Nothing is inserted before Relaunch.
+    /// </summary>
+    [Fact]
+    public async Task Phase16_L7_RestoreConfirm_RelaunchesFirst_ThenSavesTheWindowState_ThenShutsDown()
+    {
+        var request = new FakeRequest(Facts(new DataClassification(CurrentDataClass.Healthy, Version: 7)));
+        var dialogs = new FakeDialogs { OnRestoreConfirmation = _ => true };
+        var inner = new FakeLifetime();
+        var store = new RecordingSettingsStore(inner.Calls); // one ordered list for relaunch, save and shutdown
+        var saver = new WindowStateSaver(new SettingsService(store, _ => true), NullAppLog.Instance) { Capture = () => UiStates.Bounds(10, 20) };
+        var vm = new BackupsViewModel(new StaticCatalog(Daily), new FakeRequester(() => new RestoreRequestStart(request, null)), dialogs,
+            new SavingAppLifetime(inner, saver));
+        await vm.LoadAsync();
+        vm.SelectedRow = vm.Rows[0];
+
+        await vm.RestoreCommand.ExecuteAsync();
+
+        Assert.Equal(["relaunch 20261016-000000-00000001", "update", "shutdown"], inner.Calls);
+        Assert.Equal(10, Assert.Single(store.Edits).Ui!.Left);
+    }
+
     [Fact]
     public async Task Q5_RelaunchFails_TheRequestStaysConfirmed_TheUserIsToldToStartAgain()
     {

@@ -199,7 +199,13 @@ public sealed class UiSettings
 {
     public const string DefaultPrimaryTab = "Repository";
 
+    /// <summary>Phase 16: the only saved value that opens the Workspace tab (exact, case-sensitive; D3).</summary>
+    public const string WorkspacePrimaryTab = "Workspace";
+
     public string LastPrimaryTab { get; set; } = DefaultPrimaryTab;
+
+    /// <summary>Phase 16 (D3, L10): exactly "Workspace" opens Workspace; anything else (other case, empty, null) is Repository.</summary>
+    public static bool OpensWorkspace(string? savedTab) => string.Equals(savedTab, WorkspacePrimaryTab, StringComparison.Ordinal);
 
     public WindowPlacementSettings Window { get; set; } = new();
 

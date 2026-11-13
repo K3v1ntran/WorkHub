@@ -1,7 +1,11 @@
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using WorkHub.App.Services;
+using WorkHub.Core.Settings;
+using WorkHub.Presentation.Services;
 using WorkHub.Presentation.ViewModels;
 
 namespace WorkHub.App.Views;
@@ -15,6 +19,45 @@ public partial class MainWindow : Window
         PreviewKeyDown += OnPreviewKeyDown;
         // Phase 10 (R17): while a restore or Put back moves database files, the window does not close.
         Closing += (_, e) => e.Cancel |= Main?.IsCloseBlocked == true;
+        // A placement applied before Show (e.g. maximized) raises no StateChanged; Loaded records it.
+        Loaded += (_, _) => RememberState();
+        StateChanged += (_, _) => RememberState();
+    }
+
+    /// <summary>Phase 16A: the process's one window-state saver (set by the composition root).</summary>
+    internal WindowStateSaver? WindowStateSaver { get; init; }
+
+    private WindowState _lastNonMinimizedState = WindowState.Normal;
+
+    private void RememberState()
+    {
+        if (WindowState != WindowState.Minimized)
+            _lastNonMinimizedState = WindowState;
+    }
+
+    /// <summary>
+    /// Phase 16A trigger (a): after every <c>Closing</c> handler (including the <c>IsCloseBlocked</c> check) has run. A cancelled
+    /// close saves nothing.
+    /// </summary>
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        base.OnClosing(e);
+        WindowStateSaver?.OnWindowClosing(e.Cancel);
+    }
+
+    /// <summary>The snapshot for the window-state save, read on the UI thread at the trigger.</summary>
+    internal UiStateChanges? CaptureUiState()
+    {
+        var (bounds, maximized) = WindowPlacement.Read(this, _lastNonMinimizedState);
+        return new UiStateChanges
+        {
+            Left = bounds.Left,
+            Top = bounds.Top,
+            Width = bounds.Width,
+            Height = bounds.Height,
+            IsMaximized = maximized,
+            LastPrimaryTab = Main?.PrimaryTabToSave,
+        };
     }
 
     private MainViewModel? Main => DataContext as MainViewModel;

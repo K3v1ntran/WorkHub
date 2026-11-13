@@ -92,7 +92,7 @@ public sealed class SqliteOwnerStore(SqliteConnectionFactory connections, TimePr
         {
             using var command = connection.CreateCommand();
             command.CommandText = """
-                SELECT Id, GroupId, Name, ActionType, Target
+                SELECT Id, GroupId, Name, ActionType, Target, IsFavorite
                 FROM OwnerItems
                 WHERE GroupId = $id
                 ORDER BY SortOrder, Id
@@ -105,7 +105,39 @@ public sealed class SqliteOwnerStore(SqliteConnectionFactory connections, TimePr
             while (reader.Read())
             {
                 items.Add(new OwnerItemListItem(reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2),
-                    ParseType(reader.GetString(3)), reader.GetString(4)));
+                    ParseType(reader.GetString(3)), reader.GetString(4), reader.GetInt64(5) == 1));
+            }
+
+            return items;
+        }, cancellationToken);
+
+    public Task<OwnerFavoriteResult> SetFavoriteAsync(long itemId, bool isFavorite, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+            // Phase 16B: only the mark. UpdatedAt is deliberately not set (D5).
+            Execute(connection, null, "UPDATE OwnerItems SET IsFavorite = $favorite WHERE Id = $id;",
+                ("$favorite", isFavorite ? 1 : 0), ("$id", itemId)) == 1
+                ? OwnerFavoriteResult.Saved
+                : OwnerFavoriteResult.NotFound, cancellationToken);
+
+    public Task<IReadOnlyList<OwnerItemListItem>> ListFavoritesAsync(CancellationToken cancellationToken = default) =>
+        Run<IReadOnlyList<OwnerItemListItem>>(connection =>
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT i.Id, i.GroupId, i.Name, i.ActionType, i.Target, g.Name
+                FROM OwnerItems AS i
+                JOIN OwnerGroups AS g ON g.Id = i.GroupId
+                WHERE i.IsFavorite = 1
+                ORDER BY g.SortOrder, g.Id, i.SortOrder, i.Id
+                LIMIT $limit;
+                """;
+            command.Parameters.AddWithValue("$limit", MaxItemsPerQuery);
+            using var reader = command.ExecuteReader();
+            var items = new List<OwnerItemListItem>();
+            while (reader.Read())
+            {
+                items.Add(new OwnerItemListItem(reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2),
+                    ParseType(reader.GetString(3)), reader.GetString(4), IsFavorite: true, GroupName: reader.GetString(5)));
             }
 
             return items;

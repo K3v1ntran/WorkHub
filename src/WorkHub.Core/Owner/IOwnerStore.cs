@@ -43,6 +43,14 @@ public interface IOwnerStore
 
     /// <summary>Moves an item within its group by <paramref name="offset"/> positions (clamped).</summary>
     Task<bool> MoveItemAsync(long itemId, int offset, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Phase 16B: sets or clears <c>IsFavorite</c> only. Every other column, <c>UpdatedAt</c> included (D5), is unchanged.
+    /// </summary>
+    Task<OwnerFavoriteResult> SetFavoriteAsync(long itemId, bool isFavorite, CancellationToken cancellationToken = default);
+
+    /// <summary>Phase 16B: every favorite across groups, by group order then item order, each with its group's name.</summary>
+    Task<IReadOnlyList<OwnerItemListItem>> ListFavoritesAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class DuplicateOwnerGroupNameException(string name, Exception? inner = null)
