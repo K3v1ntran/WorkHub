@@ -34,7 +34,7 @@ public static class WorkspaceName
     public static string Key(string normalizedName) =>
         normalizedName.Normalize(NormalizationForm.FormKC).ToUpperInvariant();
 
-    private static bool IsWellFormedUtf16(string value)
+    internal static bool IsWellFormedUtf16(string value)
     {
         for (var i = 0; i < value.Length; i++)
         {
@@ -45,6 +45,76 @@ public static class WorkspaceName
         }
 
         return true;
+    }
+}
+
+/// <summary>
+/// Project tag names (Phase 17, proposal R2b §4.2): trimmed with <see cref="string.Trim()"/> (all Unicode white space),
+/// 1–40 UTF-16 characters, well-formed UTF-16 and no control character (<see cref="char.IsControl(char)"/>: C0, DEL, C1 —
+/// the same set the V010 CHECKs reject). Spelling, case and Unicode text are kept. The key is <see cref="WorkspaceName.Key"/>.
+/// </summary>
+public static class ProjectTagName
+{
+    public const int MaxLength = 40;
+
+    public static bool TryNormalize(string? raw, out string name, out string? error)
+    {
+        name = (raw ?? string.Empty).Trim();
+        error = null;
+        if (name.Length == 0)
+            error = "A tag needs a name.";
+        else if (name.Length > MaxLength)
+            error = $"A tag must be at most {MaxLength} characters.";
+        else if (name.Any(char.IsControl))
+            error = "A tag must not contain control characters.";
+        else if (!WorkspaceName.IsWellFormedUtf16(name))
+            error = "A tag contains invalid characters.";
+        return error is null;
+    }
+
+    /// <summary>The tag key stored in <c>ProjectTags.NameKey</c> (same as the Workspace name key).</summary>
+    public static string Key(string normalizedName) => WorkspaceName.Key(normalizedName);
+}
+
+/// <summary>Rules for a Project's set of tags (Phase 17).</summary>
+public static class ProjectTagRules
+{
+    public const int MaxPerProject = 20;
+
+    public const string TooManyMessage = "At most 20 tags.";
+
+    /// <summary>Display order: key ordinal, then spelling ordinal.</summary>
+    public static int Compare(string nameX, string keyX, string nameY, string keyY)
+    {
+        var byKey = string.CompareOrdinal(keyX, keyY);
+        return byKey != 0 ? byKey : string.CompareOrdinal(nameX, nameY);
+    }
+
+    /// <summary>
+    /// Normalizes a complete set for storage: every name valid, no two with the same key, at most <see cref="MaxPerProject"/>.
+    /// The editor merges duplicates before it sends a set, so a duplicate here is refused (a programming error), never merged.
+    /// Returns null on success with the (Name, NameKey) pairs in display order.
+    /// </summary>
+    public static string? NormalizeSet(IReadOnlyList<string> names, out IReadOnlyList<(string Name, string NameKey)> normalized)
+    {
+        normalized = [];
+        var result = new List<(string Name, string NameKey)>(names.Count);
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var raw in names)
+        {
+            if (!ProjectTagName.TryNormalize(raw, out var name, out var error))
+                return error;
+            var key = ProjectTagName.Key(name);
+            if (!keys.Add(key))
+                return $"The tag “{name}” is listed twice.";
+            result.Add((name, key));
+        }
+
+        if (result.Count > MaxPerProject)
+            return TooManyMessage;
+        result.Sort((x, y) => Compare(x.Name, x.NameKey, y.Name, y.NameKey));
+        normalized = result;
+        return null;
     }
 }
 
@@ -61,6 +131,7 @@ public static class ProjectDraftValidator
         public const string Description = nameof(Description);
         public const string Owner = nameof(Owner);
         public const string ProjectManager = nameof(ProjectManager);
+        public const string Tags = nameof(Tags);
     }
 
     public static (ProjectDraft? Draft, string? Field, string? Error) Validate(ProjectDraft draft)
@@ -81,7 +152,15 @@ public static class ProjectDraftValidator
         if (PersonError(draft.ProjectManager, "Project manager", out var manager) is { } managerError)
             return (null, Fields.ProjectManager, managerError);
 
-        return (new ProjectDraft(name, draft.Status, description, owner, manager), null, null);
+        IReadOnlyList<string>? tags = null;
+        if (draft.Tags is not null)
+        {
+            if (ProjectTagRules.NormalizeSet(draft.Tags, out var normalized) is { } tagError)
+                return (null, Fields.Tags, tagError);
+            tags = normalized.Select(t => t.Name).ToList();
+        }
+
+        return (new ProjectDraft(name, draft.Status, description, owner, manager, tags), null, null);
     }
 
     private static string? PersonError(string? raw, string label, out string? value)

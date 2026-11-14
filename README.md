@@ -78,7 +78,8 @@ creating, renaming or moving a folder or project never creates, moves, renames o
 - Folders and projects share one name space per location. Names keep their spelling, case and Unicode text (up to 200
   characters) but are compared ignoring case and width (NFKC + upper case), so `Tools`, `TOOLS` and `ＴＯＯＬＳ` clash.
 - A Project has an internal, immutable id, a status (Planning, Active, Maintenance, On Hold, Completed; default Active)
-  and optional Owner, Project manager (free text, 100 characters each) and Description (4000 characters).
+  and optional Owner, Project manager (free text, 100 characters each), Description (4000 characters) and up to 20
+  **tags** (schema v10, below).
 - **Move to…** moves a folder or project to another folder or the top level; a folder cannot move into itself or one of
   its subfolders, and a name clash at the destination is rejected without changing anything.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
@@ -151,7 +152,8 @@ is in the Trash. Nothing on disk is touched.
   It is refused, with the reason and without a dialog, while the folder holds anything — including a project in the Trash,
   because restoring needs its original folder. There is no Undo for removal. **Del** on a folder that is not empty offers
   **Move folder to Trash** instead (below).
-- Projects and their content are never permanently deleted; there is no Empty Trash or automatic cleanup.
+- Workspace Projects and Folders are never permanently deleted, and the Workspace Trash has no Empty Trash or automatic
+  cleanup. Content in a project's own Trash can be deleted permanently (see "Deleting permanently from a project's Trash").
 
 ### Project Archive (schema v8)
 
@@ -215,6 +217,33 @@ and folders that links point to are never moved, edited or deleted.
 - **Older WorkHub versions.** Schema v9 makes WorkHub 1.1.0 (schema v8) refuse this data folder from the next time it
   starts. A 1.1.0 window that is already open is not stopped by this, so close every WorkHub window before the first
   start of this version. The upgrade keeps a validated copy of the v8 database under `Backups\Migrations`.
+
+### Project tags (schema v10)
+
+**New Project…** and **Edit…** have a **Tags** field: the project's tags as chips (✕ removes one) and a box. **Enter**, a
+**comma** or a suggestion adds the typed text; **Backspace** in an empty box removes the last chip. Suggestions are the tags
+already used on other projects (not those in the Workspace Trash; archived ones count), each in its most used spelling.
+
+- A tag is 1–40 characters after trimming, on one line, without control characters. Its spelling is kept; tags compare like
+  Workspace names (ignoring case and width), so `Infra`, `INFRA` and `ＩＮＦＲＡ` are the same tag. A project has at most 20.
+  Adding a tag the project already has keeps the existing one and says "Already tagged “Infra”."
+- **Save** saves the tags together with the other details, in one step: both or neither. Text still in the box is added
+  first; if it is not a valid tag, or would be the 21st, the dialog stays open and nothing is saved. A box with only spaces
+  counts as empty. A tag that stays keeps its spelling and creation date. With two editors on the same project, the last
+  Save decides the whole set, as for the other details.
+- **Info** shows the tags; clicking one puts its name into the search box and searches (the words are split as usual, so
+  `Client A` searches `Client` and `A`).
+- There is no list of tags across projects: nothing to rename, merge or delete everywhere at once. Tags belong to projects
+  only (not to folders, links or notes).
+- Tags follow their project: archived projects keep them (read-only, still found by search); a project in the Workspace
+  Trash keeps them read-only and they are not searched; Archive, Unarchive, Move to Trash, Restore and Undo change none.
+  Copy/Move between projects copies content only, never tags. Permanent deletion from a project's Trash leaves its tags.
+- Backups contain the tags. Restoring a v8 or v9 backup upgrades it after its own pre-migration copy (which stays at its
+  old version, without tags); a v10 backup brings its tags back.
+- **Older WorkHub versions.** Schema v10 makes any WorkHub built for schema v9 or older refuse this data folder from the
+  next time it starts ("… schema v10, newer than this build supports (v9). Update WorkHub."), and their backup lists show
+  v10 backups as newer. Close every WorkHub window before the first start of this version. The upgrade keeps a validated
+  copy of the v9 (or v8) database under `Backups\Migrations`.
 
 ### Project content (schema v4–v6)
 
@@ -314,20 +343,21 @@ confirmation.
 - The message after a copy or move offers **Open destination**, which shows the copy where it is now. There is **no Undo**
   across projects.
 
-Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags, rich text,
-drag-and-drop, manual ordering (including of Favorites) and autosave.
+Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags on folders or content
+(and renaming a tag across projects), rich text, drag-and-drop, manual ordering (including of Favorites) and autosave.
 
 ### Workspace search
 
 **Ctrl+F** on the Workspace tab (or the box above the tree) searches the whole local Workspace: folder and project names,
-a project's Owner, Project manager and Description, project-folder names, link names and targets, and note titles and
+a project's Owner, Project manager, Description and tags, project-folder names, link names and targets, and note titles and
 content. Systems and Owner Manager items are not included (the Repository tab keeps its own search and Ctrl+F).
 
 - Words are separated by spaces (including the full-width space); every word must appear, each in any of an item's
   fields. Matching ignores case and width the same way Workspace names do (NFKC + upper case), so `abc` finds `ＡＢＣ` and
   `ｶﾀｶﾅ` is found by `カタカナ`; hiragana and katakana stay distinct. At most 8 words and 200 characters are used.
 - While the box has text, the results replace the tree (at most 200, names first); Esc clears the box and shows the tree
-  again. Each result shows where the item is and what matched, with a line of text for descriptions, targets and notes.
+  again. Each result shows where the item is and what matched, with a line of text for descriptions, targets and notes;
+  a project found only through a tag shows "Tag: " and that tag (the first matching one in tag order).
 - Enter or double-click **reveals** the item: the tree selects its folder or project, the content pane opens the folder
   the item is in now and selects it (a note shows its preview). Nothing is opened or launched; press Enter again on the
   revealed row for that.

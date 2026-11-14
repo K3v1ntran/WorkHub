@@ -225,6 +225,36 @@ public sealed class WorkspaceSearchViewModelTests : IDisposable
         }
     });
 
+    /// <summary>
+    /// Phase 17 V2/V3/Q: Info lists the selected Project's tags; a chip puts its exact display name into the search box, the
+    /// normal splitting runs ("Client A" → CLIENT, A), and the hit line names the tag ("Tag: Client A").
+    /// </summary>
+    [Fact]
+    public Task V2_V3_InfoTagChips_FollowTheSelection_AndAChipSearchesItsExactDisplayName() => InContext(async () =>
+    {
+        var id = (await _other.CreateProjectAsync(null, new ProjectDraft("Portal", ProjectStatus.Active, null, null, null, ["Client A", "Ops"]))).Value!.Id;
+        var area = await Area();
+        area.SelectedNode = area.Roots.Single(n => n.Id == id);
+        await area.CurrentDetailsLoad;
+
+        Assert.True(area.HasSelectedProjectTags);
+        Assert.Equal(["Client A", "Ops"], area.SelectedProjectTags.Select(t => t.Name).ToList());
+
+        area.SelectedProjectTags[0].Command.Execute(null);
+        await area.Search!.CurrentSearch;
+
+        Assert.Equal("Client A", area.Search.SearchText);
+        Assert.Equal(["CLIENT", "A"], WorkspaceSearchService.Parse(area.Search.SearchText)!.Terms);
+        var hit = Assert.Single(area.Search.Results);
+        Assert.Equal("Portal", hit.Name);
+        Assert.Equal("Tag: Client A", hit.MatchText);
+
+        area.SearchByTag("Client\u3000A"); // a full-width space splits too
+        await area.Search.CurrentSearch;
+        Assert.Equal("Client\u3000A", area.Search.SearchText);
+        Assert.Single(area.Search.Results);
+    });
+
     [Fact]
     public Task Clear_RestoresTheTree_UntouchedWithItsSelection() => InContext(async () =>
     {

@@ -89,9 +89,9 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
     {
         Assert.Equal(9, new V009_WorkspaceFolderLifecycle().Version);
         Assert.Equal("Workspace folder lifecycle", new V009_WorkspaceFolderLifecycle().Description);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], SchemaMigrations.All.Select(m => m.Version));
-        Assert.IsType<V009_WorkspaceFolderLifecycle>(SchemaMigrations.All[^1]);
-        Assert.Equal(9, SchemaMigrations.LatestVersion);
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], SchemaMigrations.All.Select(m => m.Version)); // V010 (Phase 17) follows
+        Assert.IsType<V009_WorkspaceFolderLifecycle>(SchemaMigrations.All[8]);
+        Assert.Equal(9, MigrationSets.ThroughV009[^1].Version);
 
         // The raw string has no trailing newline; the hash is over its LF form (the 13B-0 probe's approved SQL file).
         var sql = V009_WorkspaceFolderLifecycle.Sql.ReplaceLineEndings("\n");
@@ -107,7 +107,7 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
     [Fact]
     public void FreshDatabase_HasTheReviewedV009Schema()
     {
-        var result = _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        var result = _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Created, result.Outcome);
         Assert.Equal(9, result.SchemaVersion);
@@ -134,7 +134,7 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var result = _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        var result = _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize();
 
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result.Outcome);
         Assert.Equal((8, 9), (result.PreviousSchemaVersion, result.SchemaVersion));
@@ -188,13 +188,13 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize());
+        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize());
         Assert.Equal(DatabaseStartupFailure.MigrationFailed, ex.Failure);
         AssertUnchangedV8(beforeData, beforeSchema);
         var first = AssertValidatedBackups(beforeData, beforeSchema, expectedCount: 1);
 
         Thread.Sleep(5); // distinct backup timestamp
-        Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize());
+        Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize());
         AssertUnchangedV8(beforeData, beforeSchema);
         var all = AssertValidatedBackups(beforeData, beforeSchema, expectedCount: 2);
         Assert.All(first, b => Assert.Contains(b, all));
@@ -214,7 +214,7 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
             beforeSchema = SchemaSnapshot(connection);
         }
 
-        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize());
+        var ex = Assert.Throws<DatabaseStartupException>(() => _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize());
 
         Assert.Equal(DatabaseStartupFailure.MigrationFailed, ex.Failure);
         AssertUnchangedV8(beforeData, beforeSchema);
@@ -232,7 +232,7 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
     public void AV8Build_RefusesTheV9Database_AndLeavesItUnchanged()
     {
         CreatePopulatedV8Database();
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize();
         BackupKit.ClearPools(_root.Paths.DatabaseFile); // this database only: other classes run in parallel
         var before = BackupKit.Hash(_root.Paths.DatabaseFile);
         List<string> beforeData;
@@ -306,7 +306,7 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
     [MemberData(nameof(GuardCases))]
     public void TheV009Guards_RefuseExactlyWhatSection76Says_AndWriteNothingWhenTheyRefuse(string label, string start, string statement, string expected)
     {
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize();
         using var c = _root.Open();
         var f = Db.InsertNode(c, null, "Folder", "F");
         var child = Db.InsertNode(c, f, "Folder", "C");
@@ -351,7 +351,7 @@ public sealed class FolderLifecycleMigrationTests : IDisposable
     [Fact]
     public void TheFolderListings_UseThePartialIndexes()
     {
-        _root.CreateDatabaseInitializer([.. SchemaMigrations.All]).Initialize();
+        _root.CreateDatabaseInitializer(MigrationSets.ThroughV009).Initialize();
         using var c = _root.Open();
         Assert.Contains("USING COVERING INDEX IX_WorkspaceNodes_FolderTrashed", Plan(c, "SELECT Id FROM WorkspaceNodes WHERE FolderTrashedAt IS NOT NULL ORDER BY FolderTrashedAt DESC;"));
         Assert.Contains("USING INDEX IX_WorkspaceNodes_FolderArchived", Plan(c, "SELECT Id FROM WorkspaceNodes WHERE FolderArchivedAt IS NOT NULL;"));

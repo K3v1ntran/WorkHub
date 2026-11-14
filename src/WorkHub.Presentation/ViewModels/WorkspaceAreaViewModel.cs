@@ -511,10 +511,28 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             if (!SetProperty(ref _selectedProject, value))
                 return;
             OnPropertyChanged(nameof(SelectedProjectStatus));
+            OnPropertyChanged(nameof(SelectedProjectTags));
+            OnPropertyChanged(nameof(HasSelectedProjectTags));
         }
     }
 
     public string? SelectedProjectStatus => SelectedProject is null ? null : ProjectStatuses.DisplayName(SelectedProject.Status);
+
+    /// <summary>The selected Project's tags as Info-drawer chips (Phase 17); a chip searches the Workspace for its display name.</summary>
+    public IReadOnlyList<TagChipViewModel> SelectedProjectTags =>
+        SelectedProject?.Tags.Select(t => new TagChipViewModel(t.Name, new RelayCommand(() => SearchByTag(t.Name)))).ToList() ?? [];
+
+    public bool HasSelectedProjectTags => SelectedProject is { Tags.Count: > 0 };
+
+    /// <summary>
+    /// A chip click in Info (Phase 17 §4.4): the exact display name replaces the search text and the normal search runs with the
+    /// normal word splitting (no exact-match or <c>tag:</c> syntax).
+    /// </summary>
+    public void SearchByTag(string name)
+    {
+        if (Search is not null)
+            Search.SearchText = name;
+    }
 
     public bool IsLoadingDetails { get => _isLoadingDetails; private set => SetProperty(ref _isLoadingDetails, value); }
 

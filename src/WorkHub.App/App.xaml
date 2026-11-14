@@ -231,6 +231,14 @@
         </Style>
 
 
+        <!-- Project tag chip (Phase 17): a small rounded button; editor chips remove, Info chips search. -->
+        <Style x:Key="TagChipButton" TargetType="ButtonBase" BasedOn="{StaticResource ToolButton}">
+            <Setter Property="MinHeight" Value="22" />
+            <Setter Property="Padding" Value="8,1" />
+            <Setter Property="Margin" Value="0,0,6,6" />
+            <Setter Property="Background" Value="{StaticResource Brush.Tag}" />
+        </Style>
+
         <Style x:Key="Tag" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource Brush.Tag}" />
             <Setter Property="CornerRadius" Value="3" />

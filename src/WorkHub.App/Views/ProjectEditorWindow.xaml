@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:ProjectEditorViewModel}"
         Title="{Binding Title}"
@@ -13,7 +14,11 @@
         Foreground="{StaticResource Brush.Text}"
         TextOptions.TextFormattingMode="Display"
         UseLayoutRounding="True"
-        FocusManager.FocusedElement="{Binding ElementName=NameBox}">
+        FocusManager.FocusedElement="{Binding ElementName=NameBox}"
+        Loaded="Window_Loaded">
+    <Window.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+    </Window.Resources>
     <DockPanel Margin="20,12,20,16">
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
             <Button Content="Cancel" IsCancel="True" Command="{Binding CancelCommand}" />
@@ -66,6 +71,50 @@
             <TextBox MaxLength="4000" Height="80" TextWrapping="Wrap" AcceptsReturn="True" VerticalContentAlignment="Top"
                      VerticalScrollBarVisibility="Auto" Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Description" />
             <TextBlock Style="{StaticResource FieldError}" Text="{Binding DescriptionError}" />
+
+            <!-- Phase 17 tags: chips (✕ removes), a box (Enter or comma adds, Backspace in an empty box removes the last chip). -->
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Tags (optional, up to 20)" />
+            <ItemsControl ItemsSource="{Binding Tags}" Focusable="False" AutomationProperties.Name="Tags">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Style="{StaticResource TagChipButton}" Command="{Binding Command}"
+                                AutomationProperties.Name="{Binding Name, StringFormat='Remove tag {0}'}" ToolTip="Remove this tag">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Name}" />
+                                <TextBlock Margin="6,0,0,0" Foreground="{StaticResource Brush.MutedText}" Text="✕" />
+                            </StackPanel>
+                        </Button>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBox x:Name="TagBox" MaxLength="200" Text="{Binding TagInput, UpdateSourceTrigger=PropertyChanged}"
+                     IsEnabled="{Binding CanAddTag}"
+                     AutomationProperties.Name="New tag" ToolTip="Type a tag, then Enter or comma"
+                     PreviewKeyDown="TagBox_PreviewKeyDown" PreviewTextInput="TagBox_PreviewTextInput" />
+            <TextBlock x:Name="TagLimitHint" Style="{StaticResource FieldHint}" Text="{Binding TagLimitText}" AutomationProperties.AutomationId="TagLimit"
+                       Visibility="{Binding TagLimitText, Converter={StaticResource NullToCollapsed}}" />
+            <ItemsControl x:Name="TagSuggestions" ItemsSource="{Binding FilteredSuggestions}" IsEnabled="{Binding CanAddTag}"
+                          Focusable="False" Margin="0,4,0,0" AutomationProperties.Name="Tag suggestions">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Button Style="{StaticResource TagChipButton}" Command="{Binding Command}" Content="{Binding Name}"
+                                AutomationProperties.Name="{Binding Name, StringFormat='Add suggested tag {0}'}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Style="{StaticResource FieldError}" Text="{Binding TagError}" AutomationProperties.AutomationId="TagError" />
+            <TextBlock Style="{StaticResource FieldHint}" Text="{Binding TagNote}" AutomationProperties.AutomationId="TagNote"
+                       Visibility="{Binding TagNote, Converter={StaticResource NullToCollapsed}}" />
             <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap"
                        Text="Workspace entries are WorkHub references only. No files or folders are created, moved or renamed." />
         </StackPanel>

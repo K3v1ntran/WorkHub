@@ -77,7 +77,7 @@ public sealed class ProjectArchiveMigrationTests : IDisposable
     {
         Assert.Equal(8, new V008_ProjectArchiveSerial().Version);
         Assert.Equal("Project archive serial", new V008_ProjectArchiveSerial().Description);
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], SchemaMigrations.All.Select(m => m.Version));
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], SchemaMigrations.All.Select(m => m.Version));
         Assert.IsType<V008_ProjectArchiveSerial>(SchemaMigrations.All[7]);
 
         // The raw string has no trailing newline; the hash is over its LF form (the approved evidence file minus its final newline).

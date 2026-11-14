@@ -20,4 +20,7 @@ internal static class MigrationSets
 
     /// <summary>The schema v8 migrations (before V009's folder lifecycle).</summary>
     public static ISchemaMigration[] ThroughV008 => [.. ThroughV007, new V008_ProjectArchiveSerial()];
+
+    /// <summary>The schema v9 migrations (before V010's Project tags).</summary>
+    public static ISchemaMigration[] ThroughV009 => [.. ThroughV008, new V009_WorkspaceFolderLifecycle()];
 }

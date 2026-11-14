@@ -66,10 +66,10 @@ public sealed class FirstRunInitializationTests : IDisposable
 
         using var connection = _root.Open();
         var tables = Db.UserTables(connection);
-        Assert.Equal(["ProjectFolders", "ProjectLinks", "ProjectNotes", "ProjectTrashEntries", "Projects", "WorkspaceNodes"], tables.Where(name =>
+        Assert.Equal(["ProjectFolders", "ProjectLinks", "ProjectNotes", "ProjectTags", "ProjectTrashEntries", "Projects", "WorkspaceNodes"], tables.Where(name =>
             name.StartsWith("Workspace", StringComparison.Ordinal) || name.StartsWith("Project", StringComparison.Ordinal)));
         Assert.DoesNotContain(tables,
-            name => name.Contains("Tag", StringComparison.Ordinal)
+            name => (name.Contains("Tag", StringComparison.Ordinal) && name != "ProjectTags") // schema v10: Project tags only
                     || name.Contains("Credential", StringComparison.Ordinal)
                     || (name.Contains("Trash", StringComparison.Ordinal) && name != "ProjectTrashEntries") // schema v6: content Trash only
                     || (name.Contains("Link", StringComparison.Ordinal) && name != "ProjectLinks")

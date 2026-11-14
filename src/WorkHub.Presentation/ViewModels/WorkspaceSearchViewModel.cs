@@ -97,11 +97,14 @@ public sealed class WorkspaceSearchHitViewModel(WorkspaceSearchHit hit) : Observ
         SearchField.ProjectManager => "project manager",
         SearchField.Description => "description",
         SearchField.Target => "target",
+        SearchField.Tag => "tag",
         _ => "content",
     };
 
-    /// <summary>"title" or "content: “…agenda…”".</summary>
-    public string MatchText => Hit.Excerpt is { } excerpt ? $"{FieldText}: “{excerpt}”" : FieldText;
+    /// <summary>"title", "content: “…agenda…”", or "Tag: Infra" (Phase 17 §4.4: the full tag name, no quotes or ellipsis).</summary>
+    public string MatchText => Hit.MatchedField == SearchField.Tag && Hit.Excerpt is { } tag ? $"Tag: {tag}"
+        : Hit.Excerpt is { } excerpt ? $"{FieldText}: “{excerpt}”"
+        : FieldText;
 
     public string AccessibleName => $"{KindText} {Name}, {Location}, matched in {FieldText}";
 }

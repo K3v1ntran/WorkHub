@@ -577,9 +577,9 @@ public sealed class ProjectTrashPurgeTests : IDisposable
         await World();
         await PreviewAndCommit(All());
         using var connection = _w.Root.Open();
-        Assert.Equal(9, SchemaMigrations.LatestVersion);
-        Assert.Equal(9L, Db.ScalarLong(connection, "PRAGMA user_version;"));
-        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(9, SchemaFingerprint.Read(connection)));
+        Assert.Equal(10, SchemaMigrations.LatestVersion); // v9 when Phase 14 shipped; V010 (Phase 17) only adds ProjectTags
+        Assert.Equal((long)SchemaMigrations.LatestVersion, Db.ScalarLong(connection, "PRAGMA user_version;"));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(SchemaMigrations.LatestVersion, SchemaFingerprint.Read(connection)));
     }
 
     // ---- 7.5 PreDelete copy -------------------------------------------------------------------------------------------------
@@ -593,9 +593,9 @@ public sealed class ProjectTrashPurgeTests : IDisposable
 
         var file = Assert.Single(_w.PreDeleteFiles());
         Assert.Equal(file, result.BackupFileName);
-        Assert.Matches(@"^workhub_predelete_v9_\d{8}-\d{9}\.db$", file);
+        Assert.Matches($@"^workhub_predelete_v{SchemaMigrations.LatestVersion}_\d{{8}}-\d{{9}}\.db$", file);
         var path = Path.Combine(_w.Root.Paths.PreDeleteBackupsDirectory, file);
-        Assert.True(BackupKit.Validator().Check(path, BackupCheckLevel.Full, 9).IsFullyValidated);
+        Assert.True(BackupKit.Validator().Check(path, BackupCheckLevel.Full, SchemaMigrations.LatestVersion).IsFullyValidated);
         Assert.Empty(BackupKit.Sidecars(path));
 
         // The copy is the whole database as it was when it was taken: every deleted row is there, unchanged.
@@ -603,7 +603,7 @@ public sealed class ProjectTrashPurgeTests : IDisposable
 
         var catalog = new BackupCatalog(_w.Root.Paths);
         var entry = Assert.Single(await catalog.ListAsync(), e => e.Folder == BackupFolder.PreDelete);
-        Assert.Equal((BackupKind.PreDelete, file, 9), (entry.Kind, entry.FileName, entry.NameVersion));
+        Assert.Equal((BackupKind.PreDelete, file, SchemaMigrations.LatestVersion), (entry.Kind, entry.FileName, entry.NameVersion));
         Assert.True((await catalog.CheckAsync(entry, BackupCheckLevel.Full)).IsFullyValidated);
         Assert.DoesNotContain(await catalog.ListAsync(), e => e.FileName == "predelete.lock");
     }
@@ -640,7 +640,7 @@ public sealed class ProjectTrashPurgeTests : IDisposable
 
         Assert.Equal((PurgeOutcome.ConfirmationStale, true), (result.Outcome, result.BackupKept));
         var path = Path.Combine(_w.Root.Paths.PreDeleteBackupsDirectory, Assert.Single(_w.PreDeleteFiles()));
-        Assert.True(BackupKit.Validator().Check(path, BackupCheckLevel.Full, 9).IsFullyValidated);
+        Assert.True(BackupKit.Validator().Check(path, BackupCheckLevel.Full, SchemaMigrations.LatestVersion).IsFullyValidated);
         Assert.Contains("A copy of the whole database was made first and is kept", ProjectContentService.PurgeResultText(result));
     }
 
@@ -773,7 +773,7 @@ public sealed class ProjectTrashPurgeTests : IDisposable
 
         Assert.Equal((PurgeOutcome.Cancelled, false, true), (result.Outcome, result.Committed, result.BackupKept));
         Assert.Equal([result.BackupFileName!], _w.PreDeleteFiles());
-        Assert.True(BackupKit.Validator().Check(Path.Combine(_w.Root.Paths.PreDeleteBackupsDirectory, result.BackupFileName!), BackupCheckLevel.Full, 9).IsFullyValidated);
+        Assert.True(BackupKit.Validator().Check(Path.Combine(_w.Root.Paths.PreDeleteBackupsDirectory, result.BackupFileName!), BackupCheckLevel.Full, SchemaMigrations.LatestVersion).IsFullyValidated);
         Assert.Equal(before, _w.Dump());
         Assert.Equal(checkpoint == "before-delete" ? [PurgeStage.MakingBackup, PurgeStage.BackupPublished, PurgeStage.Deleting] : [PurgeStage.MakingBackup, PurgeStage.BackupPublished], stages);
         Assert.Contains($"Cancelled. Nothing was deleted. A copy of the whole database was made first and is kept: {result.BackupFileName}.", ProjectContentService.PurgeResultText(result));

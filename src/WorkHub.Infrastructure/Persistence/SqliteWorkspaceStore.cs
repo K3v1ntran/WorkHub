@@ -92,8 +92,10 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             details.Parameters.AddWithValue("$projectId", projectId);
             AddDetailParameters(details, draft);
             details.ExecuteNonQuery();
+            if (draft.Tags is { Count: > 0 } tags)
+                WriteTags(connection, transaction, id, tags);
 
-            transaction.Commit(); // node and details together, or neither (Dispose rolls back on any exception)
+            transaction.Commit(); // node, details and tags together, or none (Dispose rolls back on any exception)
             return new WorkspaceNode(id, parentId, WorkspaceNodeType.Project, draft.Name!, false);
         }, cancellationToken);
 
@@ -179,6 +181,10 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 if (details.ExecuteNonQuery() != 1)
                     throw new InvalidOperationException($"Project node {nodeId} has no details row."); // rolls back the rename too
             }
+
+            // Phase 17: the tag set is replaced in the same transaction (diff against the database now, D8); null keeps it.
+            if (draft.Tags is { } tags)
+                WriteTags(connection, transaction, nodeId, tags);
 
             var saved = ReadProject(connection, transaction, nodeId);
             transaction.Commit();
@@ -656,6 +662,50 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             return count;
         }, cancellationToken);
 
+    public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default) =>
+        Run<IReadOnlyList<string>>(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: true);
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            // A tagged Project is excluded when it or any ancestor Folder is in the Workspace Trash (archived ones stay), and so is the
+            // Project being edited ($exclude), before the spellings are counted and the limit applied.
+            command.CommandText = """
+                WITH RECURSIVE up (Project, Node, Depth) AS (
+                    SELECT DISTINCT ProjectNodeId, ProjectNodeId, 0 FROM ProjectTags
+                    UNION ALL
+                    SELECT up.Project, n.ParentId, up.Depth + 1
+                    FROM up JOIN WorkspaceNodes AS n ON n.Id = up.Node
+                    WHERE n.ParentId IS NOT NULL AND up.Depth < $maxDepth
+                ),
+                trashed (Project) AS (
+                    SELECT DISTINCT up.Project FROM up JOIN WorkspaceNodes AS n ON n.Id = up.Node
+                    WHERE n.TrashedAt IS NOT NULL OR n.FolderTrashedAt IS NOT NULL
+                )
+                SELECT NameKey, Name, count(*) FROM ProjectTags
+                WHERE ProjectNodeId NOT IN (SELECT Project FROM trashed)
+                  AND ($exclude IS NULL OR ProjectNodeId <> $exclude)
+                GROUP BY NameKey, Name;
+                """;
+            command.Parameters.AddWithValue("$maxDepth", MaxDepth);
+            command.Parameters.AddWithValue("$exclude", (object?)excludeProjectNodeId ?? DBNull.Value);
+            var spellings = new List<(string Key, string Name, long Uses)>();
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                    spellings.Add((reader.GetString(0), reader.GetString(1), reader.GetInt64(2)));
+            }
+
+            transaction.Commit();
+            return spellings
+                .GroupBy(s => s.Key, StringComparer.Ordinal)
+                .Select(g => g.OrderByDescending(s => s.Uses).ThenBy(s => s.Name, StringComparer.Ordinal).First())
+                .OrderBy(s => s.Key, StringComparer.Ordinal)
+                .Take(Math.Max(0, limit))
+                .Select(s => s.Name)
+                .ToList();
+        }, cancellationToken);
+
     /// <summary>
     /// The Archived panel (§7.1): every node with A(x), no T anywhere on its chain and no A on a strict ancestor (the OUTERMOST
     /// archive roots that are not trashed, Folders and Projects), in tree order.
@@ -1129,7 +1179,79 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             ParseTime(reader.GetString(9)))
         {
             IsTrashed = reader.GetInt64(10) == 1,
+            Tags = ReadTags(connection, transaction, nodeId),
         };
+    }
+
+    /// <summary>
+    /// Phase 17 test seam: runs inside a Save's transaction after the removed tags were deleted and before the new tags are
+    /// inserted (proposal R2b T12). Null in production.
+    /// </summary>
+    internal Action<SqliteConnection, SqliteTransaction>? AfterTagDeletes { get; set; }
+
+    /// <summary>The Project's tags in display order (primary-key order, then spelling).</summary>
+    private static IReadOnlyList<ProjectTag> ReadTags(SqliteConnection connection, SqliteTransaction? transaction, long nodeId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT NameKey, Name, CreatedAt FROM ProjectTags WHERE ProjectNodeId = $id ORDER BY NameKey, Name;";
+        command.Parameters.AddWithValue("$id", nodeId);
+        using var reader = command.ExecuteReader();
+        var tags = new List<ProjectTag>();
+        while (reader.Read())
+            tags.Add(new ProjectTag(reader.GetString(1), reader.GetString(0), ParseTime(reader.GetString(2))));
+        tags.Sort((x, y) => ProjectTagRules.Compare(x.Name, x.NameKey, y.Name, y.NameKey)); // ordinal, independent of SQLite collation
+        return tags;
+    }
+
+    /// <summary>
+    /// Replaces the Project's tag set with <paramref name="names"/> inside the caller's transaction (R2b §4.2.2, §5.4): keys kept
+    /// are not touched (their stored Name and CreatedAt stay), removed keys are deleted FIRST, then new keys are inserted, so a
+    /// Project with 20 tags can replace one in the same Save. Plain DELETE and INSERT statements only: tag rows are never
+    /// updated, replaced or upserted (the source scan test T13 checks the store's SQL).
+    /// The caller has already checked the Project's own and inherited state; V010's triggers are the second line.
+    /// </summary>
+    private void WriteTags(SqliteConnection connection, SqliteTransaction transaction, long nodeId, IReadOnlyList<string> names)
+    {
+        if (ProjectTagRules.NormalizeSet(names, out var wanted) is { } error)
+            throw new ArgumentException(error, nameof(names)); // the validator refuses this before any SQL
+
+        var current = new HashSet<string>(StringComparer.Ordinal);
+        using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT NameKey FROM ProjectTags WHERE ProjectNodeId = $id;";
+            read.Parameters.AddWithValue("$id", nodeId);
+            using var reader = read.ExecuteReader();
+            while (reader.Read())
+                current.Add(reader.GetString(0));
+        }
+
+        var wantedKeys = wanted.Select(t => t.NameKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var removed in current.Where(k => !wantedKeys.Contains(k)).Order(StringComparer.Ordinal))
+        {
+            using var delete = connection.CreateCommand();
+            delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM ProjectTags WHERE ProjectNodeId = $id AND NameKey = $key;";
+            delete.Parameters.AddWithValue("$id", nodeId);
+            delete.Parameters.AddWithValue("$key", removed);
+            delete.ExecuteNonQuery();
+        }
+
+        AfterTagDeletes?.Invoke(connection, transaction);
+
+        var now = Now();
+        foreach (var (name, key) in wanted.Where(t => !current.Contains(t.NameKey)))
+        {
+            using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            insert.CommandText = "INSERT INTO ProjectTags (ProjectNodeId, NameKey, Name, CreatedAt) VALUES ($id, $key, $name, $now);";
+            insert.Parameters.AddWithValue("$id", nodeId);
+            insert.Parameters.AddWithValue("$key", key);
+            insert.Parameters.AddWithValue("$name", name);
+            insert.Parameters.AddWithValue("$now", now);
+            insert.ExecuteNonQuery();
+        }
     }
 
     private static void AddDetailParameters(SqliteCommand command, ProjectDraft draft)

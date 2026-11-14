@@ -249,6 +249,10 @@ public sealed class WorkspaceService(IWorkspaceStore store)
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         store.CountArchivedAsync(cancellationToken);
 
+    /// <summary>Tag suggestions for the Project editor (Phase 17): see <see cref="IWorkspaceStore.ListTagSuggestionsAsync"/>.</summary>
+    public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? editingProjectNodeId = null, CancellationToken cancellationToken = default) =>
+        store.ListTagSuggestionsAsync(editingProjectNodeId, 200, cancellationToken);
+
     // ---- Folder Archive and Folder Trash (schema v9) ---------------------------------------------------------------------------
 
     /// <summary>The confirmation to show for archiving or trashing a Folder (its preview and token), or why it is refused now.</summary>

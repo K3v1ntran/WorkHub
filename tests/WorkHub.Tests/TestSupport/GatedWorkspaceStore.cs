@@ -101,6 +101,9 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         Gated("countArchived", () => inner.CountArchivedAsync(CancellationToken.None));
 
+    public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default) =>
+        Gated("listTagSuggestions", () => inner.ListTagSuggestionsAsync(excludeProjectNodeId, limit, CancellationToken.None));
+
     // ---- Folder Archive and Trash (schema v9): "prepareFolder" (a held read takes its snapshot when called); "archiveFolder",
     // "trashFolder", "unarchiveFolder", "restoreFolder", "undoFolder" (held writes run on release, or commit first with HoldCommitted).
 

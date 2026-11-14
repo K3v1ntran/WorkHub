@@ -19,6 +19,9 @@ public enum SearchField
     Description,
     Target,
     Content,
+
+    /// <summary>A Project's tag (schema v10). The hit's <see cref="WorkspaceSearchHit.Excerpt"/> is the tag's full display name.</summary>
+    Tag,
 }
 
 /// <summary>

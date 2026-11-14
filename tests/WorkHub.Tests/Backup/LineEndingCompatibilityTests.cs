@@ -46,15 +46,15 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         return cells;
     }
 
-    /// <summary>The current schema version (v9: V009 Workspace folder lifecycle).</summary>
+    /// <summary>The current schema version (v10: V010 Project tags).</summary>
     private static readonly int Current = SchemaMigrations.LatestVersion;
 
-    /// <summary>LE-14 (current schema, v9): the producer's database and daily backup, validated by the consumer's real paths.</summary>
+    /// <summary>LE-14 (current schema, v10): the producer's database and daily backup, validated by the consumer's real paths.</summary>
     [Theory]
     [MemberData(nameof(Cells))]
     public async Task CurrentSchema_IsAcceptedAcrossCheckouts(Checkout producer, Checkout consumer)
     {
-        Assert.Equal(9, Current);
+        Assert.Equal(10, Current);
         var paths = Produce(producer, Current, "current");
         var daily = Directory.GetFiles(paths.DailyBackupsDirectory, "*.db").Single();
         var build = Consumer(consumer, paths);
@@ -158,7 +158,7 @@ public sealed class LineEndingCompatibilityTests : IDisposable
     public void AV8ToV9UpgradeAcrossCheckouts_MixesLineEndingsInTheWorkspaceNodesTable_AndIsAcceptedEverywhere(Checkout producer, Checkout upgrader, string fromV009, string fromV003)
     {
         var paths = Produce(producer, 8, $"hybrid9-{producer}-{upgrader}");
-        var result = new DatabaseInitializer(paths, LineEndingMigrations.For(upgrader), _clock, NullAppLog.Instance).Initialize();
+        var result = new DatabaseInitializer(paths, LineEndingMigrations.For(upgrader, 9), _clock, NullAppLog.Instance).Initialize(); // a v9 build (before V010)
         BackupKit.ClearPools(paths.DatabaseFile);
         Assert.Equal((DatabaseInitializationOutcome.Migrated, 8, 9), (result.Outcome, result.PreviousSchemaVersion, result.SchemaVersion));
 
@@ -168,8 +168,8 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         var copy = Snapshot(paths.DatabaseFile);
         foreach (var consumer in Enum.GetValues<Checkout>())
         {
-            Assert.Equal(BackupStatus.FullyValidated, new BackupValidator(Reference(consumer), new BackupFileOps()).Check(copy, BackupCheckLevel.Full, Current).Status);
-            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: Current), new CurrentDataClassifier(Reference(consumer)).ClassifyReadOnly(paths.DatabaseFile));
+            Assert.Equal(BackupStatus.FullyValidated, new BackupValidator(Reference(consumer), new BackupFileOps()).Check(copy, BackupCheckLevel.Full, 9).Status);
+            Assert.Equal(new DataClassification(CurrentDataClass.Healthy, Version: 9), new CurrentDataClassifier(Reference(consumer)).ClassifyReadOnly(paths.DatabaseFile));
         }
     }
 
@@ -185,6 +185,8 @@ public sealed class LineEndingCompatibilityTests : IDisposable
         { "a V009 trigger", "name = 'TR_WorkspaceNodes_LifecycleSerialTransition'" },
         { "a V009 partial index", "name = 'IX_WorkspaceNodes_FolderTrashed'" },
         { "the altered WorkspaceNodes table", "name = 'WorkspaceNodes'" },
+        { "the V010 table (WITHOUT ROWID)", "name = 'ProjectTags'" },
+        { "a V010 trigger", "name = 'TR_ProjectTags_Insert'" },
     };
 
     /// <summary>LE-1: a same-name rewrite that changes only line terminators passes every reference path.</summary>

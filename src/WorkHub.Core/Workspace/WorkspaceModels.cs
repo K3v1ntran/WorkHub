@@ -84,15 +84,28 @@ public sealed record ProjectDetails(
 
     /// <summary>Node Ids from <see cref="Effective"/>'s root down to this Project (empty when live).</summary>
     public IReadOnlyList<long> ChainFromRoot { get; init; } = [];
+
+    /// <summary>The Project's tags (schema v10) in display order: <see cref="ProjectTag.NameKey"/> ordinal, then Name ordinal.</summary>
+    public IReadOnlyList<ProjectTag> Tags { get; init; } = [];
 }
 
-/// <summary>User-editable Project fields. Owner/ProjectManager are free text, unrelated to Owner Manager.</summary>
+/// <summary>
+/// One tag of a Project (Phase 17). A tag is identified by its Project and <see cref="NameKey"/> (the Workspace name key of
+/// <see cref="Name"/>); there is no tag id. <see cref="Name"/> is the spelling stored when the tag was added.
+/// </summary>
+public sealed record ProjectTag(string Name, string NameKey, DateTimeOffset CreatedAt);
+
+/// <summary>
+/// User-editable Project fields. Owner/ProjectManager are free text, unrelated to Owner Manager. <see cref="Tags"/> is the
+/// complete set of tag names the editor wants (Phase 17); null leaves the stored tags unchanged.
+/// </summary>
 public sealed record ProjectDraft(
     string? Name,
     ProjectStatus Status,
     string? Description = null,
     string? Owner = null,
-    string? ProjectManager = null);
+    string? ProjectManager = null,
+    IReadOnlyList<string>? Tags = null);
 
 /// <summary>A folder offered as a Move destination, with its path from the root for display.</summary>
 public sealed record WorkspaceFolderPath(long Id, string Path);

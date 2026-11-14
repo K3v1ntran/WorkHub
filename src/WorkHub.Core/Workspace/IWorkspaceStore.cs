@@ -107,6 +107,16 @@ public interface IWorkspaceStore
 
     Task<int> CountArchivedAsync(CancellationToken cancellationToken = default);
 
+    // ---- Project Tags (schema v10; Phase 17 proposal R2b §4.2) --------------------------------------------------------------------
+
+    /// <summary>
+    /// Tag suggestions: one display name per distinct key over the tags of Projects that are not in the Workspace Trash (directly
+    /// or through an ancestor Folder; archived ones are included), each in its most used stored spelling (ties: ordinal), in key
+    /// order, at most <paramref name="limit"/>. <paramref name="excludeProjectNodeId"/> (the Project being edited) is left out BEFORE the
+    /// spellings are counted and the limit applied; null (a new Project) uses every eligible Project.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default);
+
     // ---- Folder Archive and Folder Trash (schema v9; Phase 13 proposal revision 4 §7) ------------------------------------------
     // M1: one marker on the Folder that roots the subtree; descendants are never written. Every Workspace node write above
     // requires the node's EFFECTIVE state to be Live (an archived or trashed ancestor refuses it: WorkspaceNotLiveException or

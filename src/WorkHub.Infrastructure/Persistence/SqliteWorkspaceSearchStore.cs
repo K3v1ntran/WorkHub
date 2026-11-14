@@ -114,6 +114,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
             using var transaction = connection.BeginTransaction(deferred: true);
             var nodes = ReadNodes(connection, transaction, cancellationToken);
             var folders = ReadFolders(connection, transaction, cancellationToken);
+            var tags = ReadTags(connection, transaction, cancellationToken);
             var candidates = new List<Candidate>();
 
             foreach (var node in nodes.Values)
@@ -133,6 +134,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     (SearchField.Owner, WorkspaceSearchText.Mask(node.Owner, terms), node.Owner),
                     (SearchField.ProjectManager, WorkspaceSearchText.Mask(node.ProjectManager, terms), node.ProjectManager),
                     (SearchField.Description, WorkspaceSearchText.Mask(node.Description, terms), node.Description),
+                    TagField(tags.GetValueOrDefault(node.Id), terms),
                 };
                 if (Combine(fields) == all)
                     candidates.Add(Candidate.From(new SearchItemRef(SearchResultKind.Project, node.Id), node.Id, node.Name, nameMask == all, fields));
@@ -209,6 +211,7 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
                     : c.ExcerptSource;
                 var excerpt = c.Field is SearchField.Description or SearchField.Target or SearchField.Content
                     ? WorkspaceSearchText.Excerpt(excerptSource, terms)
+                    : c.Field == SearchField.Tag ? c.ExcerptSource // the reported tag's full display name (Phase 17 §4.4; no ellipsis)
                     : null;
                 var owner = c.Item.Kind is SearchResultKind.Project or SearchResultKind.WorkspaceFolder ? c.Item.Id : c.ProjectNodeId!.Value;
                 var state = nodes[owner].Effective; // never Trashed: trashed nodes (and their content) are not candidates
@@ -228,6 +231,52 @@ public sealed class SqliteWorkspaceSearchStore : IWorkspaceSearchStore
         }, cancellationToken, onBusy);
 
     private static int Combine((SearchField Field, int Mask, string? Text)[] fields) => fields.Aggregate(0, (mask, f) => mask | f.Mask);
+
+    /// <summary>
+    /// The Tag field of a Project (Phase 17 proposal R2b §4.4): its mask is the OR of every tag's mask (words may match different
+    /// tags); its text is the FIRST tag in display order (key ordinal, then spelling ordinal) that contains a word, which is the
+    /// tag the explanation line names when Tag is the reported field.
+    /// </summary>
+    private static (SearchField Field, int Mask, string? Text) TagField(IReadOnlyList<TagRow>? tags, IReadOnlyList<string> terms)
+    {
+        if (tags is null)
+            return (SearchField.Tag, 0, null);
+        var mask = 0;
+        string? first = null;
+        foreach (var tag in tags)
+        {
+            var m = WorkspaceSearchText.MaskOfFolded(tag.NameKey, terms);
+            if (m != 0 && first is null)
+                first = tag.Name;
+            mask |= m;
+        }
+
+        return (SearchField.Tag, mask, first);
+    }
+
+    /// <summary>All tag rows by Project, each list in display order (ordinal, independent of SQLite collation).</summary>
+    private static Dictionary<long, IReadOnlyList<TagRow>> ReadTags(SqliteConnection connection, SqliteTransaction transaction, CancellationToken token)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT ProjectNodeId, NameKey, Name FROM ProjectTags;";
+        using var reader = command.ExecuteReader();
+        var byProject = new Dictionary<long, List<TagRow>>();
+        while (reader.Read())
+        {
+            token.ThrowIfCancellationRequested();
+            var project = reader.GetInt64(0);
+            if (!byProject.TryGetValue(project, out var list))
+                byProject[project] = list = [];
+            list.Add(new TagRow(reader.GetString(1), reader.GetString(2)));
+        }
+
+        foreach (var list in byProject.Values)
+            list.Sort((x, y) => ProjectTagRules.Compare(x.Name, x.NameKey, y.Name, y.NameKey));
+        return byProject.ToDictionary(p => p.Key, p => (IReadOnlyList<TagRow>)p.Value);
+    }
+
+    private sealed record TagRow(string NameKey, string Name);
 
     private string Location(Candidate candidate, IReadOnlyDictionary<long, NodeRow> nodes, IReadOnlyDictionary<long, FolderRow> folders)
     {

@@ -3,6 +3,7 @@ using System.Globalization;
 using WorkHub.Core.Backup;
 using WorkHub.Core.Workspace.Content;
 using WorkHub.Tests.TestSupport;
+using WorkHub.Infrastructure.Persistence.Migrations;
 
 namespace WorkHub.Tests.Workspace;
 
@@ -44,7 +45,7 @@ public sealed class ProjectTrashPurgeCrashTests : IDisposable
         else
         {
             var published = Assert.Single(_w.PreDeleteFiles());
-            Assert.True(BackupKit.Validator().Check(Path.Combine(_w.Root.Paths.PreDeleteBackupsDirectory, published), BackupCheckLevel.Full, 9).IsFullyValidated);
+            Assert.True(BackupKit.Validator().Check(Path.Combine(_w.Root.Paths.PreDeleteBackupsDirectory, published), BackupCheckLevel.Full, SchemaMigrations.LatestVersion).IsFullyValidated);
         }
 
         var request = PurgeRequest.Selected(_w.P, [_w.E_FB]);

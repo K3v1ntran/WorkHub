@@ -169,12 +169,12 @@ public sealed class RestoreExecutionTests : RestoreTestBase
 
         Assert.Null(error);
         Assert.Equal(DatabaseInitializationOutcome.Migrated, result!.Database.Outcome);
-        Assert.Equal((8, 9), (result.Database.PreviousSchemaVersion, result.Database.SchemaVersion));
-        Assert.StartsWith("workhub_v8_before_v9_", Path.GetFileName(result.Database.MigrationBackupFile));
+        Assert.Equal((8, SchemaMigrations.LatestVersion), (result.Database.PreviousSchemaVersion, result.Database.SchemaVersion)); // v9 and, since Phase 17, v10
+        Assert.StartsWith($"workhub_v8_before_v{SchemaMigrations.LatestVersion}_", Path.GetFileName(result.Database.MigrationBackupFile));
         Assert.True(BackupKit.Validator().Check(result.Database.MigrationBackupFile!, BackupCheckLevel.Full, 8).IsFullyValidated);
         RestoreKit.ClearPools(Root);
         using var restored = BackupKit.Open(Db, SqliteOpenMode.ReadOnly);
-        Assert.Equal(9L, BackupKit.Scalar(restored, "PRAGMA user_version;"));
+        Assert.Equal((long)SchemaMigrations.LatestVersion, BackupKit.Scalar(restored, "PRAGMA user_version;"));
         Assert.Equal(0L, BackupKit.Scalar(restored, "SELECT count(*) FROM WorkspaceNodes WHERE FolderArchivedAt IS NOT NULL OR FolderTrashedAt IS NOT NULL OR LifecycleSerial <> 0;"));
         var v9Data = Persistence.ProjectContentMigrationTests.DataSnapshot(restored)
             .Select(r => r.StartsWith("WorkspaceNodes|", StringComparison.Ordinal)
@@ -182,7 +182,7 @@ public sealed class RestoreExecutionTests : RestoreTestBase
                 : r)
             .ToList();
         Assert.Equal(v8Data, v9Data);
-        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(9, SchemaFingerprint.Read(restored)));
+        Assert.Empty(SchemaReference.Frozen.DifferencesFrom(SchemaMigrations.LatestVersion, SchemaFingerprint.Read(restored)));
     }
 
     [Fact]

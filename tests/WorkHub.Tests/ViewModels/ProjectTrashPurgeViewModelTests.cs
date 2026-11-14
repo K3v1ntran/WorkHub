@@ -4,6 +4,7 @@ using WorkHub.Core.Workspace.Content;
 using WorkHub.Infrastructure.Persistence;
 using WorkHub.Presentation.ViewModels;
 using WorkHub.Tests.TestSupport;
+using WorkHub.Infrastructure.Persistence.Migrations;
 
 namespace WorkHub.Tests.ViewModels;
 
@@ -88,7 +89,7 @@ public sealed class ProjectTrashPurgeViewModelTests : IDisposable
         foreach (var claim in new[] { "secure", "erase", "wipe", "from your computer", "permanently from" })
             Assert.DoesNotContain(claim, dialog.ExplanationText, StringComparison.OrdinalIgnoreCase);
 
-        Assert.StartsWith("Removed from the database: 4 entries (3 folders, 3 links, 1 note). Backup made first: workhub_predelete_v9_", trash.Notice);
+        Assert.StartsWith($"Removed from the database: 4 entries (3 folders, 3 links, 1 note). Backup made first: workhub_predelete_v{SchemaMigrations.LatestVersion}_", trash.Notice);
         await trash.CurrentLoad;
         Assert.DoesNotContain(trash.Entries, e => e.Id == _w.E_FB || e.Id == _w.E_L1 || e.Id == _w.E_NB);
         Assert.False(Owner.HasUndo); // no item Undo after a purge

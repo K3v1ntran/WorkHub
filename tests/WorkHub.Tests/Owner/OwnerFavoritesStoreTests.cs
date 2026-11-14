@@ -110,8 +110,11 @@ public sealed class OwnerFavoritesStoreTests : IDisposable
     [Fact]
     public void F14_NoMigration_NoNewPackage_TheSchemaStaysV9()
     {
-        Assert.Equal(9, SchemaMigrations.LatestVersion);
-        Assert.Equal(Enumerable.Range(1, 9), SchemaMigrations.All.Select(m => m.Version));
+        // Favorites (Phase 16) added no migration: the flag is V002's IsFavorite. The only later migration is V010 (Phase 17 Project
+        // tags), which does not touch OwnerItems.
+        Assert.Equal(10, SchemaMigrations.LatestVersion);
+        Assert.Equal(Enumerable.Range(1, 10), SchemaMigrations.All.Select(m => m.Version));
+        Assert.DoesNotContain("OwnerItems", V010_ProjectTags.Sql, StringComparison.Ordinal);
 
         var repo = FindRepoRoot();
         var packages = Directory.GetFiles(Path.Combine(repo, "src"), "*.csproj", SearchOption.AllDirectories)
