@@ -1,0 +1,73 @@
+<Window x:Class="WorkHub.App.Views.BulkArchiveWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:BulkArchiveViewModel}"
+        Title="{Binding Title}"
+        Width="560" Height="520" MinWidth="380" MinHeight="320" ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=ProjectList}">
+    <!-- Phase 19: Ctrl+A ticks every row; Space toggles the focused row; Cancel is the default (Enter and Esc never archive). -->
+    <Window.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+    </Window.Resources>
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Control" Key="A" Command="{Binding SelectAllCommand}" />
+    </Window.InputBindings>
+    <DockPanel Margin="20,12,20,16">
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Text="{Binding Message}" AutomationProperties.AutomationId="BulkArchiveMessage" />
+        <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding TruncatedText}"
+                   Visibility="{Binding TruncatedText, Converter={StaticResource NullToCollapsed}}" AutomationProperties.AutomationId="BulkArchiveTruncated" />
+        <Grid DockPanel.Dock="Bottom" Margin="0,16,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <Button Content="Select all" Command="{Binding SelectAllCommand}" AutomationProperties.AutomationId="BulkArchiveSelectAll" />
+                <Button Content="Select none" Margin="8,0,0,0" Command="{Binding SelectNoneCommand}" AutomationProperties.AutomationId="BulkArchiveSelectNone" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Cancel" IsCancel="True" IsDefault="True" Command="{Binding CancelCommand}" AutomationProperties.AutomationId="BulkArchiveCancel" />
+                <Button Content="{Binding ArchiveText}" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ArchiveCommand}"
+                        AutomationProperties.Name="{Binding ArchiveText}" AutomationProperties.AutomationId="BulkArchiveConfirm" />
+            </StackPanel>
+        </Grid>
+        <ListBox x:Name="ProjectList" Margin="0,12,0,0" ItemsSource="{Binding Rows}" SelectionMode="Single"
+                 KeyDown="OnListKeyDown" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 AutomationProperties.Name="Projects to archive" AutomationProperties.AutomationId="BulkArchiveList">
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:BulkArchiveRowViewModel}">
+                    <Grid Margin="2,3">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <CheckBox Grid.Column="0" VerticalAlignment="Center" IsChecked="{Binding IsChecked}" Focusable="False"
+                                  AutomationProperties.Name="{Binding AccessibleName}" />
+                        <StackPanel Grid.Column="1" Margin="8,0,8,0">
+                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Style="{StaticResource FieldHint}" Text="{Binding Owner}" TextTrimming="CharacterEllipsis"
+                                       Visibility="{Binding Owner, Converter={StaticResource NullToCollapsed}}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                            <TextBlock Text="{Binding StatusText}" HorizontalAlignment="Right" />
+                            <TextBlock Style="{StaticResource FieldHint}" Text="{Binding UpdatedText, StringFormat='Updated {0}'}" HorizontalAlignment="Right" />
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+        </ListBox>
+    </DockPanel>
+</Window>

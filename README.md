@@ -176,6 +176,15 @@ is touched.
   with "An archived project named … already exists here." A folder that holds an archived project cannot be removed.
 - An archived project cannot be renamed, edited, moved or moved to the Trash; unarchive it first. Search still finds
   archived projects and their content, marked "Archived"; revealing one opens Archived with it selected.
+- **Archive projects…** (right-click on a folder, the tree's or the strip's More (⋯)) lists the projects directly in that
+  folder; **Archive projects at the top level…** lists the top-level projects. Projects in subfolders are not listed (use
+  Archive folder… for a whole branch). Completed projects start ticked; Space ticks or unticks a row, Ctrl+A ticks all,
+  and Cancel is the default (Enter and Esc never archive). At most 500 projects are listed at a time. Each ticked project
+  is archived on its own, exactly like Archive above, and only if it is still in that folder: a project moved elsewhere
+  meanwhile is left as it is and shown where it is now. If the folder itself (or a folder above it) was archived or moved
+  to the Trash meanwhile, the remaining projects are not attempted. The message says how many were archived and why the
+  others were not (**Details** lists every project). **Undo** restores exactly the projects this action archived (each one
+  only if it was not changed elsewhere) and never changes the selection.
 - **Older WorkHub versions.** Schema v8 makes WorkHub 1.0.0 (schema v7) refuse this data folder from the next time it
   starts. A 1.0.0 window that is already open is not stopped by this, so close every WorkHub window before the first start
   of this version.
@@ -351,7 +360,7 @@ confirmation.
 - The message after a copy or move offers **Open destination**, which shows the copy where it is now. There is **no Undo**
   across projects.
 
-Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags on folders or content
+Not available yet: permanent delete of projects or folders of the Workspace, bulk Unarchive, tags on folders or content
 (and renaming a tag across projects), rich text, drag-and-drop and manual ordering (including of Favorites).
 
 ### Workspace search

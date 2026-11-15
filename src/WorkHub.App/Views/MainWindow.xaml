@@ -88,6 +88,9 @@
             <MenuItem Header="Move to Trash…" InputGestureText="Del" Command="{Binding TrashProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Archive…" Command="{Binding ArchiveProjectCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Archive folder…" Command="{Binding ArchiveFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
+            <!-- Phase 19: Bulk Archive checklists (a Folder's direct Projects; the top-level Projects). -->
+            <MenuItem Header="Archive projects…" Command="{Binding ArchiveProjectsInFolderCommand}" AutomationProperties.Name="Archive projects in folder"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
+            <MenuItem Header="Archive projects at the top level…" Command="{Binding ArchiveTopLevelProjectsCommand}" AutomationProperties.Name="Archive projects at the top level"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Archive}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Move folder to Trash…" InputGestureText="Del" Command="{Binding TrashFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" /></MenuItem.Icon></MenuItem>
             <Separator />
@@ -842,6 +845,10 @@
                             <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding UndoCommand}" FontWeight="SemiBold"
                                     Visibility="{Binding IsUndoAvailable, Converter={StaticResource BoolToVisibility}}"
                                     AutomationProperties.Name="Undo" ToolTip="Undo the move to the Trash or the archive shown in this message" Content="Undo" />
+                            <!-- Phase 19: the per-Project result of the last Bulk Archive / Bulk Undo shown in this message. -->
+                            <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Command="{Binding ShowBulkArchiveDetailsCommand}"
+                                    Visibility="{Binding IsBulkDetailsAvailable, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.Name="Bulk archive details" Content="Details" />
                             <TextBlock VerticalAlignment="Center" Foreground="{StaticResource Brush.Error}" TextWrapping="Wrap"
                                        Text="{Binding BannerMessage}" AutomationProperties.AutomationId="WorkspaceBanner" />
                         </DockPanel>

@@ -81,7 +81,9 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
         Gated("removeFolder", () => inner.RemoveEmptyFolderAsync(nodeId, cancellationToken), readFirst: false);
 
     public Task<WorkspaceNodeState?> GetNodeStateAsync(long nodeId, CancellationToken cancellationToken = default) =>
-        Gated("nodeState", () => inner.GetNodeStateAsync(nodeId, CancellationToken.None));
+        ScriptNodeState.TryRemove(nodeId, out var script)
+            ? Gated("nodeState", script)
+            : Gated("nodeState", () => inner.GetNodeStateAsync(nodeId, CancellationToken.None));
 
     // ---- Project Archive: "archiveProject", "unarchiveProject", "undoArchive" (held writes run on release, or commit first with
     // HoldCommitted); "listArchived", "countArchived" (held reads take their snapshot when called).
@@ -100,6 +102,30 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
 
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         Gated("countArchived", () => inner.CountArchivedAsync(CancellationToken.None));
+
+    // ---- Phase 19 Bulk Archive: "bulkCandidates" (a held read takes its snapshot when called); "archiveInPlace" (a held write
+    // runs on release, or commits first with HoldCommitted). ScriptArchiveInPlace / ScriptNodeState replace one call's result.
+
+    /// <summary>When set, the next "archiveInPlace" call returns this (or throws) instead of reaching the database.</summary>
+    public Func<BulkArchiveTarget, Task<BulkArchiveResult>>? ScriptArchiveInPlace { get; set; }
+
+    /// <summary>When set, the next "nodeState" call for that node returns this (or throws) instead of reaching the database.</summary>
+    public ConcurrentDictionary<long, Func<Task<WorkspaceNodeState?>>> ScriptNodeState { get; } = new();
+
+    public Task<BulkArchiveCandidates> ListBulkArchiveCandidatesAsync(long? parentId, CancellationToken cancellationToken = default) =>
+        Gated("bulkCandidates", () => inner.ListBulkArchiveCandidatesAsync(parentId, CancellationToken.None));
+
+    public Task<BulkArchiveResult> ArchiveProjectInPlaceAsync(BulkArchiveTarget target, CancellationToken cancellationToken = default)
+    {
+        if (ScriptArchiveInPlace is { } script)
+        {
+            ScriptArchiveInPlace = null;
+            _calls.AddOrUpdate("archiveInPlace", 1, (_, n) => n + 1);
+            return script(target);
+        }
+
+        return Gated("archiveInPlace", () => inner.ArchiveProjectInPlaceAsync(target, cancellationToken), readFirst: false);
+    }
 
     public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default) =>
         Gated("listTagSuggestions", () => inner.ListTagSuggestionsAsync(excludeProjectNodeId, limit, CancellationToken.None));

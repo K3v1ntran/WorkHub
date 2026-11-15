@@ -249,6 +249,17 @@ public sealed class WorkspaceService(IWorkspaceStore store)
     public Task<int> CountArchivedAsync(CancellationToken cancellationToken = default) =>
         store.CountArchivedAsync(cancellationToken);
 
+    /// <summary>Phase 19: the live Projects directly in one place, for the Bulk Archive dialog (read only).</summary>
+    public Task<BulkArchiveCandidates> ListBulkArchiveCandidatesAsync(long? parentId, CancellationToken cancellationToken = default) =>
+        store.ListBulkArchiveCandidatesAsync(parentId, cancellationToken);
+
+    /// <summary>
+    /// Phase 19: archives one Project only if it is still in the confirmed place (one write transaction; see
+    /// <see cref="IWorkspaceStore.ArchiveProjectInPlaceAsync"/>). Nothing on disk is touched.
+    /// </summary>
+    public Task<BulkArchiveResult> ArchiveProjectInPlaceAsync(BulkArchiveTarget target, CancellationToken cancellationToken = default) =>
+        store.ArchiveProjectInPlaceAsync(target, cancellationToken);
+
     /// <summary>Tag suggestions for the Project editor (Phase 17): see <see cref="IWorkspaceStore.ListTagSuggestionsAsync"/>.</summary>
     public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? editingProjectNodeId = null, CancellationToken cancellationToken = default) =>
         store.ListTagSuggestionsAsync(editingProjectNodeId, 200, cancellationToken);

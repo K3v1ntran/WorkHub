@@ -529,12 +529,119 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                     FolderTrashed = chain[^1].FolderTrashedAt is not null,
                     Effective = effective,
                     ChainFromRoot = NodeLifecycle.FromRoot(chain, effective),
+                    Node = ReadNodeRow(connection, transaction, nodeId), // Phase 19 (R2d): same snapshot as the state
                 };
             }
 
             transaction.Commit();
             return state;
         }, cancellationToken);
+
+    /// <summary>The node as a tree row (id, parent, type, name, has visible children), or null when it does not exist.</summary>
+    private static WorkspaceNode? ReadNodeRow(SqliteConnection connection, SqliteTransaction transaction, long nodeId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = $"""
+            SELECT n.Id, n.ParentId, n.NodeType, n.Name,
+                   EXISTS (SELECT 1 FROM WorkspaceNodes AS c WHERE c.ParentId = n.Id AND {Visible("c")}) AS HasChildren
+            FROM WorkspaceNodes AS n WHERE n.Id = $id;
+            """;
+        command.Parameters.AddWithValue("$id", nodeId);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadShownNode(reader) : null;
+    }
+
+    // ---- Phase 19: Bulk Archive of Projects --------------------------------------------------------------------------
+
+    public Task<BulkArchiveCandidates> ListBulkArchiveCandidatesAsync(long? parentId, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            // One read transaction: the place's effective state and its rows come from the same snapshot (as ListChildrenAsync).
+            using var transaction = connection.BeginTransaction(deferred: true);
+            if (parentId is { } id)
+            {
+                if (new NodeLifecycle(connection, transaction, MaxDepth).Chain(id) is not { } chain)
+                    return new BulkArchiveCandidates(ChildrenReadStatus.ParentMissing, [], false);
+                if (!NodeLifecycle.Of(chain).IsLive)
+                    return new BulkArchiveCandidates(ChildrenReadStatus.ParentNotLive, [], false);
+            }
+
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = $"""
+                SELECT n.Id, n.Name, p.Status, p.Owner, n.UpdatedAt
+                FROM WorkspaceNodes AS n JOIN Projects AS p ON p.NodeId = n.Id
+                WHERE n.ParentId IS $parent AND n.NodeType = 'Project' AND {Visible("n")}
+                LIMIT $limit;
+                """;
+            command.Parameters.AddWithValue("$parent", (object?)parentId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$limit", MaxRowsPerQuery);
+            var rows = new List<BulkArchiveCandidate>();
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    rows.Add(new BulkArchiveCandidate(
+                        reader.GetInt64(0),
+                        reader.GetString(1),
+                        ProjectStatuses.FromStorageCode(reader.GetString(2)),
+                        reader.IsDBNull(3) ? null : reader.GetString(3),
+                        ParseTime(reader.GetString(4))));
+                }
+            }
+
+            transaction.Commit();
+            // Sorted like the tree (Projects only: by name, then Id), then bounded (D6).
+            rows.Sort((a, b) => WorkspaceNodeOrder.Instance.Compare((WorkspaceNodeType.Project, a.Name, a.NodeId), (WorkspaceNodeType.Project, b.Name, b.NodeId)));
+            var truncated = rows.Count > BulkArchiveCandidates.MaxRows;
+            return new BulkArchiveCandidates(ChildrenReadStatus.Listed, truncated ? rows.Take(BulkArchiveCandidates.MaxRows).ToList() : rows, truncated);
+        }, cancellationToken);
+
+    public Task<BulkArchiveResult> ArchiveProjectInPlaceAsync(BulkArchiveTarget target, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+            var nodeId = target.ProjectId;
+
+            // Fixed check order (§4.3), all under the write lock; every refusal writes nothing and creates no event.
+            if (ReadArchiveState(connection, transaction, nodeId) is not { } state)
+                return BulkArchiveResult.Refused(BulkArchiveOutcome.NotFound);
+            if (state.Type != WorkspaceNodeType.Project)
+                return BulkArchiveResult.Refused(BulkArchiveOutcome.NotAProject);
+            if (state.ParentId != target.ExpectedParentId) // null compares as null (top level), never as "any"
+                return BulkArchiveResult.Refused(BulkArchiveOutcome.MovedElsewhere) with { CurrentParentId = state.ParentId };
+            if (state.Trashed)
+                return BulkArchiveResult.Refused(BulkArchiveOutcome.ProjectTrashed);
+            if (state.Status == ProjectStatus.Archived)
+                return BulkArchiveResult.Refused(BulkArchiveOutcome.AlreadyArchived);
+            // The parent IS the confirmed place here, so a non-live chain is a fact about that place (never at the top level).
+            if (ParentState(connection, transaction, nodeId) is { IsLive: false } location)
+                return BulkArchiveResult.Refused(BulkArchiveOutcome.LocationNotLive) with { LocationState = location.State, MarkedNodeId = location.RootId };
+
+            var serial = CommitArchive(connection, transaction, nodeId, state);
+            var entry = ReadArchivedEntry(connection, transaction, nodeId);
+            transaction.Commit();
+            return new BulkArchiveResult(BulkArchiveOutcome.Archived, entry, new ArchiveEvent(nodeId, serial, state.Status!.Value), null, null, null);
+        }, cancellationToken);
+
+    /// <summary>The guarded status/serial UPDATE shared with the Bulk Archive (same statement as <see cref="ArchiveProjectAsync"/>).</summary>
+    private static long CommitArchive(SqliteConnection connection, SqliteTransaction transaction, long nodeId, ArchiveState state)
+    {
+        using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = """
+            UPDATE Projects SET Status = 'Archived', ArchiveSerial = ArchiveSerial + 1
+            WHERE NodeId = $id AND Status = $observedStatus AND ArchiveSerial = $observedSerial
+            RETURNING ArchiveSerial;
+            """;
+        update.Parameters.AddWithValue("$id", nodeId);
+        update.Parameters.AddWithValue("$observedStatus", ProjectStatuses.StorageCode(state.Status!.Value));
+        update.Parameters.AddWithValue("$observedSerial", state.Serial!.Value);
+        return update.ExecuteScalar() is long committed
+            ? committed
+            : throw new InvalidOperationException("An active Project was not archived under the write lock; nothing was changed.");
+    }
 
     // ---- Project Archive (schema v8) -----------------------------------------------------------------------------------
 

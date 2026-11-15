@@ -93,6 +93,18 @@ internal sealed class FakeDialogs : IDialogService
         return OnPurgeConfirmation(viewModel);
     }
 
+    /// <summary>Phase 19: plays the Bulk Archive checklist. By default the user confirms the preselected (Completed) rows.</summary>
+    public Func<BulkArchiveViewModel, bool> OnBulkArchive { get; set; } = vm => vm.CheckedCount > 0;
+
+    /// <summary>Every Bulk Archive checklist shown, in order.</summary>
+    public List<BulkArchiveViewModel> BulkArchiveDialogs { get; } = [];
+
+    public bool ShowBulkArchive(BulkArchiveViewModel viewModel)
+    {
+        BulkArchiveDialogs.Add(viewModel);
+        return OnBulkArchive(viewModel);
+    }
+
     /// <summary>Plays the Copy / Move dialog: by default the user cancels.</summary>
     public Func<CrossProjectDialogViewModel, bool> OnCrossProject { get; set; } = _ => false;
 

@@ -107,6 +107,24 @@ public interface IWorkspaceStore
 
     Task<int> CountArchivedAsync(CancellationToken cancellationToken = default);
 
+    // ---- Phase 19: Bulk Archive of Projects (additive; ArchiveProjectAsync above is unchanged) -------------------------------
+
+    /// <summary>
+    /// The Bulk Archive dialog's list: the live Projects directly in <paramref name="parentId"/> (null = the top level), in ONE
+    /// read transaction with the place's effective state (a place that is not live lists nothing), at most
+    /// <see cref="BulkArchiveCandidates.MaxRows"/>. Never writes.
+    /// </summary>
+    Task<BulkArchiveCandidates> ListBulkArchiveCandidatesAsync(long? parentId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Location-bound Archive (proposal §4.3): in ONE <c>BEGIN IMMEDIATE</c> transaction, in this order — node missing →
+    /// NotFound; not a Project → NotAProject; current parent ≠ <see cref="BulkArchiveTarget.ExpectedParentId"/> → MovedElsewhere;
+    /// in the Trash → ProjectTrashed; already archived → AlreadyArchived; the (confirmed) parent chain not live →
+    /// LocationNotLive; otherwise the same guarded status/serial UPDATE as <see cref="ArchiveProjectAsync"/>. Every non-Archived
+    /// outcome writes nothing and creates no event.
+    /// </summary>
+    Task<BulkArchiveResult> ArchiveProjectInPlaceAsync(BulkArchiveTarget target, CancellationToken cancellationToken = default);
+
     // ---- Project Tags (schema v10; Phase 17 proposal R2b §4.2) --------------------------------------------------------------------
 
     /// <summary>

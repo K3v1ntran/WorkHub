@@ -97,6 +97,59 @@ public sealed record ArchiveUndoResult(ArchiveUndoOutcome Outcome, RestoredProje
     public static ArchiveUndoResult Refused(ArchiveUndoOutcome outcome) => new(outcome, null);
 }
 
+// ---- Phase 19: Bulk Archive of Projects (proposal Revision 2 + R2a–R2d, §4.3) ------------------------------------------
+
+/// <summary>One ticked row of the Bulk Archive dialog: the Project and the place the user confirmed (null = the top level).</summary>
+public readonly record struct BulkArchiveTarget(long ProjectId, long? ExpectedParentId);
+
+public enum BulkArchiveOutcome
+{
+    Archived,
+    NotFound,
+    NotAProject,
+
+    /// <summary>The Project's current parent is not the confirmed place; nothing was written and no event was created.</summary>
+    MovedElsewhere,
+
+    ProjectTrashed,
+    AlreadyArchived,
+
+    /// <summary>
+    /// The Project is still in the confirmed place and that place (the folder itself or an ancestor) is archived or trashed;
+    /// nothing was written. Only this outcome stops a batch.
+    /// </summary>
+    LocationNotLive,
+}
+
+/// <param name="Entry">Archived only: the Project as it now appears in the Archived panel.</param>
+/// <param name="Event">Archived only: the committed archive event (the Bulk Undo token).</param>
+/// <param name="CurrentParentId">MovedElsewhere: the parent seen at the refusal (Details only; never used to place a row).</param>
+/// <param name="LocationState">LocationNotLive: Archived or Trashed.</param>
+/// <param name="MarkedNodeId">LocationNotLive: the confirmed folder itself or the outermost marked ancestor.</param>
+public sealed record BulkArchiveResult(
+    BulkArchiveOutcome Outcome,
+    ArchivedProjectEntry? Entry,
+    ArchiveEvent? Event,
+    long? CurrentParentId,
+    LifecycleState? LocationState,
+    long? MarkedNodeId)
+{
+    public static BulkArchiveResult Refused(BulkArchiveOutcome outcome) => new(outcome, null, null, null, null, null);
+}
+
+/// <summary>A live Project directly in one place, as the Bulk Archive dialog lists it.</summary>
+public sealed record BulkArchiveCandidate(long NodeId, string Name, ProjectStatus Status, string? Owner, DateTimeOffset UpdatedAt);
+
+/// <summary>
+/// The Bulk Archive dialog's read (one read transaction): the place's own effective state and its live Projects, at most
+/// <see cref="BulkArchiveCandidates.MaxRows"/>; <see cref="Truncated"/> when more exist.
+/// </summary>
+public sealed record BulkArchiveCandidates(ChildrenReadStatus Status, IReadOnlyList<BulkArchiveCandidate> Projects, bool Truncated)
+{
+    /// <summary>D6: the dialog lists at most this many rows.</summary>
+    public const int MaxRows = 500;
+}
+
 /// <summary>The Project is archived: its node is not renamed, edited, moved or trashed (Phase 12 A3); nothing was written.</summary>
 public sealed class ProjectArchivedException(long projectNodeId, Exception? inner = null)
     : Exception($"Project {projectNodeId} is archived.", inner)

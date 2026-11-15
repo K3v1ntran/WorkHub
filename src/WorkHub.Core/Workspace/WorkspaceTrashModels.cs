@@ -115,6 +115,13 @@ public sealed record WorkspaceNodeState(long NodeId, WorkspaceNodeType Type, lon
 
     /// <summary>Node Ids from <see cref="Effective"/>'s root down to this node (empty when live).</summary>
     public IReadOnlyList<long> ChainFromRoot { get; init; } = [];
+
+    /// <summary>
+    /// Phase 19 (D10, R2d): the node as a tree row (id, parent, type, name, has visible children), read in the SAME read
+    /// transaction as every other member. The only data a confirmation read may use to re-create a row that left the cache.
+    /// Null when the node does not exist (and from stores that do not fill it).
+    /// </summary>
+    public WorkspaceNode? Node { get; init; }
 }
 
 /// <summary>The Project (or the Project owning the content) is in the Workspace Trash; nothing was written.</summary>

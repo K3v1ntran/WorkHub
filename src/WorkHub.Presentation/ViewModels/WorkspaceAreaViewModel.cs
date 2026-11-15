@@ -56,6 +56,46 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// started earlier skips such rows unless the node already sits in its branch (Phase 8 proposal §8.3).
     /// </summary>
     private readonly Dictionary<long, int> _touchedByReveal = [];
+
+    /// <summary>
+    /// Phase 19 (D10, R2b–R2d): node Id → the sequence at which a READ-derived result (lazy load, details, Edit pre-read, folder
+    /// check, reconcile, confirmation) last placed, moved or removed it. Keyed by Id, so it outlives a removed row and a
+    /// forgotten instance. It never discards a result (rule C: it triggers one confirmation read). Pruned once no tracked
+    /// read older than the stamp is in flight.
+    /// </summary>
+    private readonly Dictionary<long, int> _readUpdated = [];
+
+    /// <summary>Read marks (sequence → count) of the tracked reads still in flight (pruning of <see cref="_readUpdated"/>).</summary>
+    private readonly SortedDictionary<int, int> _readsInFlight = new();
+
+    /// <summary>Per node: the confirmation read running (and whether one more is queued). At most one running + one queued.</summary>
+    private readonly Dictionary<long, ConfirmationSlot> _confirmations = [];
+
+    private sealed class ConfirmationSlot
+    {
+        public Task Task { get; set; } = Task.CompletedTask;
+
+        public bool Queued { get; set; }
+    }
+
+    private enum ConfirmationOutcome
+    {
+        /// <summary>The read was applied (or there was nothing to apply); a queued request still gets one more read.</summary>
+        Done,
+
+        /// <summary>Rule C: another read-derived update landed while it ran; one more read decides.</summary>
+        Again,
+
+        /// <summary>Rule L: a committed write of this window is newer; the result is discarded and the node's run ends, queued request included.</summary>
+        Superseded,
+
+        /// <summary>Read failed or its Node was missing/inconsistent; logged, nothing applied, no follow-up.</summary>
+        Failed,
+    }
+
+    /// <summary>Tests: confirmation results discarded by rule L (a committed write of this window was newer).</summary>
+    internal int ConfirmationsSuperseded { get; private set; }
+
     private bool _applyingReveal;
     private bool _quietSelection;
     private int _registrations;
@@ -77,7 +117,14 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// carries its committed <see cref="ArchiveEvent"/>: it applies to exactly that archive event (Phase 12 A10). A Folder
     /// Archive's or Folder Trash's Undo carries its <see cref="FolderLifecycleEvent"/> (its LifecycleSerial, D13).
     /// </summary>
-    private sealed record UndoOffer(long NodeId, string Name, int Visit, string Message, ArchiveEvent? Archive = null, FolderLifecycleEvent? Folder = null);
+    private sealed record UndoOffer(long NodeId, string Name, int Visit, string Message, ArchiveEvent? Archive = null, FolderLifecycleEvent? Folder = null)
+    {
+        /// <summary>Phase 19 Bulk Undo: exactly the archive events the batch created, in batch order.</summary>
+        public IReadOnlyList<ArchiveEvent>? Bulk { get; init; }
+
+        /// <summary>Phase 19: the names read when the Bulk Archive dialog opened.</summary>
+        public IReadOnlyDictionary<long, string>? BulkNames { get; init; }
+    }
 
     /// <param name="content">Project content (ProjectFolders and Links); null leaves the content view out.</param>
     /// <param name="checker">The application-wide manual link checker.</param>
@@ -133,6 +180,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         CloseTrashCommand = new RelayCommand(CloseTrash, () => IsTrashOpen);
         Trash = new WorkspaceTrashViewModel(this);
         ArchiveProjectCommand = new AsyncRelayCommand(ArchiveSelectedProjectAsync, () => CanWrite() && SelectedNode?.IsProject == true, onError);
+        ArchiveProjectsInFolderCommand = new AsyncRelayCommand(ArchiveProjectsInFolderAsync, () => CanWrite() && SelectedNode?.IsFolder == true, onError);
+        ArchiveTopLevelProjectsCommand = new AsyncRelayCommand(ArchiveTopLevelProjectsAsync, CanWrite, onError);
+        ShowBulkArchiveDetailsCommand = new RelayCommand(ShowBulkArchiveDetails, () => LastBulkArchiveDetails is not null);
         OpenArchivedCommand = new AsyncRelayCommand(OpenArchivedAsync, () => IsActivated && !IsArchivedOpen, onError);
         CloseArchivedCommand = new RelayCommand(() =>
         {
@@ -184,6 +234,28 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
     /// <summary>Archive the selected Project (confirmed; Phase 12). Toolbar and context menu only: no keyboard shortcut (A13).</summary>
     public AsyncRelayCommand ArchiveProjectCommand { get; }
+
+    /// <summary>Phase 19: "Archive projects…" on the selected Workspace Folder (its direct live Projects; checklist).</summary>
+    public AsyncRelayCommand ArchiveProjectsInFolderCommand { get; }
+
+    /// <summary>Phase 19: "Archive projects at the top level…" (the top-level live Projects; checklist).</summary>
+    public AsyncRelayCommand ArchiveTopLevelProjectsCommand { get; }
+
+    /// <summary>Phase 19: the banner's Details for the last Bulk Archive or Bulk Undo (one line per Project).</summary>
+    public RelayCommand ShowBulkArchiveDetailsCommand { get; }
+
+    /// <summary>Phase 19: the per-Project lines of the last Bulk Archive or Bulk Undo; null before the first one.</summary>
+    public IReadOnlyList<string>? LastBulkArchiveDetails
+    {
+        get => _lastBulkArchiveDetails;
+        private set
+        {
+            if (SetProperty(ref _lastBulkArchiveDetails, value))
+                ShowBulkArchiveDetailsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    private IReadOnlyList<string>? _lastBulkArchiveDetails;
 
     /// <summary>Opens the Archived projects panel ("Archived projects (n)") in the right pane (A4).</summary>
     public AsyncRelayCommand OpenArchivedCommand { get; }
@@ -549,10 +621,18 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         get => _bannerMessage;
         private set
         {
-            if (SetProperty(ref _bannerMessage, value) && _undo is not null && value != _undo.Message)
+            if (!SetProperty(ref _bannerMessage, value))
+                return;
+            if (_undo is not null && value != _undo.Message)
                 ClearUndo();
+            OnPropertyChanged(nameof(IsBulkDetailsAvailable));
         }
     }
+
+    /// <summary>Phase 19: the banner shows a Bulk Archive or Bulk Undo summary, so its Details button is offered.</summary>
+    public bool IsBulkDetailsAvailable => LastBulkArchiveDetails is not null && _bulkSummaryMessage is not null && BannerMessage == _bulkSummaryMessage;
+
+    private string? _bulkSummaryMessage;
 
     /// <summary>The most recent details load; lets tests await it.</summary>
     internal Task CurrentDetailsLoad { get; private set; } = Task.CompletedTask;
@@ -576,11 +656,13 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     {
         IsLoadingRoots = true;
         RootLoadError = null;
+        var mark = BeginTrackedRead();
         try
         {
             var roots = await _workspace.ListChildrenAsync(null);
-            ReplaceChildren(Roots, null, roots.Nodes, _revealSequence);
+            var held = ReplaceChildren(Roots, null, roots.Nodes, _revealSequence, mark);
             IsActivated = true;
+            RequestConfirmations(held); // D10 rule C: rows held back because a newer read-derived update moved them
             _ = Trash.RefreshCount();
             _ = Archived.RefreshCount();
         }
@@ -592,6 +674,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         finally
         {
             IsLoadingRoots = false;
+            EndTrackedRead(mark);
         }
     }
 
@@ -615,7 +698,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     {
         var reconcileStamp = node.ReconcileStamp;
         var revealSequence = _revealSequence;
-        var mark = MarkRead();
+        var mark = BeginTrackedRead();
         try
         {
             var children = await _workspace.ListChildrenAsync(node.Id);
@@ -629,19 +712,16 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
                         ApplyNotLive(node.Id, children.ChainFromRoot, children.ParentState!, mark);
                     return false;
                 case ChildrenReadStatus.ParentMissing:
-                    if (!IsTouchedSince(node.Id, revealSequence))
-                    {
-                        ApplyRemoved(node.Id);
+                    if (!IsTouchedSince(node.Id, revealSequence) && RemoveMissingByRead(node.Id, mark) is null)
                         BannerMessage = "This folder no longer exists.";
-                    }
-
                     return false;
             }
 
             if (node.ReconcileStamp != reconcileStamp)
                 return node.IsChildrenLoaded; // a reveal reconciled this branch to a newer snapshot meanwhile: never undo it
-            ReplaceChildren(node.Children, node, children.Nodes, revealSequence);
+            var held = ReplaceChildren(node.Children, node, children.Nodes, revealSequence, mark);
             node.IsChildrenLoaded = true;
+            RequestConfirmations(held); // D10 rule C: rows held back because a newer read-derived update changed them
             return true;
         }
         catch (Exception ex)
@@ -655,6 +735,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         finally
         {
             node.ChildrenLoad = null;
+            EndTrackedRead(mark);
         }
     }
 
@@ -667,16 +748,28 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// <param name="revealSequence">The reveal sequence when the load STARTED: rows of nodes that a later reveal placed or
     /// removed are skipped unless the node already sits in this branch, so an older lazy load can neither pull a revealed
     /// node back to its former parent nor resurrect one the reveal found gone or elsewhere.</param>
-    private void ReplaceChildren(ObservableCollection<WorkspaceNodeViewModel> target, WorkspaceNodeViewModel? parent, IReadOnlyList<WorkspaceNode> loaded, int revealSequence)
+    /// <param name="readMark">Phase 19 (D10): the load's read mark. A row whose node a read-derived result changed after that mark,
+    /// and that this load would show differently (not in this branch now), is held back (rule C) and returned, so the caller
+    /// requests one confirmation read for it once the branch is marked loaded. A cached instance this load moves out of another
+    /// branch gets a read-update stamp (never a committed stamp: a lazy load is not a committed write).</param>
+    /// <returns>The held-back node Ids.</returns>
+    private IReadOnlyList<long> ReplaceChildren(ObservableCollection<WorkspaceNodeViewModel> target, WorkspaceNodeViewModel? parent, IReadOnlyList<WorkspaceNode> loaded, int revealSequence, ReadMark readMark)
     {
         var present = target.Where(c => !c.IsPlaceholder).Select(c => c.Id).ToHashSet();
         loaded = loaded.Where(n => !_touchedByReveal.TryGetValue(n.Id, out var seq) || seq <= revealSequence || present.Contains(n.Id)).ToList();
+        var held = loaded.Where(n => !present.Contains(n.Id) && ReadUpdatedSince(n.Id, readMark)).Select(n => n.Id).ToList();
+        if (held.Count > 0)
+            loaded = loaded.Where(n => !held.Contains(n.Id)).ToList(); // rule C: the row's data is discarded (R2d)
         // Keep anything merged while this load was pending (e.g. a node created meanwhile), then the loaded rows; by Id.
         var merged = target.Where(c => !c.IsPlaceholder && loaded.All(n => n.Id != c.Id)).ToList();
+        var moved = new List<long>();
         target.Clear();
         foreach (var node in loaded)
         {
+            var wasCached = _nodes.ContainsKey(node.Id);
             var vm = GetOrCreate(node, parent);
+            if (wasCached && !ReferenceEquals(CollectionOf(vm), target))
+                moved.Add(node.Id);
             Detach(vm, except: target); // a cached instance found under another parent moves here; it never appears twice
             vm.Parent = parent;
             target.Add(vm);
@@ -684,6 +777,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         foreach (var extra in merged)
             InsertSorted(target, extra);
+        if (moved.Count > 0)
+            StampRead(moved, countCompletion: false);
+        return held;
     }
 
     /// <summary>The cached instance for the node (name and child flag refreshed), or a new one under <paramref name="parent"/>.
@@ -762,7 +858,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         IsLoadingDetails = true;
         var cts = _detailsCts = new CancellationTokenSource();
-        CurrentDetailsLoad = LoadDetailsAsync(node.Id, version, MarkRead(), cts.Token);
+        CurrentDetailsLoad = LoadDetailsAsync(node.Id, version, BeginTrackedRead(), cts.Token);
     }
 
     private async Task LoadDetailsAsync(long nodeId, int version, ReadMark mark, CancellationToken token)
@@ -801,6 +897,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         {
             if (version == _detailsVersion)
                 IsLoadingDetails = false;
+            EndTrackedRead(mark);
         }
     }
 
@@ -841,6 +938,8 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         MoveCommand.RaiseCanExecuteChanged();
         TrashProjectCommand.RaiseCanExecuteChanged();
         ArchiveProjectCommand.RaiseCanExecuteChanged();
+        ArchiveProjectsInFolderCommand.RaiseCanExecuteChanged();
+        ArchiveTopLevelProjectsCommand.RaiseCanExecuteChanged();
         RemoveFolderCommand.RaiseCanExecuteChanged();
         ArchiveFolderCommand.RaiseCanExecuteChanged();
         TrashFolderCommand.RaiseCanExecuteChanged();
@@ -899,23 +998,32 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         BeginWorkspaceWrite();
         var node = SelectedNode!;
         // Edit is available as soon as a Project is selected; it reads the current state itself if the pane is still loading.
-        var mark = MarkRead();
-        var current = SelectedProject is { } shown && shown.NodeId == node.Id ? shown : await _workspace.GetProjectAsync(node.Id);
-        if (!ReferenceEquals(SelectedNode, node))
-            return; // the selection changed while the project was loading
-        if (current is null)
+        var mark = BeginTrackedRead();
+        ProjectDetails? current;
+        try
         {
-            BannerMessage = "This project no longer exists.";
-            return;
-        }
+            current = SelectedProject is { } shown && shown.NodeId == node.Id ? shown : await _workspace.GetProjectAsync(node.Id);
+            if (!ReferenceEquals(SelectedNode, node))
+                return; // the selection changed while the project was loading
+            if (current is null)
+            {
+                BannerMessage = "This project no longer exists.";
+                return;
+            }
 
-        if (!current.Effective.IsLive)
+            if (!current.Effective.IsLive)
+            {
+                // Never open the editor on a Project that is not live. The EFFECTIVE root decides the removed branch and the notice
+                // (Trash dominates; a Project-only state is its own root); a result stale for that chain (or held back for a
+                // confirmation read, D10 rule C) changes nothing here.
+                if (!ApplyNotLive(node.Id, current.ChainFromRoot, current.Effective, mark))
+                    BannerMessage = "The workspace changed while this project was being read. Nothing was changed; try again.";
+                return;
+            }
+        }
+        finally
         {
-            // Never open the editor on a Project that is not live. The EFFECTIVE root decides the removed branch and the notice
-            // (Trash dominates; a Project-only state is its own root); a result stale for that chain changes nothing.
-            if (!ApplyNotLive(node.Id, current.ChainFromRoot, current.Effective, mark))
-                BannerMessage = "The workspace changed while this project was being read. Nothing was changed; try again.";
-            return;
+            EndTrackedRead(mark);
         }
 
         var editor = ProjectEditorViewModel.ForEdit(_workspace, current, node.Parent?.Path);
@@ -1032,6 +1140,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
     private Task UndoAsync() => CurrentLifecycleOperation = _undo switch
     {
+        { Bulk: not null } => UndoBulkArchiveCoreAsync(),
         { Archive: not null } => UndoArchiveCoreAsync(),
         { Folder: not null } => UndoFolderCoreAsync(),
         _ => UndoCoreAsync(),
@@ -1039,7 +1148,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
     private async Task UndoCoreAsync()
     {
-        if (IsLifecycleBusy || _undo is not { Archive: null, Folder: null } undo || undo.Visit != _visit)
+        if (IsLifecycleBusy || _undo is not { Archive: null, Folder: null, Bulk: null } undo || undo.Visit != _visit)
             return;
 
         var (visit, selection) = (_visit, _selectionVersion); // captured at the Undo click
@@ -1282,6 +1391,294 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         }
     }
 
+    // ---- Phase 19: Bulk Archive of Projects (proposal Revision 2 + R2a–R2d, §4) ----------------------------------------------
+    // One checklist per place (a Folder's direct Projects, or the top level). Each ticked Project is archived by its OWN write
+    // transaction, bound to the confirmed place (MovedElsewhere writes nothing). Sequential; no retry. Only LocationNotLive (the
+    // confirmed place itself archived or trashed) and an exception stop the batch. Bulk Undo undoes exactly the batch's events.
+
+    /// <summary>At most this many names are written in a summary banner (the rest are counted; Details lists all).</summary>
+    internal const int BulkSummaryNames = 3;
+
+    /// <summary>Tests: the archive events the offered Bulk Undo holds (0 when none is offered).</summary>
+    internal IReadOnlyList<ArchiveEvent> BulkUndoEvents => _undo?.Bulk ?? [];
+
+    private Task ArchiveProjectsInFolderAsync() =>
+        CurrentLifecycleOperation = SelectedNode is { IsFolder: true } folder ? BulkArchiveCoreAsync(folder.Id, folder.Path) : Task.CompletedTask;
+
+    private Task ArchiveTopLevelProjectsAsync() => CurrentLifecycleOperation = BulkArchiveCoreAsync(null, null);
+
+    private async Task BulkArchiveCoreAsync(long? placeId, string? placePath)
+    {
+        if (!CanWrite())
+            return; // B15: no dialog and no store call while another lifecycle write is pending
+
+        var visit = _visit;
+        BeginWorkspaceWrite();
+        BulkArchiveCandidates candidates;
+        try
+        {
+            candidates = await _workspace.ListBulkArchiveCandidatesAsync(placeId);
+        }
+        catch (Exception ex)
+        {
+            ReportError("The projects could not be listed. Nothing was changed.", ex);
+            return;
+        }
+
+        if (candidates.Status != ChildrenReadStatus.Listed)
+        {
+            // The folder itself was removed, archived or trashed elsewhere: a fresh read of it decides the tree.
+            if (placeId is { } id)
+                await ReconcileNodeAsync(id, "This folder no longer exists.");
+            BannerMessage = candidates.Status == ChildrenReadStatus.ParentMissing
+                ? "This folder no longer exists."
+                : "This folder is archived or in the Trash. Nothing was changed.";
+            return;
+        }
+
+        if (candidates.Projects.Count == 0)
+        {
+            BannerMessage = "No projects to archive here."; // B8: no dialog
+            return;
+        }
+
+        if (!CanWrite())
+            return; // another lifecycle write started while the list was read
+        var dialog = new BulkArchiveViewModel(placeId, placePath, candidates.Projects, candidates.Truncated);
+        if (!_dialogs.ShowBulkArchive(dialog))
+            return; // B7: Cancel, Esc and Enter on the default never archive
+        var targets = dialog.ConfirmedTargets;
+        if (targets.Count == 0 || !CanWrite())
+            return;
+        await RunBulkArchiveAsync(placeId, placePath, targets, dialog.NamesById, visit);
+    }
+
+    private async Task RunBulkArchiveAsync(long? placeId, string? placePath, IReadOnlyList<BulkArchiveTarget> targets, IReadOnlyDictionary<long, string> names, int visit)
+    {
+        var rows = new List<(long Id, string Name, string Outcome, bool IsArchived)>();
+        var events = new List<ArchiveEvent>();
+        var refusalPlaces = new Dictionary<long, string>();
+        string? stopText = null;
+        var notAttempted = 0;
+        IsLifecycleBusy = true;
+        BannerMessage = $"Archiving {ProjectCount(targets.Count)}…";
+        try
+        {
+            for (var i = 0; i < targets.Count; i++)
+            {
+                var target = targets[i];
+                var name = names.GetValueOrDefault(target.ProjectId, "");
+                BulkArchiveResult result;
+                try
+                {
+                    result = await _workspace.ArchiveProjectInPlaceAsync(target);
+                }
+                catch (Exception ex)
+                {
+                    _log.Error("Bulk archive failed.", ex); // operation only; no names
+                    rows.Add((target.ProjectId, name, "could not be archived", false));
+                    notAttempted = targets.Count - i - 1;
+                    stopText = $"Could not archive “{name}”. {NotAttemptedText(notAttempted)}Nothing else was changed.";
+                    break;
+                }
+
+                var id = target.ProjectId;
+                switch (result.Outcome)
+                {
+                    case BulkArchiveOutcome.Archived:
+                        ApplyRemoved(id); // a committed write of this window: committed stamp (rule L)
+                        Search?.MarkArchived(id, archived: true);
+                        events.Add(result.Event!.Value);
+                        var renamed = result.Entry is { } entry && entry.Name != name ? " (renamed elsewhere)" : "";
+                        rows.Add((id, name, "archived" + renamed, true));
+                        break;
+                    case BulkArchiveOutcome.MovedElsewhere:
+                        rows.Add((id, name, "moved elsewhere", false));
+                        // Details records where the REFUSAL saw it (store's CurrentParentId), labelled before the reconcile runs and
+                        // without any store call. The tree is decided only by the reconcile below, never by CurrentParentId.
+                        refusalPlaces[id] = RefusalPlaceText(result.CurrentParentId);
+                        await ReconcileNodeAsync(id); // R2a: re-read the Project itself (and its confirmation, R2b); never the origin
+                        break;
+                    case BulkArchiveOutcome.AlreadyArchived:
+                        ApplyRemoved(id);
+                        rows.Add((id, name, "already archived", false));
+                        break;
+                    case BulkArchiveOutcome.ProjectTrashed:
+                        ApplyRemoved(id);
+                        rows.Add((id, name, "in the Trash", false));
+                        break;
+                    case BulkArchiveOutcome.NotFound:
+                        ApplyRemoved(id);
+                        rows.Add((id, name, "no longer exists", false));
+                        break;
+                    case BulkArchiveOutcome.NotAProject:
+                        rows.Add((id, name, "not a project", false));
+                        break;
+                    case BulkArchiveOutcome.LocationNotLive:
+                        rows.Add((id, name, "not archived: its folder is archived or in the Trash", false));
+                        notAttempted = targets.Count - i - 1;
+                        stopText = (LocationNotLiveText(placeId, placePath, result) + " " + NotAttemptedText(notAttempted)).TrimEnd();
+                        if (placeId is { } place)
+                            await ReconcileNodeAsync(place); // the confirmed cause: the origin is re-read exactly once
+                        break;
+                }
+
+                if (stopText is not null)
+                    break;
+            }
+
+            Archived.OnLifecycleCompleted();
+        }
+        finally
+        {
+            IsLifecycleBusy = false;
+        }
+
+        foreach (var skipped in targets.Skip(rows.Count))
+            rows.Add((skipped.ProjectId, names.GetValueOrDefault(skipped.ProjectId, ""), "not attempted", false));
+        LastBulkArchiveDetails = rows
+            .Select(r => refusalPlaces.TryGetValue(r.Id, out var seen) ? $"“{r.Name}”: {r.Outcome} (when refused: {seen})" : $"“{r.Name}”: {r.Outcome}")
+            .ToList();
+        _bulkSummaryMessage = BulkArchiveSummary(rows, targets.Count, stopText);
+        BannerMessage = _bulkSummaryMessage;
+        if (events.Count > 0 && visit == _visit)
+            OfferUndo(new UndoOffer(placeId ?? 0, placePath ?? "", visit, BannerMessage!) { Bulk = events, BulkNames = names });
+    }
+
+    private static string BulkArchiveSummary(IReadOnlyList<(long Id, string Name, string Outcome, bool IsArchived)> rows, int total, string? stopText)
+    {
+        var archived = rows.Count(r => r.IsArchived);
+        var others = rows.Where(r => !r.IsArchived && r.Outcome != "not attempted").ToList();
+        var text = archived == total ? $"Archived {ProjectCount(archived)}." : $"Archived {archived} of {ProjectCount(total)}.";
+        if (others.Count > 0)
+        {
+            var parts = others.GroupBy(r => r.Outcome).Select(g => $"{g.Count()} {g.Key}");
+            var named = string.Join(", ", others.Take(BulkSummaryNames).Select(r => $"“{r.Name}”"));
+            var more = others.Count > BulkSummaryNames ? $" and {others.Count - BulkSummaryNames} more" : "";
+            text += $" Not archived: {string.Join(", ", parts)} ({named}{more}).";
+        }
+
+        return stopText is null ? text : $"{text} {stopText}";
+    }
+
+    private static string LocationNotLiveText(long? placeId, string? placePath, BulkArchiveResult result)
+    {
+        var place = placePath is null ? "The folder" : $"“{placePath}”";
+        var what = result.LocationState == LifecycleState.Trashed ? "moved to the Trash" : "archived";
+        return result.MarkedNodeId == placeId
+            ? $"{place} was {what} elsewhere."
+            : $"A folder above {place} was {what} elsewhere.";
+    }
+
+    /// <summary>
+    /// The place a MovedElsewhere refusal observed: the store's <see cref="BulkArchiveResult.CurrentParentId"/> (null = top level).
+    /// The folder's path is added only when that folder is already cached; no store call is made for it.
+    /// </summary>
+    private string RefusalPlaceText(long? currentParentId) => currentParentId switch
+    {
+        null => "at the top level",
+        { } id when _nodes.TryGetValue(id, out var folder) => $"in folder #{id} “{folder.Path}”",
+        { } id => $"in folder #{id}",
+    };
+
+    private static string NotAttemptedText(int count) =>
+        count == 0 ? "" : count == 1 ? "1 project was not attempted. " : $"{count} projects were not attempted. ";
+
+    private static string ProjectCount(int count) => count == 1 ? "1 project" : $"{count} projects";
+
+    private void ShowBulkArchiveDetails()
+    {
+        if (LastBulkArchiveDetails is { } lines)
+            _dialogs.ShowMessage("Archive projects: details", string.Join(Environment.NewLine, lines));
+    }
+
+    /// <summary>
+    /// Bulk Undo (§4.4.2): <see cref="IWorkspaceStore.UndoArchiveAsync"/> once per event the batch created, in batch order. It never
+    /// selects a restored Project (a selection made meanwhile is kept), continues after per-Project refusals, and stops at an
+    /// exception, reporting restored, refused, failed and not-attempted items separately.
+    /// </summary>
+    private async Task UndoBulkArchiveCoreAsync()
+    {
+        if (IsLifecycleBusy || _undo is not { Bulk: { } events } undo || undo.Visit != _visit)
+            return;
+
+        var names = undo.BulkNames ?? new Dictionary<long, string>();
+        BeginWorkspaceWrite(); // also withdraws this Undo: it is offered once
+        IsLifecycleBusy = true;
+        BannerMessage = $"Restoring {ProjectCount(events.Count)}…";
+        var rows = new List<(string Name, string Outcome)>();
+        var restored = 0;
+        string? failed = null;
+        var notAttempted = 0;
+        try
+        {
+            for (var i = 0; i < events.Count; i++)
+            {
+                var archiveEvent = events[i];
+                var name = names.GetValueOrDefault(archiveEvent.NodeId, "");
+                ArchiveUndoResult result;
+                try
+                {
+                    result = await _workspace.UndoArchiveAsync(archiveEvent);
+                }
+                catch (Exception ex)
+                {
+                    _log.Error("Bulk undo archive failed.", ex); // operation only; no names
+                    failed = name;
+                    notAttempted = events.Count - i - 1;
+                    rows.Add((name, "could not be restored; it is still archived"));
+                    break;
+                }
+
+                switch (result.Outcome)
+                {
+                    case ArchiveUndoOutcome.Undone:
+                        await ApplyRestoredAsync(result.Restored!.Node); // placed, never selected (G5)
+                        Archived.RemoveEntry(archiveEvent.NodeId);
+                        Search?.MarkArchived(archiveEvent.NodeId, archived: false);
+                        restored++;
+                        rows.Add((name, "restored"));
+                        break;
+                    case ArchiveUndoOutcome.NotArchived:
+                        Touch(archiveEvent.NodeId); // as the single Undo: reads that started earlier are re-read
+                        rows.Add((name, "no longer archived"));
+                        break;
+                    case ArchiveUndoOutcome.ArchivedAgain:
+                        rows.Add((name, "archived again elsewhere"));
+                        break;
+                    case ArchiveUndoOutcome.ProjectTrashed:
+                        _ = Trash.RefreshCount();
+                        rows.Add((name, "in the Trash"));
+                        break;
+                    case ArchiveUndoOutcome.ParentArchived or ArchiveUndoOutcome.ParentTrashed:
+                        rows.Add((name, "a folder above it was archived or moved to the Trash"));
+                        break;
+                    default:
+                        rows.Add((name, "no longer exists"));
+                        break;
+                }
+            }
+
+            Archived.OnLifecycleCompleted();
+        }
+        finally
+        {
+            IsLifecycleBusy = false;
+        }
+
+        foreach (var skipped in events.Skip(rows.Count))
+            rows.Add((names.GetValueOrDefault(skipped.NodeId, ""), "not attempted; still archived"));
+        LastBulkArchiveDetails = rows.Select(r => $"“{r.Name}”: {r.Outcome}").ToList();
+        var refused = rows.Where(r => r.Outcome is not ("restored" or "could not be restored; it is still archived" or "not attempted; still archived")).ToList();
+        var text = restored == events.Count ? $"Restored {ProjectCount(restored)}." : $"Restored {restored} of {ProjectCount(events.Count)}.";
+        if (refused.Count > 0)
+            text += $" Not restored: {string.Join(", ", refused.GroupBy(r => r.Outcome).Select(g => $"{g.Count()} {g.Key}"))}.";
+        if (failed is not null)
+            text += $" Could not restore “{failed}”. {NotAttemptedText(notAttempted)}They are still archived.";
+        _bulkSummaryMessage = text;
+        BannerMessage = text;
+    }
+
     /// <summary>
     /// Unarchive from the Archived projects panel: asks for the status (A8), then a state-based Unarchive in the lifecycle
     /// slot. Never changes the selection.
@@ -1386,33 +1783,40 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         // A fresh read decides whether a confirmation is shown at all (§4): only a folder with no child row qualifies.
         var sequence = _revealSequence;
-        var mark = MarkRead();
+        var mark = BeginTrackedRead();
         WorkspaceNodeState? state;
         try
         {
-            state = await _workspace.GetNodeStateAsync(id);
-        }
-        catch (Exception ex)
-        {
-            ReportError("The folder could not be checked. Nothing was changed.", ex);
-            return;
-        }
+            try
+            {
+                state = await _workspace.GetNodeStateAsync(id);
+            }
+            catch (Exception ex)
+            {
+                ReportError("The folder could not be checked. Nothing was changed.", ex);
+                return;
+            }
 
-        if (!ReferenceEquals(SelectedNode, node) || IsLifecycleBusy)
-            return; // the selection changed (or another lifecycle write started) while the folder was being checked
-        if (state is null)
-        {
-            if (!IsTouchedSince(id, sequence))
-                ApplyRemoved(id);
-            BannerMessage = "This folder no longer exists.";
-            return;
-        }
+            if (!ReferenceEquals(SelectedNode, node) || IsLifecycleBusy)
+                return; // the selection changed (or another lifecycle write started) while the folder was being checked
+            if (state is null)
+            {
+                if (!IsTouchedSince(id, sequence))
+                    _ = RemoveMissingByRead(id, mark); // D10: a read-derived removal (rule C if a newer read changed it)
+                BannerMessage = "This folder no longer exists.";
+                return;
+            }
 
-        if (!state.Effective.IsLive)
+            if (!state.Effective.IsLive)
+            {
+                if (!IsTouchedSince(id, sequence))
+                    ApplyNotLive(id, state.ChainFromRoot, state.Effective, mark); // archived or trashed elsewhere (C4)
+                return;
+            }
+        }
+        finally
         {
-            if (!IsTouchedSince(id, sequence))
-                ApplyNotLive(id, state.ChainFromRoot, state.Effective, mark); // archived or trashed elsewhere (C4)
-            return;
+            EndTrackedRead(mark);
         }
 
         if (state.ActiveChildren + state.ArchivedChildren + state.TrashedChildren > 0)
@@ -1774,12 +2178,31 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// chain from the effective root down to the node, with a notice. Nothing else is read or reloaded.
     /// </summary>
     /// <returns>False when the result is stale for any node of the chain (a newer result or instance stands; nothing is applied).</returns>
-    private bool ApplyNotLive(long nodeId, IReadOnlyList<long> chainFromRoot, EffectiveLifecycle state, ReadMark mark)
+    private bool ApplyNotLive(long nodeId, IReadOnlyList<long> chainFromRoot, EffectiveLifecycle state, ReadMark mark) =>
+        ApplyNotLive(nodeId, chainFromRoot, state, mark, confirmed: false, out _);
+
+    /// <summary>
+    /// Phase 19 (D10, R2c): every caller is a PURE READ, so the removal is read-derived: it writes read-update stamps (for the
+    /// removed root and every cached descendant), never <see cref="Touch"/>. Rule L (a committed write, or a newer
+    /// instance, after the read started) still discards. Rule C: if a read-derived update changed a node of the chain after
+    /// the read started and the branch is still shown, nothing is removed and one confirmation read is requested instead
+    /// (<paramref name="confirmed"/> = this IS the confirmation: no rule C).
+    /// </summary>
+    /// <returns>True when the removal was applied; false when stale (rule L) or held back for a confirmation (rule C).</returns>
+    private bool ApplyNotLive(long nodeId, IReadOnlyList<long> chainFromRoot, EffectiveLifecycle state, ReadMark mark, bool confirmed, out Task? confirmation)
     {
-        if (!IsFreshFor(chainFromRoot.Append(nodeId), mark))
+        confirmation = null;
+        var chain = chainFromRoot.Append(nodeId).ToList();
+        if (!IsFreshFor(chain, mark))
             return false;
         var outermost = chainFromRoot.Where(_nodes.ContainsKey).Select(id => (long?)id).FirstOrDefault() ?? nodeId;
-        ApplyRemoved(outermost);
+        if (!confirmed && _nodes.ContainsKey(outermost) && chain.Any(id => ReadUpdatedSince(id, mark)))
+        {
+            confirmation = RequestConfirmation(nodeId);
+            return false;
+        }
+
+        ApplyRemovedByRead(outermost);
         BannerMessage = (state.RootType, state.State, state.RootId == nodeId) switch
         {
             (WorkspaceNodeType.Project, LifecycleState.Trashed, _) => WorkspaceService.ProjectInTrash,
@@ -1789,6 +2212,272 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             (_, _, true) => "This folder is archived.",
             _ => "This item's folder is archived.",
         };
+        return true;
+    }
+
+    // ---- Phase 19: conflicting reads (D10; proposal §4.4.4, R2b–R2d) ------------------------------------------------------
+
+    /// <summary>A read mark registered as in flight until <see cref="EndTrackedRead"/> (lazy loads, details, Edit, folder check,
+    /// reconcile, confirmation).</summary>
+    private ReadMark BeginTrackedRead()
+    {
+        var mark = MarkRead();
+        _readsInFlight[mark.Sequence] = _readsInFlight.GetValueOrDefault(mark.Sequence) + 1;
+        return mark;
+    }
+
+    private void EndTrackedRead(ReadMark mark)
+    {
+        if (_readsInFlight.TryGetValue(mark.Sequence, out var count))
+        {
+            if (count <= 1)
+                _readsInFlight.Remove(mark.Sequence);
+            else
+                _readsInFlight[mark.Sequence] = count - 1;
+        }
+
+        PruneReadUpdates();
+    }
+
+    /// <summary>A stamp no newer than every in-flight read mark can never trigger rule C again (future marks are newer too).</summary>
+    private void PruneReadUpdates()
+    {
+        if (_readUpdated.Count == 0)
+            return;
+        if (_readsInFlight.Count == 0)
+        {
+            _readUpdated.Clear();
+            return;
+        }
+
+        var oldest = _readsInFlight.Keys.First();
+        foreach (var id in _readUpdated.Where(e => e.Value <= oldest).Select(e => e.Key).ToList())
+            _readUpdated.Remove(id);
+    }
+
+    /// <summary>Rule C trigger: a read-derived update changed this node after the read that <paramref name="mark"/> started.</summary>
+    private bool ReadUpdatedSince(long nodeId, ReadMark mark) => _readUpdated.TryGetValue(nodeId, out var stamp) && stamp > mark.Sequence;
+
+    /// <summary>A read-derived tree update: one new sequence for every Id given (never a committed stamp).</summary>
+    /// <param name="countCompletion">True where the update replaces a former <see cref="Touch"/> (reconcile, read-derived removal,
+    /// confirmation): reveal snapshots and Trash reads that started earlier are read again, as before. A lazy-load move never
+    /// counted and still does not.</param>
+    private void StampRead(IReadOnlyCollection<long> nodeIds, bool countCompletion = true)
+    {
+        var sequence = ++_revealSequence;
+        foreach (var id in nodeIds)
+            _readUpdated[id] = sequence;
+        if (countCompletion)
+            _lifecycleCompletions++;
+    }
+
+    private static List<long> SubtreeIds(WorkspaceNodeViewModel node)
+    {
+        var ids = new List<long> { node.Id };
+        foreach (var child in node.Children.Where(c => !c.IsPlaceholder))
+            ids.AddRange(SubtreeIds(child));
+        return ids;
+    }
+
+    /// <summary>
+    /// A READ-derived removal (R2c): as <see cref="ApplyRemoved"/>, but the removed root and every cached descendant it forgets get
+    /// a read-update stamp instead of a committed one, so a later read that saw the node active can still be confirmed.
+    /// </summary>
+    private void ApplyRemovedByRead(long nodeId)
+    {
+        var cached = _nodes.GetValueOrDefault(nodeId);
+        StampRead(cached is null ? new List<long> { nodeId } : SubtreeIds(cached));
+        _ = Trash.RefreshCount();
+        _ = Archived.RefreshCount();
+        if (cached is null)
+            return;
+        if (SelectedNode is { } selected && IsSelfOrBelow(selected, cached))
+            ClearSelectionQuietly(); // BEFORE the row leaves (see ApplyRemoved)
+        CollectionOf(cached).Remove(cached);
+        ForgetSubtree(cached);
+    }
+
+    /// <summary>A read found the node missing: removed (read class), or — rule C — a confirmation is requested and returned.</summary>
+    private Task? RemoveMissingByRead(long nodeId, ReadMark mark)
+    {
+        if (_nodes.ContainsKey(nodeId) && ReadUpdatedSince(nodeId, mark))
+            return RequestConfirmation(nodeId);
+        ApplyRemovedByRead(nodeId);
+        return null;
+    }
+
+    /// <summary>
+    /// A read found a cached node active under another parent (reconcile or confirmation): placed there when that parent is the
+    /// top level or a loaded folder, otherwise removed so it appears with that folder's load. Read class (no committed stamp).
+    /// </summary>
+    private void ApplyActiveElsewhere(WorkspaceNodeViewModel node, long? parentId)
+    {
+        if (parentId is null || (_nodes.TryGetValue(parentId.Value, out var loaded) && loaded.IsChildrenLoaded))
+        {
+            StampRead([node.Id]);
+            Place(node, parentId is null ? null : _nodes[parentId.Value]);
+            return;
+        }
+
+        StampRead(SubtreeIds(node));
+        if (ReferenceEquals(SelectedNode, node))
+            ClearSelectionQuietly(); // before the row leaves (see ApplyRemoved)
+        CollectionOf(node).Remove(node); // its new parent is not loaded here: it appears when that folder loads
+        ForgetSubtree(node);
+    }
+
+    /// <summary>The latest confirmation read requested (tests await it).</summary>
+    internal Task CurrentConfirmation { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Confirmation reads started so far (tests).</summary>
+    internal int ConfirmationsStarted { get; private set; }
+
+    /// <summary>Tests: the node has a read-update stamp that has not been pruned.</summary>
+    internal bool HasReadUpdate(long nodeId) => _readUpdated.ContainsKey(nodeId);
+
+    /// <summary>Tests: the node has a committed stamp newer than <paramref name="sequence"/>.</summary>
+    internal bool IsCommittedSince(long nodeId, int sequence) => IsTouchedSince(nodeId, sequence);
+
+    /// <summary>Tests: the current sequence (read marks are taken from it).</summary>
+    internal int CurrentSequence => _revealSequence;
+
+    /// <summary>Tests: a confirmation of <paramref name="nodeId"/> is running and one more request is queued behind it.</summary>
+    internal bool IsConfirmationQueued(long nodeId) => _confirmations.TryGetValue(nodeId, out var slot) && slot.Queued;
+
+    private void RequestConfirmations(IReadOnlyList<long> nodeIds)
+    {
+        foreach (var id in nodeIds)
+            _ = RequestConfirmation(id);
+    }
+
+    /// <summary>
+    /// Rule C: one confirmation read of <paramref name="nodeId"/>, started now (after the conflicting result returned, so its
+    /// snapshot is not older than either conflicting read). Per node at most one running and one queued: a request while one
+    /// runs is queued (coalesced) and served by the same task.
+    /// </summary>
+    private Task RequestConfirmation(long nodeId)
+    {
+        if (_confirmations.TryGetValue(nodeId, out var running))
+        {
+            running.Queued = true;
+            return running.Task;
+        }
+
+        var slot = new ConfirmationSlot();
+        _confirmations[nodeId] = slot;
+        slot.Task = RunConfirmationsAsync(nodeId, slot);
+        return CurrentConfirmation = slot.Task;
+    }
+
+    private async Task RunConfirmationsAsync(long nodeId, ConfirmationSlot slot)
+    {
+        try
+        {
+            while (true)
+            {
+                slot.Queued = false;
+                var outcome = await ConfirmOnceAsync(nodeId);
+                if (outcome == ConfirmationOutcome.Failed)
+                    return; // R2b: logged, nothing applied, no retry and no follow-up
+                if (outcome == ConfirmationOutcome.Superseded)
+                {
+                    // Rule L: the committed write already decided the node; a queued request in this run is dropped too,
+                    // because any read it would make cannot be newer than the commit's own placement.
+                    slot.Queued = false;
+                    return;
+                }
+                if (outcome == ConfirmationOutcome.Done && !slot.Queued)
+                    return;
+                // Again (another read-derived update landed while it ran) or a queued request: exactly one more read.
+            }
+        }
+        finally
+        {
+            if (_confirmations.TryGetValue(nodeId, out var current) && ReferenceEquals(current, slot))
+                _confirmations.Remove(nodeId);
+        }
+    }
+
+    private async Task<ConfirmationOutcome> ConfirmOnceAsync(long nodeId)
+    {
+        ConfirmationsStarted++;
+        var sequence = _revealSequence;
+        var mark = BeginTrackedRead();
+        try
+        {
+            WorkspaceNodeState? state;
+            try
+            {
+                state = await _workspace.GetNodeStateAsync(nodeId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("A Workspace node could not be confirmed after two overlapping reads.", ex); // no names
+                return ConfirmationOutcome.Failed;
+            }
+
+            if (IsTouchedSince(nodeId, sequence))
+            {
+                ConfirmationsSuperseded++;
+                return ConfirmationOutcome.Superseded; // rule L: a committed result of this window is newer; discard, end the run
+            }
+            if (ReadUpdatedSince(nodeId, mark))
+                return ConfirmationOutcome.Again; // another read-derived update landed after this read started
+            return ApplyConfirmed(nodeId, state, mark) ? ConfirmationOutcome.Done : ConfirmationOutcome.Failed;
+        }
+        finally
+        {
+            EndTrackedRead(mark);
+        }
+    }
+
+    /// <summary>
+    /// Applies a confirmation read with the read-class rules. Not found / not live keep their own branches. An active node that is
+    /// cached is placed or removed (<see cref="ApplyActiveElsewhere"/>). An active node that left the cache is re-created under a
+    /// loaded parent (or at the top level) ONLY from this snapshot's <see cref="WorkspaceNodeState.Node"/> (R2d); a missing or
+    /// inconsistent Node creates nothing and counts as a failed confirmation.
+    /// </summary>
+    /// <returns>False only for a missing or inconsistent <see cref="WorkspaceNodeState.Node"/>.</returns>
+    private bool ApplyConfirmed(long nodeId, WorkspaceNodeState? state, ReadMark mark)
+    {
+        if (state is null)
+        {
+            if (_nodes.ContainsKey(nodeId))
+                ApplyRemovedByRead(nodeId);
+            return true;
+        }
+
+        if (!state.Effective.IsLive)
+        {
+            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark, confirmed: true, out _);
+            return true;
+        }
+
+        var parentId = state.ParentId;
+        if (_nodes.TryGetValue(nodeId, out var node))
+        {
+            if (node.Parent?.Id != parentId || !CollectionOf(node).Contains(node))
+                ApplyActiveElsewhere(node, parentId);
+            return true;
+        }
+
+        WorkspaceNodeViewModel? parent = null;
+        var parentLoaded = parentId is null ? IsActivated : _nodes.TryGetValue(parentId.Value, out parent) && parent.IsChildrenLoaded;
+        if (!parentLoaded)
+        {
+            parent?.SetHasChildren(true); // it appears with that folder's load (as ApplyRestoredAsync)
+            return true;
+        }
+
+        if (state.Node is not { } row || row.Id != nodeId || row.ParentId != parentId || row.Type != state.Type || state.Archived || state.Trashed)
+        {
+            _log.Error("A confirmation read returned node data that does not match its state; no row was created.");
+            return false;
+        }
+
+        var created = GetOrCreate(row, parent);
+        StampRead([nodeId]);
+        Place(created, parent);
         return true;
     }
 
@@ -1841,46 +2530,59 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     private async Task ReconcileNodeCoreAsync(long nodeId, string? missingMessage)
     {
         var sequence = _revealSequence;
-        var mark = MarkRead();
-        WorkspaceNodeState? state;
+        var mark = BeginTrackedRead();
+        Task? confirmation;
         try
         {
-            state = await _workspace.GetNodeStateAsync(nodeId);
+            WorkspaceNodeState? state;
+            try
+            {
+                state = await _workspace.GetNodeStateAsync(nodeId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("A Workspace node could not be re-read after a refused change.", ex); // the dialog already showed the refusal
+                return;
+            }
+
+            confirmation = ApplyReconciled(nodeId, state, sequence, mark, missingMessage);
         }
-        catch (Exception ex)
+        finally
         {
-            _log.Error("A Workspace node could not be re-read after a refused change.", ex); // the dialog already showed the refusal
-            return;
+            EndTrackedRead(mark);
         }
 
+        // R2b: the reconcile's task completes after its own confirmation read (the Bulk Archive batch awaits it).
+        if (confirmation is not null)
+            await confirmation;
+    }
+
+    /// <returns>The confirmation read requested under rule C, or null.</returns>
+    private Task? ApplyReconciled(long nodeId, WorkspaceNodeState? state, int sequence, ReadMark mark, string? missingMessage)
+    {
         if (IsTouchedSince(nodeId, sequence))
-            return; // a newer lifecycle result or reveal already applied a fresher state
+            return null; // rule L: a newer committed result or reveal already applied a fresher state
         if (state is null)
         {
-            ApplyRemoved(nodeId);
+            if (RemoveMissingByRead(nodeId, mark) is { } held)
+                return held;
             BannerMessage = missingMessage ?? "This item no longer exists.";
-            return;
+            return null;
         }
 
         if (!state.Effective.IsLive)
         {
-            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark); // §7.9 C4: by effective state; never applied when stale for any node of that chain
-            return;
+            // §7.9 C4: by effective state; never applied when stale for any node of that chain (rule L) or held back (rule C).
+            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark, confirmed: false, out var confirmation);
+            return confirmation;
         }
 
         if (!_nodes.TryGetValue(nodeId, out var node) || node.Parent?.Id == state.ParentId)
-            return; // not shown here, or active in place
-        Touch(nodeId);
-        if (state.ParentId is null || (_nodes.TryGetValue(state.ParentId.Value, out var parent) && parent.IsChildrenLoaded))
-        {
-            Place(node, state.ParentId is null ? null : _nodes[state.ParentId.Value]);
-            return;
-        }
-
-        if (ReferenceEquals(SelectedNode, node))
-            ClearSelectionQuietly(); // before the row leaves (see ApplyRemoved)
-        CollectionOf(node).Remove(node); // its new parent is not loaded here: it appears when that folder loads
-        ForgetSubtree(node);
+            return null; // not shown here, or active in place
+        if (ReadUpdatedSince(nodeId, mark))
+            return RequestConfirmation(nodeId); // rule C: a newer read-derived update moved it; a fresh read decides
+        ApplyActiveElsewhere(node, state.ParentId); // read class: a read-update stamp, never Touch (R2b)
+        return null;
     }
 
     private void OfferUndo(UndoOffer offer)
