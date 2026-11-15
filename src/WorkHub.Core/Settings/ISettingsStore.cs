@@ -69,6 +69,12 @@ public sealed record SettingsEdit
     public UiStateChanges? Ui { get; init; }
 
     /// <summary>
+    /// Phase 18: "Save notes automatically". Only <c>ui.notes.autosave</c> is written (<c>ui.notes</c> is created when missing);
+    /// every other member, known or not, keeps its value.
+    /// </summary>
+    public bool? NotesAutoSave { get; init; }
+
+    /// <summary>
     /// Only an explicit Settings-dialog save may replace a settings file that cannot be read (a copy of it is kept). Quick
     /// actions such as the toolbar menu never do.
     /// </summary>

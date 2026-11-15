@@ -245,6 +245,11 @@
                               AutomationProperties.Name="Show the content toolbar" />
                     <TextBlock Style="{StaticResource FieldHint}" Margin="22,3,0,0"
                                Text="New, Open, Edit, Move, Trash, Check and the project's Trash beside the content location. The location stays." />
+                    <!-- Phase 18: opt-in note autosave (off by default); note editors opened after Save use it. -->
+                    <CheckBox Margin="0,16,0,0" Content="Save notes automatically" IsChecked="{Binding SaveNotesAutomatically}"
+                              AutomationProperties.Name="Save notes automatically" />
+                    <TextBlock Style="{StaticResource FieldHint}" Margin="22,3,0,0" TextWrapping="Wrap"
+                               Text="An open note is saved a few seconds after you stop typing (at the latest every 30 seconds while you type). New notes are saved automatically after their first Save. Applies to notes opened after you save this setting." />
                     <TextBlock Style="{StaticResource FieldHint}" Margin="0,12,0,0"
                                Text="Other open WorkHub windows use the new values after they restart." />
                 </StackPanel>

@@ -181,6 +181,11 @@ public sealed class JsonSettingsStore(string settingsFile, TimeProvider? time = 
             if (ui.LastPrimaryTab is { } tab)
                 uiObject["lastPrimaryTab"] = tab;
         }
+        if (edit.NotesAutoSave is { } autoSave)
+        {
+            // Phase 18: only this member; ui.notes is created when missing and its unknown members keep their values.
+            Child(Child(root, "ui"), "notes")["autosave"] = autoSave;
+        }
         var version = root["settingsVersion"] is JsonValue v && v.TryGetValue<int>(out var parsed) ? parsed : 0;
         root["settingsVersion"] = Math.Max(version, AppSettings.CurrentSettingsVersion); // a newer file's version is kept
 

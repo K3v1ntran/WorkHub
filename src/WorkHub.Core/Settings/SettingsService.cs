@@ -80,7 +80,8 @@ public sealed class SettingsService(ISettingsStore store, Func<string, bool>? fi
     /// given, the Workspace toolbar preferences the user changed in the dialog. Nothing is written if any error exists. As
     /// before, this explicit save may replace an unreadable settings file (a copy of it is kept).
     /// </summary>
-    public async Task<SettingsSaveResult> SaveRepositoryAsync(RepositorySettings draft, RepositoryUsage usage, WorkspaceToolbarChanges? toolbars = null)
+    /// <param name="notesAutoSave">Phase 18: "Save notes automatically" when the user changed it in the dialog; null = not written.</param>
+    public async Task<SettingsSaveResult> SaveRepositoryAsync(RepositorySettings draft, RepositoryUsage usage, WorkspaceToolbarChanges? toolbars = null, bool? notesAutoSave = null)
     {
         var trimmed = draft.Trimmed();
         var issues = await Task.Run(() => RepositorySettingsValidator.Validate(trimmed, usage, _fileExists));
@@ -88,9 +89,23 @@ public sealed class SettingsService(ISettingsStore store, Func<string, bool>? fi
             return new SettingsSaveResult(false, issues);
 
         return await CommitAsync(
-            new SettingsEdit { Repository = trimmed, Toolbars = toolbars is { IsEmpty: false } ? toolbars : null, AllowReplacingUnreadableFile = true },
+            new SettingsEdit
+            {
+                Repository = trimmed,
+                Toolbars = toolbars is { IsEmpty: false } ? toolbars : null,
+                NotesAutoSave = notesAutoSave,
+                AllowReplacingUnreadableFile = true,
+            },
             issues);
     }
+
+    /// <summary>
+    /// Phase 18: saves only <c>ui.notes.autosave</c> (through the same merge as every save; nothing else in the file changes,
+    /// in particular no Repository value). A quick save never replaces a settings file that cannot be read; the Settings
+    /// dialog's Save passes <paramref name="allowReplacingUnreadableFile"/> = true, as its Repository save does.
+    /// </summary>
+    public Task<SettingsSaveResult> SaveNotesAutoSaveAsync(bool autoSave, bool allowReplacingUnreadableFile = false) =>
+        CommitAsync(new SettingsEdit { NotesAutoSave = autoSave, AllowReplacingUnreadableFile = allowReplacingUnreadableFile }, []);
 
     /// <summary>
     /// The quick toolbar action (a toolbar's right-click menu): saves only that toolbar's preference; the other two stay as

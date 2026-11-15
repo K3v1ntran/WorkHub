@@ -48,9 +48,17 @@ internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IPr
     public Task<ProjectLink?> GetLinkAsync(long linkId, CancellationToken cancellationToken = default) =>
         inner.GetLinkAsync(linkId, cancellationToken);
 
+    /// <summary>Phase 18 tests: when set, <see cref="SaveNoteAsync"/> calls this instead of the inner store (no gate).</summary>
+    public Func<long, long, ProjectNoteDraft, Task<NoteStoreSaveResult>>? SaveNoteHandler { get; set; }
+
+    /// <summary>Phase 18 tests: when set, <see cref="GetContainerPathAsync"/> calls this instead of the inner store (no gate).</summary>
+    public Func<long, long?, Task<ProjectContainerPath?>>? ContainerPathHandler { get; set; }
+
     /// <summary>Key "containerPath": the note editor's location lookup.</summary>
     public Task<ProjectContainerPath?> GetContainerPathAsync(long projectNodeId, long? folderId, CancellationToken cancellationToken = default) =>
-        Gated("containerPath", () => inner.GetContainerPathAsync(projectNodeId, folderId, CancellationToken.None));
+        ContainerPathHandler is { } handler
+            ? handler(projectNodeId, folderId)
+            : Gated("containerPath", () => inner.GetContainerPathAsync(projectNodeId, folderId, CancellationToken.None));
 
     public Task<IReadOnlyList<WorkspaceFolderPath>> ListFolderMoveTargetsAsync(long projectNodeId, long? movingFolderId, CancellationToken cancellationToken = default) =>
         inner.ListFolderMoveTargetsAsync(projectNodeId, movingFolderId, cancellationToken);
@@ -74,7 +82,9 @@ internal sealed class GatedProjectContentStore(IProjectContentStore inner) : IPr
         Gated("createNote", () => inner.CreateNoteAsync(projectNodeId, folderId, draft, cancellationToken), readFirst: false);
 
     public Task<NoteStoreSaveResult> SaveNoteAsync(long noteId, long expectedRevision, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
-        Gated("saveNote", () => inner.SaveNoteAsync(noteId, expectedRevision, draft, cancellationToken), readFirst: false);
+        SaveNoteHandler is { } handler
+            ? handler(noteId, expectedRevision, draft)
+            : Gated("saveNote", () => inner.SaveNoteAsync(noteId, expectedRevision, draft, cancellationToken), readFirst: false);
 
     public Task<ProjectNote> SaveNoteAsNewAsync(long originalNoteId, long projectNodeId, long? lastKnownFolderId, ProjectNoteDraft draft, CancellationToken cancellationToken = default) =>
         Gated("saveNoteAsNew", () => inner.SaveNoteAsNewAsync(originalNoteId, projectNodeId, lastKnownFolderId, draft, cancellationToken), readFirst: false);

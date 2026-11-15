@@ -14,7 +14,8 @@ public enum NoteEditorState
 }
 
 /// <summary>
-/// Modal plain-text Note editor. No autosave: only Save / Ctrl+S (and the Save choice when closing) write.
+/// Modal plain-text Note editor. Save / Ctrl+S (and the Save choice when closing) write; with the Phase 18 setting "Save notes
+/// automatically" (off by default, read when the editor opens) an existing note is also saved automatically.
 /// <list type="bullet">
 /// <item>Save takes a snapshot of Title/Content and makes the inputs read-only until the write ends, so the stored values
 /// and the new baseline cannot diverge from what was saved.</item>
@@ -29,15 +30,48 @@ public enum NoteEditorState
 /// <item><see cref="TouchedNoteIds"/> lists the existing note opened and every note created in this session, so the caller
 /// can reconcile from a fresh read after the editor closes, whatever was (or was not) saved.</item>
 /// </list>
+/// <para>
+/// <b>Phase 18 autosave</b> (proposal Revision 3, D1–D10). Only for an existing note (a new note after its first successful
+/// manual Save). A change starts a 3 s debounce and, for text no write covers yet, a 30 s max-wait mark; both are cleared
+/// whenever the draft is clean (against the stored baseline, or against the in-flight snapshot while a write runs). The
+/// automatic write uses the same revision-checked <see cref="ProjectContentService.SaveNoteAsync"/>, keeps the inputs
+/// editable, never assigns <see cref="Title"/>/<see cref="Content"/>, and takes baseline and revision from the stored note it
+/// returns. One write at a time: Save/Close requested during an automatic write wait in one pending slot (Close wins) and are
+/// handled once after its result is applied. The timer callback only posts <see cref="Evaluate"/> to the editor's context;
+/// <see cref="Evaluate"/> re-checks everything from the current state. A failed automatic write pauses autosave (no retry)
+/// until a successful manual Save or Save as new note. The scheduler is disposed when the editor reaches
+/// <see cref="NoteEditorState.Closing"/>.
+/// </para>
 /// </summary>
 public sealed class NoteEditorViewModel : ObservableObject
 {
+    /// <summary>Phase 18 (D3): an automatic save is due this long after the last change.</summary>
+    public static readonly TimeSpan AutoSaveDebounce = TimeSpan.FromSeconds(3);
+
+    /// <summary>Phase 18 (D3): ... and at the latest this long after the first change no write covers yet.</summary>
+    public static readonly TimeSpan AutoSaveMaxWait = TimeSpan.FromSeconds(30);
+
+    public const string AutoSavedStatusPrefix = "Saved automatically ";
+    public const string AutoSavePausedRetryStatus = "Automatic save paused. Press Save to try again.";
+    public const string AutoSaveStoppedStatus = "Automatic save stopped. Your text is unchanged here.";
+    public const string AutoSaveInvalidTitleStatus = "Not saved automatically: fix the title.";
+    public const string AutoSaveInvalidContentStatus = "Not saved automatically: fix the content.";
+
+    private enum PendingRequest
+    {
+        None,
+        Save,
+        Close,
+    }
+
     private readonly ProjectContentService _content;
     private readonly IDialogService _dialogs;
     private readonly TimeProvider _time;
     private readonly long _projectNodeId;
     private readonly List<long> _touched = [];
     private readonly HashSet<long> _created = [];
+    private readonly bool _autoSave;
+    private readonly SynchronizationContext? _ui;
     private long? _noteId;
     private long _revision;
     private long? _folderId;
@@ -53,15 +87,28 @@ public sealed class NoteEditorViewModel : ObservableObject
     private bool _canRecover;
     private string _locationText;
 
+    // Phase 18 autosave state (touched only on the editor's context).
+    private ITimer? _timer;
+    private bool _schedulerClosed;
+    private bool _autoSaveInFlight;
+    private string? _inFlightTitle;
+    private string? _inFlightContent;
+    private PendingRequest _pending;
+    private bool _autoSavePaused;
+    private long? _debounceDueAt;     // monotonic timestamps (TimeProvider.GetTimestamp)
+    private long? _firstUncoveredAt;
+
     private NoteEditorViewModel(
         ProjectContentService content, IDialogService dialogs, long projectNodeId, long? folderId, ProjectNote? existing,
-        string? locationPath, TimeProvider? time)
+        string? locationPath, TimeProvider? time, bool autoSave)
     {
         _content = content;
         _dialogs = dialogs;
         _time = time ?? TimeProvider.System;
         _projectNodeId = projectNodeId;
         _folderId = folderId;
+        _autoSave = autoSave;
+        _ui = SynchronizationContext.Current;
         _locationText = DescribeLocation(locationPath);
         if (existing is not null)
         {
@@ -80,15 +127,17 @@ public sealed class NoteEditorViewModel : ObservableObject
     }
 
     /// <summary>A new note in the given container (null = Project root). Nothing is written until the first Save.</summary>
-    public static NoteEditorViewModel ForCreate(ProjectContentService content, IDialogService dialogs, long projectNodeId, long? folderId, string locationPath, TimeProvider? time = null) =>
-        new(content, dialogs, projectNodeId, folderId, null, locationPath, time);
+    /// <param name="autoSave">Phase 18: "Save notes automatically" as it is when the editor opens (applies after the first Save).</param>
+    public static NoteEditorViewModel ForCreate(ProjectContentService content, IDialogService dialogs, long projectNodeId, long? folderId, string locationPath, TimeProvider? time = null, bool autoSave = false) =>
+        new(content, dialogs, projectNodeId, folderId, null, locationPath, time, autoSave);
 
     /// <summary>
     /// An existing note, freshly read by the caller. <paramref name="locationPath"/> is the path of THAT note's container
     /// (see <see cref="TryReadLocationAsync"/>), not the listing the caller shows; null = it could not be determined.
     /// </summary>
-    public static NoteEditorViewModel ForEdit(ProjectContentService content, IDialogService dialogs, ProjectNote note, string? locationPath, TimeProvider? time = null) =>
-        new(content, dialogs, note.ProjectNodeId, note.FolderId, note, locationPath, time);
+    /// <param name="autoSave">Phase 18: "Save notes automatically" as it is when the editor opens.</param>
+    public static NoteEditorViewModel ForEdit(ProjectContentService content, IDialogService dialogs, ProjectNote note, string? locationPath, TimeProvider? time = null, bool autoSave = false) =>
+        new(content, dialogs, note.ProjectNodeId, note.FolderId, note, locationPath, time, autoSave);
 
     /// <summary>
     /// The logical path of a note's container ("Alpha Portal › Specs"), or null when it could not be read or no longer
@@ -132,7 +181,10 @@ public sealed class NoteEditorViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _title, value))
+            {
                 OnDraftChanged();
+                OnUserEdit();
+            }
         }
     }
 
@@ -143,7 +195,10 @@ public sealed class NoteEditorViewModel : ObservableObject
         set
         {
             if (SetProperty(ref _text, value))
+            {
                 OnDraftChanged();
+                OnUserEdit();
+            }
         }
     }
 
@@ -161,7 +216,7 @@ public sealed class NoteEditorViewModel : ObservableObject
         }
     }
 
-    /// <summary>Inputs are editable only while Editing (read-only during a pending write and while prompting).</summary>
+    /// <summary>Inputs are editable only while Editing (read-only during a pending manual write and while prompting).</summary>
     public bool IsReadOnly => State != NoteEditorState.Editing;
 
     public bool IsSaving => State == NoteEditorState.Saving;
@@ -172,7 +227,14 @@ public sealed class NoteEditorViewModel : ObservableObject
     /// <summary>No note has been created yet (the first Save inserts it).</summary>
     public bool IsNew => _noteId is null;
 
-    public bool IsDirty => !string.Equals(Title, _baselineTitle, StringComparison.Ordinal) || !string.Equals(Content, _baselineText, StringComparison.Ordinal);
+    /// <summary>
+    /// Unsaved changes. With autosave on for an existing note (Phase 18 §4.3): the title is compared after the validator's
+    /// <c>Trim()</c> and the content ordinal and verbatim, against the stored note; an invalid draft always differs from the
+    /// stored, valid baseline. Otherwise the raw ordinal comparison of Phase 5B.
+    /// </summary>
+    public bool IsDirty => UsesStoredComparison
+        ? !DraftMatches(_baselineTitle, _baselineText)
+        : !string.Equals(Title, _baselineTitle, StringComparison.Ordinal) || !string.Equals(Content, _baselineText, StringComparison.Ordinal);
 
     public string WindowTitle => $"{(string.IsNullOrWhiteSpace(_baselineTitle) ? "New note" : _baselineTitle)} — Note{(IsDirty ? " •" : string.Empty)}";
 
@@ -182,7 +244,7 @@ public sealed class NoteEditorViewModel : ObservableObject
 
     public string? GeneralError { get => _generalError; private set => SetProperty(ref _generalError, value); }
 
-    /// <summary>"Saved 14:02", "Draft copied …" and similar confirmations.</summary>
+    /// <summary>"Saved 14:02", "Saved automatically 14:02", "Draft copied …" and similar confirmations.</summary>
     public string? StatusText { get => _statusText; private set => SetProperty(ref _statusText, value); }
 
     /// <summary>After Conflict or NotFound: Copy draft and Save as new note are offered.</summary>
@@ -224,12 +286,37 @@ public sealed class NoteEditorViewModel : ObservableObject
     /// <summary>Notes created in this session (first save of a new note, Save as new note).</summary>
     public IReadOnlyCollection<long> CreatedNoteIds => _created;
 
+    /// <summary>Phase 18: "Save notes automatically" was on when this editor opened.</summary>
+    public bool IsAutoSaveEnabled => _autoSave;
+
+    /// <summary>Phase 18: an automatic write is in flight (the inputs stay editable).</summary>
+    public bool IsAutoSaving => _autoSaveInFlight;
+
+    /// <summary>Phase 18: autosave stopped after a failed automatic write; a successful Save or Save as new note resumes it.</summary>
+    public bool IsAutoSavePaused => _autoSavePaused;
+
     /// <summary>The last close request's work (prompt and close-triggered save); lets tests await it.</summary>
     internal Task CurrentClose { get; private set; } = Task.CompletedTask;
 
+    /// <summary>The last automatic write (tests await it).</summary>
+    internal Task CurrentAutoSave { get; private set; } = Task.CompletedTask;
+
+    /// <summary>The last Save processed from the pending slot (tests await it).</summary>
+    internal Task CurrentPendingSave { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Tests: a debounce or max-wait mark is set.</summary>
+    internal bool HasAutoSaveSchedule => _debounceDueAt is not null || _firstUncoveredAt is not null;
+
+    /// <summary>Tests: the scheduler was disposed (the editor reached Closing).</summary>
+    internal bool IsAutoSaveSchedulerClosed => _schedulerClosed;
+
+    private bool AutoSaveApplies => _autoSave && _noteId is not null && !_schedulerClosed;
+
+    private bool UsesStoredComparison => _autoSave && _noteId is not null;
+
     /// <summary>
     /// Entry point for EVERY close path. Ignored unless Editing (so it never stacks prompts or closes during a write).
-    /// Clean → closes. Dirty → Save / Discard / Cancel.
+    /// Clean → closes. Dirty → Save / Discard / Cancel. During an automatic write the request waits (pending slot).
     /// </summary>
     public void RequestClose() => CurrentClose = RequestCloseAsync();
 
@@ -237,6 +324,12 @@ public sealed class NoteEditorViewModel : ObservableObject
     {
         if (State != NoteEditorState.Editing)
             return;
+
+        if (_autoSaveInFlight)
+        {
+            _pending = PendingRequest.Close; // Close wins over a pending Save; repeats coalesce
+            return;
+        }
 
         if (!IsDirty)
         {
@@ -257,6 +350,7 @@ public sealed class NoteEditorViewModel : ObservableObject
                 break;
             default:
                 State = NoteEditorState.Editing;
+                Evaluate(); // a due autosave runs now that the prompt is gone
                 break;
         }
     }
@@ -267,6 +361,13 @@ public sealed class NoteEditorViewModel : ObservableObject
     {
         if (State != NoteEditorState.Editing)
             return;
+
+        if (_autoSaveInFlight)
+        {
+            if (_pending == PendingRequest.None)
+                _pending = PendingRequest.Save; // handled once after the automatic write
+            return;
+        }
 
         var draft = new ProjectNoteDraft(Title, Content); // snapshot; inputs are read-only until the write ends
         TitleError = ContentError = GeneralError = null;
@@ -302,16 +403,18 @@ public sealed class NoteEditorViewModel : ObservableObject
             if (await RefreshLocationAsync(result.Note!) is null)
                 StatusText = $"{savedAt}. The note's location could not be shown.";
             State = NoteEditorState.Editing;
+            Evaluate();
             return;
         }
 
         ShowFailure(result);
         State = NoteEditorState.Editing; // the draft is untouched; a failed close-triggered save never re-prompts
+        Evaluate();
     }
 
     private async Task SaveAsNewAsync()
     {
-        if (State != NoteEditorState.Editing || _noteId is not { } originalId)
+        if (State != NoteEditorState.Editing || _noteId is not { } originalId || _autoSaveInFlight)
             return;
 
         var draft = new ProjectNoteDraft(Title, Content);
@@ -349,6 +452,7 @@ public sealed class NoteEditorViewModel : ObservableObject
         }
 
         State = NoteEditorState.Editing;
+        Evaluate();
     }
 
     private void CopyDraft()
@@ -357,7 +461,10 @@ public sealed class NoteEditorViewModel : ObservableObject
         StatusText = "Your text was copied to the clipboard.";
     }
 
-    /// <summary>The persisted values become the new baseline (the inputs were read-only during the write).</summary>
+    /// <summary>
+    /// After a successful MANUAL write (Save, close-triggered Save, Save as new note): the persisted values become the new
+    /// baseline AND the inputs (they were read-only during the write). Resumes a paused autosave (Phase 18 D7).
+    /// </summary>
     private void Accept(ProjectNote note, bool created)
     {
         _noteId = note.Id;
@@ -375,7 +482,14 @@ public sealed class NoteEditorViewModel : ObservableObject
         SavedAny = true;
         OnPropertyChanged(nameof(IsNew));
         OnPropertyChanged(nameof(NoteId));
+        if (_autoSavePaused)
+        {
+            _autoSavePaused = false;
+            OnPropertyChanged(nameof(IsAutoSavePaused));
+        }
+
         OnDraftChanged();
+        ClearAutoSaveSchedule(); // the inputs now equal the stored note: nothing is uncovered
     }
 
     /// <summary>
@@ -412,6 +526,7 @@ public sealed class NoteEditorViewModel : ObservableObject
     private void Approve()
     {
         State = NoteEditorState.Closing;
+        CloseAutoSaveScheduler(); // before CloseRequested: a late callback finds the scheduler closed
         CloseRequested?.Invoke(this, SavedAny);
     }
 
@@ -434,5 +549,235 @@ public sealed class NoteEditorViewModel : ObservableObject
         RequestCloseCommand.RaiseCanExecuteChanged();
         CopyDraftCommand.RaiseCanExecuteChanged();
         SaveAsNewCommand.RaiseCanExecuteChanged();
+    }
+
+    // ---- Phase 18: autosave scheduler ----------------------------------------------------------------------------------
+
+    /// <summary>Title (after the validator's trim) and content (verbatim) equal the given stored/normalized values.</summary>
+    private bool DraftMatches(string title, string content) =>
+        string.Equals(Title.Trim(), title, StringComparison.Ordinal) && string.Equals(Content, content, StringComparison.Ordinal);
+
+    /// <summary>
+    /// "Clean" for scheduling (§4.5): against the in-flight write's normalized snapshot while it runs, otherwise against the
+    /// stored baseline.
+    /// </summary>
+    private bool UncoveredClean => _autoSaveInFlight
+        ? DraftMatches(_inFlightTitle!, _inFlightContent!)
+        : DraftMatches(_baselineTitle, _baselineText);
+
+    private long Ticks(TimeSpan span) => (long)(span.TotalSeconds * _time.TimestampFrequency);
+
+    private long? EarliestDue()
+    {
+        long? maxWait = _firstUncoveredAt is { } first ? first + Ticks(AutoSaveMaxWait) : null;
+        return (_debounceDueAt, maxWait) switch
+        {
+            ({ } d, { } m) => Math.Min(d, m),
+            ({ } d, null) => d,
+            (null, { } m) => m,
+            _ => null,
+        };
+    }
+
+    /// <summary>A user change to Title or Content.</summary>
+    private void OnUserEdit()
+    {
+        if (!AutoSaveApplies)
+            return;
+
+        if (UncoveredClean)
+        {
+            ClearAutoSaveSchedule(); // back to the reference: the next change starts a new cycle
+            return;
+        }
+
+        var now = _time.GetTimestamp();
+        _debounceDueAt = now + Ticks(AutoSaveDebounce);
+        _firstUncoveredAt ??= now;
+        if (!_autoSavePaused)
+            Arm(now); // also during an automatic write: a due tick then only marks "due" (Evaluate returns at step 2)
+    }
+
+    private void ClearAutoSaveSchedule()
+    {
+        _debounceDueAt = null;
+        _firstUncoveredAt = null;
+        Disarm();
+    }
+
+    private void Arm(long now)
+    {
+        if (_schedulerClosed || EarliestDue() is not { } due)
+        {
+            Disarm();
+            return;
+        }
+
+        var delay = due <= now ? TimeSpan.Zero : _time.GetElapsedTime(now, due);
+        _timer ??= _time.CreateTimer(OnTimerTick, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _timer.Change(delay, Timeout.InfiniteTimeSpan);
+    }
+
+    private void Disarm() => _timer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+
+    private void CloseAutoSaveScheduler()
+    {
+        _schedulerClosed = true;
+        _pending = PendingRequest.None;
+        _debounceDueAt = null;
+        _firstUncoveredAt = null;
+        _timer?.Dispose();
+        _timer = null;
+    }
+
+    /// <summary>The timer callback (any thread): only posts an evaluation to the editor's context.</summary>
+    private void OnTimerTick(object? state)
+    {
+        if (_ui is { } ui)
+            ui.Post(_ => Evaluate(), null);
+        else
+            Evaluate(); // no context captured (tests without one)
+    }
+
+    /// <summary>
+    /// Phase 18 §4.5.1: decides from the CURRENT state whether an automatic write starts now. Safe to call any number of
+    /// times; a stale or late call does nothing.
+    /// </summary>
+    internal void Evaluate()
+    {
+        if (!AutoSaveApplies)
+            return; // closed, off, or a note not saved yet: no store call, no state change, no re-arm
+        if (_autoSavePaused || _autoSaveInFlight || _pending != PendingRequest.None || State != NoteEditorState.Editing)
+            return; // the end of the write / request / prompt / pause evaluates again
+
+        if (UncoveredClean)
+        {
+            ClearAutoSaveSchedule();
+            return;
+        }
+
+        var now = _time.GetTimestamp();
+        if (EarliestDue() is not { } due)
+        {
+            // Dirty without marks (defensive): start a cycle now.
+            _debounceDueAt = now + Ticks(AutoSaveDebounce);
+            _firstUncoveredAt = now;
+            Arm(now);
+            return;
+        }
+
+        if (now < due)
+        {
+            Arm(now); // the schedule moved since this callback was armed: no write yet
+            return;
+        }
+
+        CurrentAutoSave = AutoSaveAsync();
+    }
+
+    private async Task AutoSaveAsync()
+    {
+        var draft = new ProjectNoteDraft(Title, Content);
+        var (normalized, field, error) = ProjectNoteValidator.Validate(draft);
+        if (normalized is null)
+        {
+            // Not a pause: nothing is written; the next change that makes the draft valid makes it eligible again.
+            if (field == ProjectNoteValidator.Fields.Content)
+            {
+                ContentError = error;
+                StatusText = AutoSaveInvalidContentStatus;
+            }
+            else
+            {
+                TitleError = error;
+                StatusText = AutoSaveInvalidTitleStatus;
+            }
+
+            Disarm();
+            return;
+        }
+
+        _autoSaveInFlight = true;
+        _inFlightTitle = normalized.Title ?? string.Empty;
+        _inFlightContent = normalized.Content ?? string.Empty;
+        _debounceDueAt = null; // the snapshot covers everything up to now
+        _firstUncoveredAt = null;
+        Disarm();
+        OnPropertyChanged(nameof(IsAutoSaving));
+
+        NoteWriteResult result;
+        try
+        {
+            result = await _content.SaveNoteAsync(_noteId!.Value, _revision, draft);
+        }
+        catch (Exception ex)
+        {
+            result = NoteWriteResult.Failed(NoteWriteStatus.Error, $"Could not save automatically: {ex.Message} Your text is unchanged here.");
+        }
+
+        CompleteAutoSave(result);
+    }
+
+    private void CompleteAutoSave(NoteWriteResult result)
+    {
+        _autoSaveInFlight = false;
+        _inFlightTitle = _inFlightContent = null;
+        OnPropertyChanged(nameof(IsAutoSaving));
+        if (_schedulerClosed)
+            return; // defensive: Close waits for the write, so this does not happen
+
+        // (1) Apply the result.
+        if (result.Succeeded)
+        {
+            var note = result.Note!;
+            _revision = note.Revision;
+            _folderId = note.FolderId;
+            _baselineTitle = note.Title;   // the stored (trimmed) title; the box keeps what the user typed
+            _baselineText = note.Content;
+            Track(note.Id);
+            SavedAny = true;
+            TitleError = ContentError = GeneralError = null;
+            StatusText = $"{AutoSavedStatusPrefix}{_time.GetLocalNow():HH:mm}";
+            OnDraftChanged();
+            if (UncoveredClean)
+            {
+                ClearAutoSaveSchedule(); // the draft equals what the store returned
+            }
+            else if (EarliestDue() is null)
+            {
+                var now = _time.GetTimestamp(); // defensive: dirty but no change was recorded during the write
+                _debounceDueAt = now + Ticks(AutoSaveDebounce);
+                _firstUncoveredAt = now;
+            }
+            // otherwise the uncovered part keeps its own marks (max-wait from its first change after the snapshot)
+        }
+        else if (result.Status == NoteWriteStatus.Invalid)
+        {
+            ShowFailure(result); // validated before the call, so not expected; not a pause
+        }
+        else
+        {
+            _autoSavePaused = true;
+            OnPropertyChanged(nameof(IsAutoSavePaused));
+            ShowFailure(result); // recovery offers exactly as for a manual save (none for Error)
+            StatusText = result.Status == NoteWriteStatus.Error ? AutoSavePausedRetryStatus : AutoSaveStoppedStatus;
+            Disarm();
+        }
+
+        // (2)-(4) The pending request, once.
+        var pending = _pending;
+        _pending = PendingRequest.None;
+        switch (pending)
+        {
+            case PendingRequest.Save:
+                CurrentPendingSave = SaveCoreAsync(fromClose: false);
+                return;
+            case PendingRequest.Close:
+                RequestClose();
+                return;
+        }
+
+        // (5) Then the timers.
+        Evaluate();
     }
 }

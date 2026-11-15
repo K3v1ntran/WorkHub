@@ -264,10 +264,18 @@ folder) with a breadcrumb. Project folders, links and notes never appear in the 
   Selecting a note shows a read-only preview below the list; Enter, double-click, Open or F2 opens the editor. Titles
   follow the Workspace name rules (they may repeat); content may be empty, up to 100,000 characters, and is stored
   exactly as typed (spaces, tabs and line breaks kept).
-- The note editor saves only on **Save** or **Ctrl+S** (no autosave) and stays open. Closing with unsaved changes asks
+- The note editor saves on **Save** or **Ctrl+S** and stays open. Closing with unsaved changes asks
   Save / Don't save / Cancel; a failed save never loses the text. If the note was changed or removed elsewhere, nothing
   is overwritten: **Copy draft** puts the text on the clipboard and **Save as new note** saves it next to the original
   (or where the note last was), never anywhere else. After the editor closes, the list re-reads the notes it touched.
+- **Save notes automatically** (Settings → Workspace, off by default; stored as `ui.notes.autosave`) also saves an open
+  note 3 seconds after you stop typing, and at the latest 30 seconds after a change while you keep typing. It applies to
+  editors opened after the setting is saved, and to a new note only after its first Save. Typing is never blocked and the
+  text you see is never replaced (a title with spaces around it is stored trimmed, as with Save). It uses the same check as
+  Save, so it never overwrites a change made elsewhere: if the note was changed elsewhere, moved to the Trash or deleted,
+  or its project is in the Trash, automatic saving stops and the usual choices appear (Copy draft, and Save as new note
+  except for a project in the Trash); if the database is busy it stops and asks you to press Save to try again. It never
+  retries on its own and starts again after a successful Save or Save as new note. Closing with unsaved text still asks.
 - Keyboard: Enter opens, F2 edits, Del moves to the Trash, Backspace or Alt+Up goes up.
 
 ### Trash (schema v6)
@@ -344,7 +352,7 @@ confirmation.
   across projects.
 
 Not available yet: permanent delete of projects or folders of the Workspace, bulk Archive, tags on folders or content
-(and renaming a tag across projects), rich text, drag-and-drop, manual ordering (including of Favorites) and autosave.
+(and renaming a tag across projects), rich text, drag-and-drop and manual ordering (including of Favorites).
 
 ### Workspace search
 

@@ -68,6 +68,9 @@ public sealed class ProjectContentViewModel : ObservableObject
     private readonly LinkCheckCache _cache;
     private readonly TimeProvider _time;
 
+    /// <summary>Phase 18: "Save notes automatically", read when a note editor opens (null in the ctor = off).</summary>
+    private readonly Func<bool> _noteAutoSave;
+
     private string _projectName;
     private long? _currentFolderId;
     private ProjectContentItemViewModel? _selectedItem;
@@ -103,7 +106,8 @@ public sealed class ProjectContentViewModel : ObservableObject
         LinkCheckCache cache,
         long projectNodeId,
         string projectName,
-        TimeProvider? time = null)
+        TimeProvider? time = null,
+        Func<bool>? noteAutoSave = null)
     {
         _content = content;
         _checker = checker;
@@ -111,6 +115,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         _log = log;
         _cache = cache;
         _time = time ?? TimeProvider.System;
+        _noteAutoSave = noteAutoSave ?? (() => false);
         ProjectNodeId = projectNodeId;
         _projectName = projectName;
 
@@ -1204,7 +1209,7 @@ public sealed class ProjectContentViewModel : ObservableObject
 
     private async Task NewNoteAsync()
     {
-        var editor = NoteEditorViewModel.ForCreate(_content, _dialogs, ProjectNodeId, CurrentFolderId, LocationPath, _time);
+        var editor = NoteEditorViewModel.ForCreate(_content, _dialogs, ProjectNodeId, CurrentFolderId, LocationPath, _time, _noteAutoSave());
         _dialogs.ShowNoteEditor(editor);
         await ReconcileAfterEditorAsync(editor);
     }
@@ -1229,7 +1234,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         if (!ReferenceEquals(SelectedItem, item) || version != _loadVersion || _isDeactivated)
             return;
 
-        var editor = NoteEditorViewModel.ForEdit(_content, _dialogs, note, location, _time);
+        var editor = NoteEditorViewModel.ForEdit(_content, _dialogs, note, location, _time, _noteAutoSave());
         _dialogs.ShowNoteEditor(editor); // the result says only whether something was saved; it never gates reconciliation
         await ReconcileAfterEditorAsync(editor);
     }

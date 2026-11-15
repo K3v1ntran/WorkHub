@@ -50,6 +50,7 @@ public sealed class AppSettings
         Ui.LastPrimaryTab ??= UiSettings.DefaultPrimaryTab;
         Ui.Window ??= new();
         Ui.Workspace ??= new();
+        Ui.Notes ??= new();
         return this;
     }
 
@@ -75,6 +76,7 @@ public sealed class AppSettings
                 ShowSelectionToolbar = Ui.Workspace.ShowSelectionToolbar,
                 ShowContentToolbar = Ui.Workspace.ShowContentToolbar,
             },
+            Notes = new NotesUiSettings { AutoSave = Ui.Notes.AutoSave },
         },
     };
 }
@@ -211,6 +213,20 @@ public sealed class UiSettings
 
     /// <summary>Phase 13A: Workspace preferences. A file without this section uses the defaults.</summary>
     public WorkspaceUiSettings Workspace { get; set; } = new();
+
+    /// <summary>Phase 18: note editor preferences (<c>ui.notes</c>). A file without this section uses the defaults.</summary>
+    public NotesUiSettings Notes { get; set; } = new();
+}
+
+/// <summary>Phase 18 (D5): note editor preferences. A missing value means off.</summary>
+public sealed class NotesUiSettings
+{
+    /// <summary>
+    /// "Save notes automatically" (<c>ui.notes.autosave</c>, default off). Read when a note editor opens; editors already open
+    /// keep the value they opened with.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonPropertyName("autosave")]
+    public bool AutoSave { get; set; }
 }
 
 /// <summary>

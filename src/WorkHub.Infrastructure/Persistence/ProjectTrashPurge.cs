@@ -15,7 +15,7 @@ namespace WorkHub.Infrastructure.Persistence;
 /// or a typed refusal.</item>
 /// <item><b>PreDelete copy</b> (under <c>Backups\PreDelete\predelete.lock</c>): the snapshot protocol pins a read snapshot, the
 /// plan and token are recomputed IN that snapshot (stale: no file is written), the candidate is copied and fully validated, the
-/// token is recomputed FROM the validated copy, and only then is it published as <c>workhub_predelete_v9_….db</c>.</item>
+/// token is recomputed FROM the validated copy, and only then is it published as <c>workhub_predelete_v&lt;N&gt;_….db</c>.</item>
 /// <item><b>Deletion</b>: ONE <c>BEGIN IMMEDIATE</c> transaction recomputes the plan and token (Project and every Workspace
 /// ancestor included), then deletes notes, links, folders deepest first and the entries last, asserting each statement's row
 /// count. Any difference or exception rolls everything back.</item>

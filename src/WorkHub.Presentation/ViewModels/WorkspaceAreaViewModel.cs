@@ -95,6 +95,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         _log = log;
         _content = content;
         _checker = checker;
+        _noteAutoSave = settings is null ? null : () => settings.Current.Ui.Notes.AutoSave; // Phase 18: read when an editor opens
         if (settings is not null)
         {
             Preferences = new WorkspacePreferencesViewModel(settings, message => BannerMessage = message);
@@ -229,6 +230,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
     /// <summary>The UI context the view model was created on (null in tests without one).</summary>
     private readonly SynchronizationContext? _ui = SynchronizationContext.Current;
+
+    /// <summary>Phase 18: "Save notes automatically" for the note editors opened from this area; null = off (no settings wired).</summary>
+    private readonly Func<bool>? _noteAutoSave;
 
     /// <summary>
     /// The Info drawer (Phase 13A §5.4). It follows the selection: it shows whatever is selected now, and closes when nothing
@@ -493,7 +497,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             return;
         }
 
-        var content = new ProjectContentViewModel(_content, _checker, _dialogs, _log, _checkCache, project.Id, project.Name);
+        var content = new ProjectContentViewModel(_content, _checker, _dialogs, _log, _checkCache, project.Id, project.Name, noteAutoSave: _noteAutoSave);
         var projectId = project.Id;
         content.ProjectTrashedObserved = () => _ = ReconcileNodeAsync(projectId); // trashed by another window
         content.ProjectArchivedObserved = () => _ = ReconcileNodeAsync(projectId); // archived by another window (its listing says so)

@@ -31,6 +31,8 @@ public sealed class SettingsViewModel : ObservableObject
     private bool _showTreeToolbar;
     private bool _showSelectionToolbar;
     private bool _showContentToolbar;
+    private readonly bool _openedNotesAutoSave;
+    private bool _saveNotesAutomatically;
 
     public SettingsViewModel(
         SettingsService settings,
@@ -53,6 +55,7 @@ public sealed class SettingsViewModel : ObservableObject
             ShowSelectionToolbar = _showSelectionToolbar = opened.ShowSelectionToolbar,
             ShowContentToolbar = _showContentToolbar = opened.ShowContentToolbar,
         };
+        _openedNotesAutoSave = _saveNotesAutomatically = settings.Current.Ui.Notes.AutoSave;
         Backups = backups;
         Pages =
         [
@@ -189,6 +192,23 @@ public sealed class SettingsViewModel : ObservableObject
         Content = _showContentToolbar != _openedToolbars.ShowContentToolbar ? _showContentToolbar : null,
     };
 
+    /// <summary>
+    /// Phase 18 Workspace page: "Save notes automatically" (draft; saved with Save; default off). Note editors opened after the
+    /// save use the new value.
+    /// </summary>
+    public bool SaveNotesAutomatically
+    {
+        get => _saveNotesAutomatically;
+        set
+        {
+            if (SetProperty(ref _saveNotesAutomatically, value))
+                SaveError = null;
+        }
+    }
+
+    /// <summary>The autosave value to save: only when the user changed it in this dialog (like <see cref="ChangedToolbars"/>).</summary>
+    internal bool? ChangedNotesAutoSave => _saveNotesAutomatically != _openedNotesAutoSave ? _saveNotesAutomatically : null;
+
     public bool IsRepositoryPageSelected => IsSvnSelected || IsGitSelected;
 
     private SettingsPageItem PageFor(SettingsSection section) =>
@@ -291,19 +311,37 @@ public sealed class SettingsViewModel : ObservableObject
         CancelCommand.RaiseCanExecuteChanged();
     }
 
+    /// <summary>
+    /// Phase 18: the only change in this dialog is "Save notes automatically". Then Save writes only <c>ui.notes.autosave</c>
+    /// and sends no Repository draft, so Repository values another WorkHub saved after this dialog opened are kept.
+    /// </summary>
+    internal bool ChangesOnlyNotesAutoSave => ChangedNotesAutoSave is not null && ChangedToolbars.IsEmpty && !HasUnsavedRepositoryChanges;
+
     private async Task SaveAsync()
     {
         SaveError = null;
         SettingsSaveResult result;
+        var notesOnly = ChangesOnlyNotesAutoSave;
         // While Save runs, Import cannot start: a successful Save closes the window, which must not happen mid-import.
         SetSaving(true);
         try
         {
-            result = await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars);
+            result = notesOnly
+                ? await _settings.SaveNotesAutoSaveAsync(ChangedNotesAutoSave!.Value, allowReplacingUnreadableFile: true)
+                : await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars, ChangedNotesAutoSave);
         }
         finally
         {
             SetSaving(false);
+        }
+
+        if (notesOnly)
+        {
+            if (result.Saved)
+                CloseRequested?.Invoke(this, true);
+            else
+                SaveError = result.Error; // the live Repository Issues are left as they are
+            return;
         }
 
         Issues = result.Issues;
@@ -347,7 +385,7 @@ public sealed class SettingsViewModel : ObservableObject
             case UnsavedChangesChoice.Discard:
                 return true;
             case UnsavedChangesChoice.Save:
-                var result = await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars);
+                var result = await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars, ChangedNotesAutoSave);
                 if (result.Saved)
                     return true;
                 Issues = result.Issues;
