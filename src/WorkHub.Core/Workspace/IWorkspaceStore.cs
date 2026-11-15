@@ -125,6 +125,24 @@ public interface IWorkspaceStore
     /// </summary>
     Task<BulkArchiveResult> ArchiveProjectInPlaceAsync(BulkArchiveTarget target, CancellationToken cancellationToken = default);
 
+    // ---- Phase 20: Bulk Unarchive of Projects (additive; UnarchiveProjectAsync above is unchanged and state-based) ---------------
+
+    /// <summary>
+    /// The Bulk Unarchive dialog's list: the archived Project roots the Archived panel lists (Folders excluded), each with its
+    /// <c>ArchiveSerial</c>, from ONE read transaction, in the panel's order, at most <see cref="BulkUnarchiveCandidates.MaxRows"/>.
+    /// Never writes.
+    /// </summary>
+    Task<BulkUnarchiveCandidates> ListBulkUnarchiveCandidatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Serial-bound Unarchive (proposal §4.3.2): in ONE <c>BEGIN IMMEDIATE</c> transaction, in this order — node missing → NotFound;
+    /// not a Project → NotAProject; in the Trash → ProjectTrashed; not archived → NotArchived; archived with a serial other than
+    /// <see cref="BulkUnarchiveTarget.ExpectedSerial"/> → ArchivedAgain; an ancestor trashed / archived → ParentTrashed /
+    /// ParentArchived; otherwise sets the (editable) status, guarded by <c>Status = 'Archived' AND ArchiveSerial = expected</c>.
+    /// <c>ArchiveSerial</c> is never written. Every non-Unarchived outcome writes nothing.
+    /// </summary>
+    Task<BulkUnarchiveResult> UnarchiveProjectBoundAsync(BulkUnarchiveTarget target, ProjectStatus status, CancellationToken cancellationToken = default);
+
     // ---- Project Tags (schema v10; Phase 17 proposal R2b §4.2) --------------------------------------------------------------------
 
     /// <summary>

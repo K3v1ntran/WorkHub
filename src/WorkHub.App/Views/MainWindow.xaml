@@ -1203,10 +1203,17 @@
                             </Button>
                             <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding UnarchiveCommand}" AutomationProperties.Name="Unarchive"
                                     ToolTip="Unarchive the selected folder or project into its folder (a project asks for its status) (Enter)" Content="Unarchive…" />
+                            <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Command="{Binding UnarchiveProjectsCommand}" AutomationProperties.Name="Unarchive projects"
+                                    AutomationProperties.AutomationId="ArchivedUnarchiveProjects"
+                                    ToolTip="Tick several archived projects and unarchive them with one status" Content="Unarchive projects…" />
                             <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding ButtonText}" AutomationProperties.AutomationId="ArchivedProjectsTitle" />
                         </DockPanel>
-                        <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6" TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="ArchivedProjectsNotice"
-                                   Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}" />
+                        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6" Visibility="{Binding Notice, Converter={StaticResource NullToCollapsed}}">
+                            <Button DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Top" Style="{StaticResource ToolButton}" Content="Details"
+                                    Command="{Binding ShowBulkDetailsCommand}" Visibility="{Binding IsBulkDetailsAvailable, Converter={StaticResource BoolToVisibility}}"
+                                    AutomationProperties.Name="Unarchive projects details" AutomationProperties.AutomationId="ArchivedBulkDetails" />
+                            <TextBlock TextWrapping="Wrap" Text="{Binding Notice}" AutomationProperties.AutomationId="ArchivedProjectsNotice" />
+                        </DockPanel>
                         <TextBlock DockPanel.Dock="Top" Style="{StaticResource FieldHint}" Margin="0,0,0,6" TextWrapping="Wrap"
                                    Text="Archived folders and projects keep everything in them and their place and name. Nothing on disk was moved or deleted." />
                         <Grid>
@@ -1244,6 +1251,7 @@
                                 <ListView.ContextMenu>
                                     <ContextMenu>
                                         <MenuItem Header="Unarchive…" InputGestureText="Enter" Command="{Binding UnarchiveCommand}" />
+                                        <MenuItem Header="Unarchive projects…" Command="{Binding UnarchiveProjectsCommand}" AutomationProperties.AutomationId="ArchivedMenuUnarchiveProjects" />
                                     </ContextMenu>
                                 </ListView.ContextMenu>
                             </ListView>

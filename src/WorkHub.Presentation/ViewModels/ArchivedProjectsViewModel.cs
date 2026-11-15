@@ -53,13 +53,21 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
     private int? _count;
     private bool _countRunning;
     private bool _countPending;
+    private int _visitToken;
+    private IReadOnlyList<string>? _bulkDetails;
 
     internal ArchivedProjectsViewModel(WorkspaceAreaViewModel area)
     {
         _area = area;
         UnarchiveCommand = new AsyncRelayCommand(UnarchiveSelectedAsync, CanUnarchive, ex => Notice = UnarchiveFailed);
+        UnarchiveProjectsCommand = new AsyncRelayCommand(UnarchiveProjectsAsync, CanUnarchiveProjects, ex => Notice = UnarchiveFailed);
+        ShowBulkDetailsCommand = new RelayCommand(ShowBulkDetails, () => BulkDetails is not null);
         ReloadCommand = new AsyncRelayCommand(() => Reload(), () => IsOpen && !IsLoading);
-        Entries.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
+        Entries.CollectionChanged += (_, _) =>
+        {
+            OnPropertyChanged(nameof(IsEmpty));
+            UnarchiveProjectsCommand.RaiseCanExecuteChanged();
+        };
     }
 
     public const string UnarchiveFailed = "Could not unarchive. It is still archived.";
@@ -94,6 +102,7 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
                 return;
             OnPropertyChanged(nameof(IsEmpty));
             UnarchiveCommand.RaiseCanExecuteChanged();
+            UnarchiveProjectsCommand.RaiseCanExecuteChanged();
             ReloadCommand.RaiseCanExecuteChanged();
         }
     }
@@ -129,7 +138,32 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
 
     public AsyncRelayCommand UnarchiveCommand { get; }
 
+    /// <summary>Phase 20: "Unarchive projects…" (the checklist of archived Project roots).</summary>
+    public AsyncRelayCommand UnarchiveProjectsCommand { get; }
+
+    /// <summary>Phase 20 (D6): one line per Project of the last Bulk Unarchive started in THIS panel visit; null otherwise.</summary>
+    public IReadOnlyList<string>? BulkDetails
+    {
+        get => _bulkDetails;
+        private set
+        {
+            if (!SetProperty(ref _bulkDetails, value))
+                return;
+            OnPropertyChanged(nameof(IsBulkDetailsAvailable));
+            ShowBulkDetailsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public bool IsBulkDetailsAvailable => BulkDetails is not null;
+
+    public RelayCommand ShowBulkDetailsCommand { get; }
+
     public AsyncRelayCommand ReloadCommand { get; }
+
+    /// <summary>Phase 20 (R2-3): advanced by Open, Close (Back, tab change) and a navigation that opens the closed panel; never by a list reload.</summary>
+    internal int VisitToken => _visitToken;
+
+    internal Task CurrentBulkUnarchive { get; private set; } = Task.CompletedTask;
 
     /// <summary>The most recent list load (including a re-read after a discarded result); lets tests await it.</summary>
     internal Task CurrentLoad { get; private set; } = Task.CompletedTask;
@@ -146,13 +180,16 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
 
     internal Task Open()
     {
+        _visitToken++;
         IsOpen = true;
         Notice = null;
+        BulkDetails = null;
         return Reload();
     }
 
     internal void Close()
     {
+        _visitToken++;
         _version++;
         _userSelection++;
         IsOpen = false;
@@ -162,9 +199,14 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
         _appliedVersion = 0;
         LoadError = null;
         Notice = null;
+        BulkDetails = null;
     }
 
-    internal void RaiseCommands() => UnarchiveCommand.RaiseCanExecuteChanged();
+    internal void RaiseCommands()
+    {
+        UnarchiveCommand.RaiseCanExecuteChanged();
+        UnarchiveProjectsCommand.RaiseCanExecuteChanged();
+    }
 
     /// <summary>Called by the area after it applied a lifecycle result: the list (if open) and the count are read again.</summary>
     internal void OnLifecycleCompleted()
@@ -186,6 +228,12 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
     /// <summary>Opens the panel if needed and starts a NEW read now (never the list already shown or in flight); returns its version.</summary>
     internal int ReloadForNavigation()
     {
+        if (!IsOpen)
+        {
+            _visitToken++; // a navigation that opens the closed panel starts a new visit (R2-3)
+            BulkDetails = null;
+        }
+
         IsOpen = true;
         Notice = null;
         _ = Reload();
@@ -312,7 +360,46 @@ public sealed class ArchivedProjectsViewModel : ObservableObject
         if (IsOpen && notice is not null)
             Notice = notice;
     }
+
+    /// <summary>Phase 20: enabled while the panel is open and loaded, no lifecycle write is pending, and an archived Project is listed.</summary>
+    private bool CanUnarchiveProjects() => IsOpen && !IsLoading && !_area.IsLifecycleBusy && Entries.Any(e => !e.IsFolder);
+
+    private Task UnarchiveProjectsAsync() => CurrentBulkUnarchive = UnarchiveProjectsCoreAsync();
+
+    /// <summary>
+    /// Phase 20 (R2-3, R2a-1): the request is bound to THIS panel visit. The area checks it when the checklist read returns and
+    /// after the dialog confirms; the panel writes the progress, Notice and Details only while the visit is still the same. A
+    /// started batch's tree and count effects are applied by the area whatever the panel does meanwhile.
+    /// </summary>
+    private async Task UnarchiveProjectsCoreAsync()
+    {
+        if (!CanUnarchiveProjects())
+            return;
+
+        var visit = _visitToken;
+        bool IsCurrent() => IsOpen && _visitToken == visit;
+        var report = await _area.BulkUnarchiveFromPanelAsync(IsCurrent, count =>
+        {
+            if (!IsCurrent())
+                return; // never: the area checks the visit in the same step; kept as a guard for the panel's own state
+            BulkDetails = null;
+            Notice = count == 1 ? "Unarchiving 1 project…" : $"Unarchiving {count} projects…";
+        });
+        if (report is null || !IsCurrent())
+            return; // a summary never lands in another visit (and a refused request writes nothing)
+        Notice = report.Notice;
+        BulkDetails = report.Details;
+    }
+
+    private void ShowBulkDetails()
+    {
+        if (BulkDetails is { } lines)
+            _area.Dialogs.ShowMessage("Unarchive projects: details", string.Join(Environment.NewLine, lines));
+    }
 }
+
+/// <summary>Phase 20: what a Bulk Unarchive request reports to the panel that started it (Details null when there is no batch).</summary>
+internal sealed record BulkUnarchiveReport(string Notice, IReadOnlyList<string>? Details);
 
 /// <summary>
 /// The Unarchive confirmation (A8): where the Project goes back to and the status it gets; Completed is preselected.

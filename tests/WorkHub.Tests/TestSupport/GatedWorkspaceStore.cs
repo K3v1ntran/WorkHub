@@ -36,6 +36,13 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
 
     public int Calls(string key) => _calls.GetValueOrDefault(key);
 
+    /// <summary>Phase 20: forgets the call counts and recorded calls made while a fixture was built (gates are untouched).</summary>
+    public void ResetCalls()
+    {
+        _calls.Clear();
+        UnarchiveBoundCalls.Clear();
+    }
+
     public static string Children(long? parentId) => parentId is { } id ? $"children:{id}" : "children:root";
 
     public Task<WorkspaceChildrenResult> ListChildrenAsync(long? parentId, CancellationToken cancellationToken = default) =>
@@ -125,6 +132,32 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
         }
 
         return Gated("archiveInPlace", () => inner.ArchiveProjectInPlaceAsync(target, cancellationToken), readFirst: false);
+    }
+
+    // ---- Phase 20 Bulk Unarchive: "bulkUnarchiveCandidates" (a held read takes its snapshot when called); "unarchiveBound" (a held
+    // write runs on release, or commits first with HoldCommitted). ScriptUnarchiveBound replaces one call's result; every call's
+    // target and status are recorded in order.
+
+    /// <summary>When set, the next "unarchiveBound" call returns this (or throws) instead of reaching the database.</summary>
+    public Func<BulkUnarchiveTarget, Task<BulkUnarchiveResult>>? ScriptUnarchiveBound { get; set; }
+
+    /// <summary>Every "unarchiveBound" call, in call order.</summary>
+    public ConcurrentQueue<(BulkUnarchiveTarget Target, ProjectStatus Status)> UnarchiveBoundCalls { get; } = new();
+
+    public Task<BulkUnarchiveCandidates> ListBulkUnarchiveCandidatesAsync(CancellationToken cancellationToken = default) =>
+        Gated("bulkUnarchiveCandidates", () => inner.ListBulkUnarchiveCandidatesAsync(CancellationToken.None));
+
+    public Task<BulkUnarchiveResult> UnarchiveProjectBoundAsync(BulkUnarchiveTarget target, ProjectStatus status, CancellationToken cancellationToken = default)
+    {
+        UnarchiveBoundCalls.Enqueue((target, status));
+        if (ScriptUnarchiveBound is { } script)
+        {
+            ScriptUnarchiveBound = null;
+            _calls.AddOrUpdate("unarchiveBound", 1, (_, n) => n + 1);
+            return script(target);
+        }
+
+        return Gated("unarchiveBound", () => inner.UnarchiveProjectBoundAsync(target, status, cancellationToken), readFirst: false);
     }
 
     public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default) =>

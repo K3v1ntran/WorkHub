@@ -92,6 +92,13 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
+    public bool ShowBulkUnarchive(BulkUnarchiveViewModel viewModel)
+    {
+        var window = new BulkUnarchiveWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, confirmed) => window.DialogResult = confirmed;
+        return window.ShowDialog() == true;
+    }
+
     public bool ShowPurgeConfirmation(PurgeConfirmationViewModel viewModel)
     {
         var window = new PurgeConfirmationWindow { DataContext = viewModel, Owner = ActiveWindow() };

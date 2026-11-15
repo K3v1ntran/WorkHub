@@ -150,6 +150,59 @@ public sealed record BulkArchiveCandidates(ChildrenReadStatus Status, IReadOnlyL
     public const int MaxRows = 500;
 }
 
+// ---- Phase 20: Bulk Unarchive of Projects (proposal Revision 2 + R2a, §4.3; D9(a)) ---------------------------------------
+
+/// <summary>
+/// One ticked row of the Bulk Unarchive dialog: the Project and the <c>ArchiveSerial</c> the checklist read for it (the archive
+/// event the user saw).
+/// </summary>
+public readonly record struct BulkUnarchiveTarget(long ProjectId, long ExpectedSerial);
+
+public enum BulkUnarchiveOutcome
+{
+    Unarchived,
+    NotFound,
+    NotAProject,
+
+    /// <summary>The Project is in the Workspace Trash; nothing was written.</summary>
+    ProjectTrashed,
+
+    /// <summary>Not archived any more (unarchived elsewhere and not archived again); nothing was written.</summary>
+    NotArchived,
+
+    /// <summary>
+    /// Still archived, but by a LATER archive event (its serial differs from the one the user saw); nothing was written, neither
+    /// status nor serial.
+    /// </summary>
+    ArchivedAgain,
+
+    /// <summary>An ancestor Folder is archived; nothing was written.</summary>
+    ParentArchived,
+
+    /// <summary>An ancestor Folder is in the Trash; nothing was written.</summary>
+    ParentTrashed,
+}
+
+/// <param name="Unarchived">Unarchived only: the Project as it now appears in the tree, and its parent's path.</param>
+/// <param name="CurrentSerial">ArchivedAgain only: the serial found under the write lock.</param>
+public sealed record BulkUnarchiveResult(BulkUnarchiveOutcome Outcome, RestoredProject? Unarchived, long? CurrentSerial)
+{
+    public static BulkUnarchiveResult Refused(BulkUnarchiveOutcome outcome) => new(outcome, null, null);
+}
+
+/// <summary>An archived Project root as the Bulk Unarchive dialog lists it, with the serial read in the same snapshot.</summary>
+public sealed record BulkUnarchiveCandidate(long NodeId, string Name, long? ParentId, string? ParentPath, DateTimeOffset UpdatedAt, long ArchiveSerial);
+
+/// <summary>
+/// The Bulk Unarchive dialog's read (one read transaction): the archived Project roots the Archived panel lists, in its order,
+/// at most <see cref="MaxRows"/>; <see cref="Truncated"/> when more exist. Archived Folders are never candidates.
+/// </summary>
+public sealed record BulkUnarchiveCandidates(IReadOnlyList<BulkUnarchiveCandidate> Projects, bool Truncated)
+{
+    /// <summary>D8: the dialog lists at most this many rows.</summary>
+    public const int MaxRows = 500;
+}
+
 /// <summary>The Project is archived: its node is not renamed, edited, moved or trashed (Phase 12 A3); nothing was written.</summary>
 public sealed class ProjectArchivedException(long projectNodeId, Exception? inner = null)
     : Exception($"Project {projectNodeId} is archived.", inner)

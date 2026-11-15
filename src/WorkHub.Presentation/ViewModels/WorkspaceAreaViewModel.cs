@@ -76,6 +76,23 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         public Task Task { get; set; } = Task.CompletedTask;
 
         public bool Queued { get; set; }
+
+        /// <summary>
+        /// Phase 20 (R2a-2): true while every request this run serves came from the bulk re-placement (<see cref="ReadNotice.Silent"/>);
+        /// a <see cref="ReadNotice.Show"/> request that joins sets it to false for good, so a single flow keeps its banner.
+        /// </summary>
+        public bool Silent { get; set; }
+    }
+
+    /// <summary>
+    /// Phase 20 (R2a-2): whether a read-derived tree update writes the Workspace banner. Every existing caller uses
+    /// <see cref="Show"/>; only the Bulk Unarchive re-placement (and the confirmation it alone requested) uses <see cref="Silent"/>,
+    /// which applies exactly the same tree effects and skips only the <see cref="BannerMessage"/> assignment.
+    /// </summary>
+    internal enum ReadNotice
+    {
+        Show,
+        Silent,
     }
 
     private enum ConfirmationOutcome
@@ -427,6 +444,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     internal WorkspaceService Workspace => _workspace;
 
     internal IAppLog Log => _log;
+
+    /// <summary>Phase 20: the Archived panel shows its Bulk Unarchive Details through the same dialog service.</summary>
+    internal IDialogService Dialogs => _dialogs;
 
     /// <summary>Lifecycle results applied so far (Trash, Restore, Undo, Remove, stale-node reconciliation).</summary>
     internal int LifecycleCompletions => _lifecycleCompletions;
@@ -1770,6 +1790,196 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         return notice;
     }
 
+    // ---- Phase 20: Bulk Unarchive of Projects (proposal Revision 2 + R2a, §4) ------------------------------------------------
+    // The checklist lists the archived Project roots with the ArchiveSerial read with each. Each ticked Project is unarchived by its
+    // OWN write transaction, bound to that serial (NotArchived and ArchivedAgain write nothing). Sequential; no retry; only an
+    // exception stops the batch; no Undo. The area returns the summary and never writes panel state or the Workspace banner.
+
+    /// <summary>
+    /// Bulk Unarchive from the Archived panel. <paramref name="isPanelVisitCurrent"/> answers whether the panel is still open in the
+    /// visit that started the request (R2-3); it is checked when the checklist read returns and again after the dialog confirms,
+    /// together with the lifecycle slot (R2a-1). Only when both pass is the slot taken, in the same synchronous step, BEFORE
+    /// <see cref="BeginWorkspaceWrite"/> and before <paramref name="onStarted"/> (the panel progress).
+    /// </summary>
+    /// <returns>The summary for the panel (written there only if the visit is still current), or null when nothing is to be shown:
+    /// the slot was taken, the dialog was cancelled, or the request ended because the visit changed or the slot was taken.</returns>
+    internal async Task<BulkUnarchiveReport?> BulkUnarchiveFromPanelAsync(Func<bool> isPanelVisitCurrent, Action<int>? onStarted = null)
+    {
+        if (!CanWrite())
+            return null; // BU12: no dialog and no store call while another lifecycle write is pending
+
+        BulkUnarchiveCandidates candidates;
+        try
+        {
+            candidates = await _workspace.ListBulkUnarchiveCandidatesAsync();
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Archived projects could not be listed for bulk unarchive.", ex); // no names
+            return isPanelVisitCurrent() ? new BulkUnarchiveReport(BulkUnarchiveListFailed, null) : null;
+        }
+
+        if (!isPanelVisitCurrent())
+            return null; // R2-3: the read returned into another visit: no dialog, no write, no Notice
+        if (candidates.Projects.Count == 0)
+            return new BulkUnarchiveReport(NoArchivedProjectsToUnarchive, null); // BU11: no dialog
+        if (!CanWrite())
+            return null; // another lifecycle write started while the list was read
+
+        var dialog = new BulkUnarchiveViewModel(candidates.Projects, candidates.Truncated);
+        if (!_dialogs.ShowBulkUnarchive(dialog))
+            return null; // BU10: Cancel, Esc and Enter on the default never unarchive
+        var targets = dialog.ConfirmedTargets;
+        if (targets.Count == 0)
+            return null;
+
+        // R2a-1 post-confirmation guard, then the slot FIRST, with no await in between (approval order, proposal §0.3).
+        if (!isPanelVisitCurrent() || !CanWrite())
+            return null; // no BeginWorkspaceWrite (an Undo offer stays), no Notice or Details, no bulk write
+        IsLifecycleBusy = true;
+        try
+        {
+            BeginWorkspaceWrite(); // ends an earlier banner Undo offer and an in-flight reveal; the banner text stays (R2a-2)
+            onStarted?.Invoke(targets.Count);
+            var operation = RunBulkUnarchiveAsync(targets, dialog.Status.Status, dialog.NamesById);
+            CurrentLifecycleOperation = operation;
+            return LastBulkUnarchiveReport = await operation;
+        }
+        finally
+        {
+            IsLifecycleBusy = false;
+        }
+    }
+
+    /// <summary>Tests (BU18): the summary the last started batch returned, whether or not its panel visit could show it.</summary>
+    internal BulkUnarchiveReport? LastBulkUnarchiveReport { get; private set; }
+
+    internal const string BulkUnarchiveListFailed = "The archived projects could not be listed. Nothing was changed.";
+
+    internal const string NoArchivedProjectsToUnarchive = "No archived projects to unarchive.";
+
+    private async Task<BulkUnarchiveReport> RunBulkUnarchiveAsync(IReadOnlyList<BulkUnarchiveTarget> targets, ProjectStatus status, IReadOnlyDictionary<long, string> names)
+    {
+        var rows = new List<(long Id, string Name, BulkUnarchiveRow Kind, string Detail)>();
+        string? failedName = null;
+        var notAttempted = 0;
+        for (var i = 0; i < targets.Count; i++)
+        {
+            var target = targets[i];
+            var id = target.ProjectId;
+            var name = names.GetValueOrDefault(id, "");
+            BulkUnarchiveResult result;
+            try
+            {
+                result = await _workspace.UnarchiveProjectBoundAsync(target, status);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Bulk unarchive failed.", ex); // operation only; no names
+                // Round 2: only what the batch knows. An exception says nothing about the Project's current state (another window
+                // may have changed it), so the line claims no status, and no store read is made just to word it.
+                rows.Add((id, name, BulkUnarchiveRow.Failed, "could not be unarchived"));
+                failedName = name;
+                notAttempted = targets.Count - i - 1;
+                break;
+            }
+
+            switch (result.Outcome)
+            {
+                case BulkUnarchiveOutcome.Unarchived:
+                    await ApplyRestoredAsync(result.Unarchived!.Node); // committed write: Touch (rule L); placed once, never selected
+                    Search?.MarkArchived(id, archived: false);
+                    rows.Add((id, name, BulkUnarchiveRow.Unarchived, $"unarchived to {result.Unarchived.ParentPath ?? "Workspace (top level)"}"));
+                    break;
+                case BulkUnarchiveOutcome.ArchivedAgain:
+                    rows.Add((id, name, BulkUnarchiveRow.ArchivedAgain, "archived again elsewhere; not unarchived"));
+                    break;
+                case BulkUnarchiveOutcome.NotArchived:
+                    rows.Add((id, name, BulkUnarchiveRow.NotArchived, "no longer archived (unarchived elsewhere)"));
+                    await ReplaceByReadAsync(id); // R2-2: one silent re-read of the Project itself; no Touch
+                    break;
+                case BulkUnarchiveOutcome.ParentArchived:
+                    rows.Add((id, name, BulkUnarchiveRow.ParentArchived, "inside an archived folder"));
+                    break;
+                case BulkUnarchiveOutcome.ParentTrashed:
+                    rows.Add((id, name, BulkUnarchiveRow.ParentTrashed, "inside a folder in the Trash"));
+                    break;
+                case BulkUnarchiveOutcome.ProjectTrashed:
+                    rows.Add((id, name, BulkUnarchiveRow.ProjectTrashed, "in the Trash"));
+                    _ = Trash.RefreshCount();
+                    await ReplaceByReadAsync(id);
+                    break;
+                case BulkUnarchiveOutcome.NotFound:
+                    rows.Add((id, name, BulkUnarchiveRow.NotFound, "no longer exists"));
+                    break;
+                case BulkUnarchiveOutcome.NotAProject:
+                    rows.Add((id, name, BulkUnarchiveRow.NotAProject, "not a project"));
+                    break;
+            }
+        }
+
+        Archived.OnLifecycleCompleted(); // committed facts: the list (if open) and the count are read again, whatever the visit
+
+        foreach (var skipped in targets.Skip(rows.Count))
+            rows.Add((skipped.ProjectId, names.GetValueOrDefault(skipped.ProjectId, ""), BulkUnarchiveRow.NotAttempted, "not attempted"));
+        var details = rows.Select(r => $"“{r.Name}”: {r.Detail}").ToList();
+        return new BulkUnarchiveReport(BulkUnarchiveSummary(rows.Select(r => (r.Name, r.Kind)).ToList(), targets.Count, failedName, notAttempted), details);
+    }
+
+    /// <summary>The kinds of Details line, in the Notice's fixed group order (§4.4).</summary>
+    private enum BulkUnarchiveRow
+    {
+        Unarchived,
+        ArchivedAgain,
+        NotArchived,
+        ParentArchived,
+        ParentTrashed,
+        ProjectTrashed,
+        NotFound,
+        NotAProject,
+        Failed,
+        NotAttempted,
+    }
+
+    private static string BulkUnarchiveGroup(BulkUnarchiveRow kind) => kind switch
+    {
+        BulkUnarchiveRow.ArchivedAgain => "archived again elsewhere",
+        BulkUnarchiveRow.NotArchived => "no longer archived",
+        BulkUnarchiveRow.ParentArchived => "inside an archived folder",
+        BulkUnarchiveRow.ParentTrashed => "inside a folder in the Trash",
+        BulkUnarchiveRow.ProjectTrashed => "in the Trash",
+        BulkUnarchiveRow.NotFound => "no longer exists",
+        _ => "not a project",
+    };
+
+    /// <summary>
+    /// "Unarchived 4 of 6 projects. Not unarchived: 1 archived again elsewhere (“Beta”), 1 inside an archived folder (“Alpha”)."
+    /// Groups in a fixed order; at most <see cref="BulkSummaryNames"/> names in all, then "and n more"; then the failure and the
+    /// not-attempted count.
+    /// </summary>
+    private static string BulkUnarchiveSummary(IReadOnlyList<(string Name, BulkUnarchiveRow Kind)> rows, int total, string? failedName, int notAttempted)
+    {
+        var unarchived = rows.Count(r => r.Kind == BulkUnarchiveRow.Unarchived);
+        var text = unarchived == total ? $"Unarchived {ProjectCount(unarchived)}." : $"Unarchived {unarchived} of {ProjectCount(total)}.";
+        var budget = BulkSummaryNames;
+        var parts = new List<string>();
+        foreach (var group in rows.Where(r => r.Kind is not (BulkUnarchiveRow.Unarchived or BulkUnarchiveRow.Failed or BulkUnarchiveRow.NotAttempted))
+                     .GroupBy(r => r.Kind).OrderBy(g => g.Key))
+        {
+            var names = group.Take(budget).Select(r => $"“{r.Name}”").ToList();
+            budget -= names.Count;
+            var more = group.Count() - names.Count;
+            var named = names.Count == 0 ? $"{more} more" : string.Join(", ", names) + (more > 0 ? $" and {more} more" : "");
+            parts.Add($"{group.Count()} {BulkUnarchiveGroup(group.Key)} ({named})");
+        }
+
+        if (parts.Count > 0)
+            text += $" Not unarchived: {string.Join(", ", parts)}.";
+        if (failedName is not null)
+            text += $" Could not unarchive “{failedName}”. {NotAttemptedText(notAttempted)}".TrimEnd(); // no claim about their status
+        return text;
+    }
+
     private Task RemoveSelectedFolderAsync() => CurrentLifecycleOperation = RemoveFolderCoreAsync(trashWhenNotEmpty: false);
 
     /// <param name="trashWhenNotEmpty">Del (D12): a Folder with any child row is offered the confirmed subtree Trash instead.</param>
@@ -2179,7 +2389,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// </summary>
     /// <returns>False when the result is stale for any node of the chain (a newer result or instance stands; nothing is applied).</returns>
     private bool ApplyNotLive(long nodeId, IReadOnlyList<long> chainFromRoot, EffectiveLifecycle state, ReadMark mark) =>
-        ApplyNotLive(nodeId, chainFromRoot, state, mark, confirmed: false, out _);
+        ApplyNotLive(nodeId, chainFromRoot, state, mark, confirmed: false, ReadNotice.Show, out _);
 
     /// <summary>
     /// Phase 19 (D10, R2c): every caller is a PURE READ, so the removal is read-derived: it writes read-update stamps (for the
@@ -2187,9 +2397,11 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// instance, after the read started) still discards. Rule C: if a read-derived update changed a node of the chain after
     /// the read started and the branch is still shown, nothing is removed and one confirmation read is requested instead
     /// (<paramref name="confirmed"/> = this IS the confirmation: no rule C).
+    /// Phase 20 (R2a-2): <paramref name="notice"/> = <see cref="ReadNotice.Silent"/> applies the same tree effects without the banner,
+    /// and a confirmation it requests is silent too.
     /// </summary>
     /// <returns>True when the removal was applied; false when stale (rule L) or held back for a confirmation (rule C).</returns>
-    private bool ApplyNotLive(long nodeId, IReadOnlyList<long> chainFromRoot, EffectiveLifecycle state, ReadMark mark, bool confirmed, out Task? confirmation)
+    private bool ApplyNotLive(long nodeId, IReadOnlyList<long> chainFromRoot, EffectiveLifecycle state, ReadMark mark, bool confirmed, ReadNotice notice, out Task? confirmation)
     {
         confirmation = null;
         var chain = chainFromRoot.Append(nodeId).ToList();
@@ -2198,11 +2410,13 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         var outermost = chainFromRoot.Where(_nodes.ContainsKey).Select(id => (long?)id).FirstOrDefault() ?? nodeId;
         if (!confirmed && _nodes.ContainsKey(outermost) && chain.Any(id => ReadUpdatedSince(id, mark)))
         {
-            confirmation = RequestConfirmation(nodeId);
+            confirmation = RequestConfirmation(nodeId, notice);
             return false;
         }
 
         ApplyRemovedByRead(outermost);
+        if (notice == ReadNotice.Silent)
+            return true; // R2a-2: the Bulk Unarchive keeps the Workspace banner (and the Phase 19 Details it guards)
         BannerMessage = (state.RootType, state.State, state.RootId == nodeId) switch
         {
             (WorkspaceNodeType.Project, LifecycleState.Trashed, _) => WorkspaceService.ProjectInTrash,
@@ -2298,10 +2512,10 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     }
 
     /// <summary>A read found the node missing: removed (read class), or — rule C — a confirmation is requested and returned.</summary>
-    private Task? RemoveMissingByRead(long nodeId, ReadMark mark)
+    private Task? RemoveMissingByRead(long nodeId, ReadMark mark, ReadNotice notice = ReadNotice.Show)
     {
         if (_nodes.ContainsKey(nodeId) && ReadUpdatedSince(nodeId, mark))
-            return RequestConfirmation(nodeId);
+            return RequestConfirmation(nodeId, notice);
         ApplyRemovedByRead(nodeId);
         return null;
     }
@@ -2355,15 +2569,20 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// snapshot is not older than either conflicting read). Per node at most one running and one queued: a request while one
     /// runs is queued (coalesced) and served by the same task.
     /// </summary>
-    private Task RequestConfirmation(long nodeId)
+    /// <param name="notice">Phase 20 (R2a-2): a run is silent only while every request it serves is silent; a
+    /// <see cref="ReadNotice.Show"/> request that joins a running slot makes it show its banner, and a silent request never makes a
+    /// showing run silent.</param>
+    private Task RequestConfirmation(long nodeId, ReadNotice notice = ReadNotice.Show)
     {
         if (_confirmations.TryGetValue(nodeId, out var running))
         {
             running.Queued = true;
+            if (notice == ReadNotice.Show)
+                running.Silent = false;
             return running.Task;
         }
 
-        var slot = new ConfirmationSlot();
+        var slot = new ConfirmationSlot { Silent = notice == ReadNotice.Silent };
         _confirmations[nodeId] = slot;
         slot.Task = RunConfirmationsAsync(nodeId, slot);
         return CurrentConfirmation = slot.Task;
@@ -2376,7 +2595,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             while (true)
             {
                 slot.Queued = false;
-                var outcome = await ConfirmOnceAsync(nodeId);
+                var outcome = await ConfirmOnceAsync(nodeId, slot);
                 if (outcome == ConfirmationOutcome.Failed)
                     return; // R2b: logged, nothing applied, no retry and no follow-up
                 if (outcome == ConfirmationOutcome.Superseded)
@@ -2398,7 +2617,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         }
     }
 
-    private async Task<ConfirmationOutcome> ConfirmOnceAsync(long nodeId)
+    private async Task<ConfirmationOutcome> ConfirmOnceAsync(long nodeId, ConfirmationSlot slot)
     {
         ConfirmationsStarted++;
         var sequence = _revealSequence;
@@ -2423,7 +2642,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             }
             if (ReadUpdatedSince(nodeId, mark))
                 return ConfirmationOutcome.Again; // another read-derived update landed after this read started
-            return ApplyConfirmed(nodeId, state, mark) ? ConfirmationOutcome.Done : ConfirmationOutcome.Failed;
+            // The mode is read when the result is applied, so a Show request that joined while this read ran still gets its banner.
+            var notice = slot.Silent ? ReadNotice.Silent : ReadNotice.Show;
+            return ApplyConfirmed(nodeId, state, mark, notice) ? ConfirmationOutcome.Done : ConfirmationOutcome.Failed;
         }
         finally
         {
@@ -2438,7 +2659,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     /// inconsistent Node creates nothing and counts as a failed confirmation.
     /// </summary>
     /// <returns>False only for a missing or inconsistent <see cref="WorkspaceNodeState.Node"/>.</returns>
-    private bool ApplyConfirmed(long nodeId, WorkspaceNodeState? state, ReadMark mark)
+    private bool ApplyConfirmed(long nodeId, WorkspaceNodeState? state, ReadMark mark, ReadNotice notice)
     {
         if (state is null)
         {
@@ -2449,7 +2670,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         if (!state.Effective.IsLive)
         {
-            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark, confirmed: true, out _);
+            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark, confirmed: true, notice, out _);
             return true;
         }
 
@@ -2461,6 +2682,18 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             return true;
         }
 
+        return PlaceUncachedFromState(nodeId, state);
+    }
+
+    /// <summary>
+    /// A live node that is not cached: re-created under a loaded parent (or at the top level) ONLY from this snapshot's
+    /// <see cref="WorkspaceNodeState.Node"/> (R2d) and placed once; under a parent that is not loaded the parent only gets
+    /// <c>HasChildren</c>. Shared by the confirmation (Phase 19) and the Bulk Unarchive re-placement (Phase 20, §4.5.2).
+    /// </summary>
+    /// <returns>False only for a missing or inconsistent <see cref="WorkspaceNodeState.Node"/> (nothing created).</returns>
+    private bool PlaceUncachedFromState(long nodeId, WorkspaceNodeState state)
+    {
+        var parentId = state.ParentId;
         WorkspaceNodeViewModel? parent = null;
         var parentLoaded = parentId is null ? IsActivated : _nodes.TryGetValue(parentId.Value, out parent) && parent.IsChildrenLoaded;
         if (!parentLoaded)
@@ -2471,7 +2704,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
         if (state.Node is not { } row || row.Id != nodeId || row.ParentId != parentId || row.Type != state.Type || state.Archived || state.Trashed)
         {
-            _log.Error("A confirmation read returned node data that does not match its state; no row was created.");
+            _log.Error("A Workspace read returned node data that does not match its state; no row was created.");
             return false;
         }
 
@@ -2557,33 +2790,91 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             await confirmation;
     }
 
+    /// <param name="notice">Phase 20 (R2a-2): <see cref="ReadNotice.Silent"/> for the Bulk Unarchive re-placement (no banner).</param>
+    /// <param name="replace">Phase 20 (§4.5.2): the re-placement mode. An uncached live node is placed (re-created only from this
+    /// read's <see cref="WorkspaceNodeState.Node"/>) instead of "not shown here → nothing"; an instance registered after the read
+    /// started counts as a newer read-derived update (rule C) like a read-update stamp.</param>
     /// <returns>The confirmation read requested under rule C, or null.</returns>
-    private Task? ApplyReconciled(long nodeId, WorkspaceNodeState? state, int sequence, ReadMark mark, string? missingMessage)
+    private Task? ApplyReconciled(long nodeId, WorkspaceNodeState? state, int sequence, ReadMark mark, string? missingMessage,
+        ReadNotice notice = ReadNotice.Show, bool replace = false)
     {
         if (IsTouchedSince(nodeId, sequence))
             return null; // rule L: a newer committed result or reveal already applied a fresher state
         if (state is null)
         {
-            if (RemoveMissingByRead(nodeId, mark) is { } held)
+            if (RemoveMissingByRead(nodeId, mark, notice) is { } held)
                 return held;
-            BannerMessage = missingMessage ?? "This item no longer exists.";
+            if (notice == ReadNotice.Show)
+                BannerMessage = missingMessage ?? "This item no longer exists.";
             return null;
         }
 
         if (!state.Effective.IsLive)
         {
             // §7.9 C4: by effective state; never applied when stale for any node of that chain (rule L) or held back (rule C).
-            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark, confirmed: false, out var confirmation);
+            ApplyNotLive(nodeId, state.ChainFromRoot, state.Effective, mark, confirmed: false, notice, out var confirmation);
             return confirmation;
         }
 
-        if (!_nodes.TryGetValue(nodeId, out var node) || node.Parent?.Id == state.ParentId)
-            return null; // not shown here, or active in place
-        if (ReadUpdatedSince(nodeId, mark))
-            return RequestConfirmation(nodeId); // rule C: a newer read-derived update moved it; a fresh read decides
+        if (!_nodes.TryGetValue(nodeId, out var node))
+        {
+            if (!replace)
+                return null; // not shown here
+            if (ReadUpdatedSince(nodeId, mark))
+                return RequestConfirmation(nodeId, notice); // rule C: a newer read-derived update removed it meanwhile
+            PlaceUncachedFromState(nodeId, state); // a missing or inconsistent Node is logged and creates nothing (no retry)
+            return null;
+        }
+
+        if (node.Parent?.Id == state.ParentId && (!replace || CollectionOf(node).Contains(node)))
+            return null; // active in place
+        if (ReadUpdatedSince(nodeId, mark) || (replace && node.RegisteredAt > mark.Registrations))
+            return RequestConfirmation(nodeId, notice); // rule C: a newer read-derived update moved it; a fresh read decides
         ApplyActiveElsewhere(node, state.ParentId); // read class: a read-update stamp, never Touch (R2b)
+        if (replace && state.ParentId is { } parentId && _nodes.TryGetValue(parentId, out var parent) && !parent.IsChildrenLoaded)
+            parent.SetHasChildren(true); // it appears with that folder's load
         return null;
     }
+
+    /// <summary>
+    /// Phase 20 (§4.5.2, R2-2): after a <c>NotArchived</c> or <c>ProjectTrashed</c> refusal of the Bulk Unarchive, ONE fresh read of
+    /// that Project (a D10 tracked read) applied by the re-placement mode of the reconcile path, silently (R2a-2: no Workspace
+    /// banner). Rules L and C as in Phase 19; a failed read is logged and applies nothing (no retry). It never selects a node or
+    /// expands a folder, and writes nothing to the database.
+    /// </summary>
+    internal Task ReplaceByReadAsync(long nodeId) => CurrentReconciliation = ReplaceByReadCoreAsync(nodeId);
+
+    private async Task ReplaceByReadCoreAsync(long nodeId)
+    {
+        var sequence = _revealSequence;
+        var mark = BeginTrackedRead();
+        Task? confirmation;
+        try
+        {
+            WorkspaceNodeState? state;
+            try
+            {
+                state = await _workspace.GetNodeStateAsync(nodeId);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("A Workspace project could not be re-read after a refused bulk unarchive.", ex); // no names
+                return;
+            }
+
+            confirmation = ApplyReconciled(nodeId, state, sequence, mark, missingMessage: null, ReadNotice.Silent, replace: true);
+        }
+        finally
+        {
+            EndTrackedRead(mark);
+        }
+
+        if (confirmation is not null)
+            await confirmation;
+    }
+
+    /// <summary>Tests (BU6j): a rule-C confirmation request for <paramref name="nodeId"/> with the given notice mode, as any flow would make it.</summary>
+    internal Task RequestConfirmationForTests(long nodeId, ReadNotice notice) => RequestConfirmation(nodeId, notice);
 
     private void OfferUndo(UndoOffer offer)
     {

@@ -105,6 +105,18 @@ internal sealed class FakeDialogs : IDialogService
         return OnBulkArchive(viewModel);
     }
 
+    /// <summary>Phase 20: plays the Bulk Unarchive checklist. By default the user cancels (nothing is pre-ticked).</summary>
+    public Func<BulkUnarchiveViewModel, bool> OnBulkUnarchive { get; set; } = _ => false;
+
+    /// <summary>Every Bulk Unarchive checklist shown, in order.</summary>
+    public List<BulkUnarchiveViewModel> BulkUnarchiveDialogs { get; } = [];
+
+    public bool ShowBulkUnarchive(BulkUnarchiveViewModel viewModel)
+    {
+        BulkUnarchiveDialogs.Add(viewModel);
+        return OnBulkUnarchive(viewModel);
+    }
+
     /// <summary>Plays the Copy / Move dialog: by default the user cancels.</summary>
     public Func<CrossProjectDialogViewModel, bool> OnCrossProject { get; set; } = _ => false;
 

@@ -56,6 +56,13 @@ public interface IDialogService
     /// <returns>True only when the user clicked the Archive button (the targets are <see cref="BulkArchiveViewModel.ConfirmedTargets"/>).</returns>
     bool ShowBulkArchive(BulkArchiveViewModel viewModel);
 
+    /// <summary>
+    /// Phase 20: the "Unarchive projects…" checklist with one status for all. Cancel is the default; Enter and Esc both mean
+    /// Cancel; Space toggles the focused row and Ctrl+A ticks every row.
+    /// </summary>
+    /// <returns>True only when the user clicked the Unarchive button (the targets are <see cref="BulkUnarchiveViewModel.ConfirmedTargets"/>).</returns>
+    bool ShowBulkUnarchive(BulkUnarchiveViewModel viewModel);
+
     /// <summary>Phase 15: Copy / Move to another project. True only after Confirm on a Ready preview (the view model holds the request and token).</summary>
     bool ShowCrossProject(CrossProjectDialogViewModel viewModel);
 

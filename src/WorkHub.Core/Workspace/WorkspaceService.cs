@@ -260,6 +260,24 @@ public sealed class WorkspaceService(IWorkspaceStore store)
     public Task<BulkArchiveResult> ArchiveProjectInPlaceAsync(BulkArchiveTarget target, CancellationToken cancellationToken = default) =>
         store.ArchiveProjectInPlaceAsync(target, cancellationToken);
 
+    /// <summary>Phase 20: the archived Project roots with their serials, for the Bulk Unarchive dialog (read only).</summary>
+    public Task<BulkUnarchiveCandidates> ListBulkUnarchiveCandidatesAsync(CancellationToken cancellationToken = default) =>
+        store.ListBulkUnarchiveCandidatesAsync(cancellationToken);
+
+    /// <summary>
+    /// Phase 20: unarchives one Project only if it is still archived by the archive event the user saw (one write transaction; see
+    /// <see cref="IWorkspaceStore.UnarchiveProjectBoundAsync"/>). Nothing on disk is touched.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The status is not editable, or the serial is not a committed one; nothing was called or written.</exception>
+    public Task<BulkUnarchiveResult> UnarchiveProjectBoundAsync(BulkUnarchiveTarget target, ProjectStatus status, CancellationToken cancellationToken = default)
+    {
+        if (!ProjectStatuses.IsEditable(status))
+            throw new ArgumentOutOfRangeException(nameof(status), status, "Unarchive needs an editable status.");
+        if (target.ExpectedSerial < 1)
+            throw new ArgumentOutOfRangeException(nameof(target), target.ExpectedSerial, "An archived Project has a serial of 1 or more.");
+        return store.UnarchiveProjectBoundAsync(target, status, cancellationToken);
+    }
+
     /// <summary>Tag suggestions for the Project editor (Phase 17): see <see cref="IWorkspaceStore.ListTagSuggestionsAsync"/>.</summary>
     public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? editingProjectNodeId = null, CancellationToken cancellationToken = default) =>
         store.ListTagSuggestionsAsync(editingProjectNodeId, 200, cancellationToken);

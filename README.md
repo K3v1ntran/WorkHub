@@ -185,6 +185,14 @@ is touched.
   to the Trash meanwhile, the remaining projects are not attempted. The message says how many were archived and why the
   others were not (**Details** lists every project). **Undo** restores exactly the projects this action archived (each one
   only if it was not changed elsewhere) and never changes the selection.
+- **Unarchive projects…** (Archived list, toolbar or right-click) lists the archived projects of the Archived list (not
+  archived folders, and not projects inside an archived folder). Nothing starts ticked; one **Status** applies to every
+  ticked project (Completed is preselected); Space, Ctrl+A and the default Cancel work as in Archive projects…. At most 500
+  projects are listed at a time. Each ticked project is unarchived on its own, into the folder it is in now, and only if it
+  is still archived as it was listed: one unarchived elsewhere is left as it is (and shown in the tree), and one archived
+  again elsewhere stays archived. The message in the Archived list says how many were unarchived and why the others were
+  not (**Details** lists every project); it is shown only if the list is still open from where you started. There is no
+  Undo (archive the projects again instead). It never selects a project or changes the Workspace message.
 - **Older WorkHub versions.** Schema v8 makes WorkHub 1.0.0 (schema v7) refuse this data folder from the next time it
   starts. A 1.0.0 window that is already open is not stopped by this, so close every WorkHub window before the first start
   of this version.
@@ -360,7 +368,7 @@ confirmation.
 - The message after a copy or move offers **Open destination**, which shows the copy where it is now. There is **no Undo**
   across projects.
 
-Not available yet: permanent delete of projects or folders of the Workspace, bulk Unarchive, tags on folders or content
+Not available yet: permanent delete of projects or folders of the Workspace, tags on folders or content
 (and renaming a tag across projects), rich text, drag-and-drop and manual ordering (including of Favorites).
 
 ### Workspace search

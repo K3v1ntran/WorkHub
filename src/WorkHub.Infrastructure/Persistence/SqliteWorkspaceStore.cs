@@ -750,6 +750,74 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
             return new ArchiveUndoResult(ArchiveUndoOutcome.Undone, restored);
         }, cancellationToken);
 
+    // ---- Phase 20: Bulk Unarchive of Projects ------------------------------------------------------------------------
+
+    public Task<BulkUnarchiveCandidates> ListBulkUnarchiveCandidatesAsync(CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            // One read transaction: the roots (as the Archived panel selects them), their paths and their serials come from the
+            // same snapshot, so each row carries the archive event that was current when it was listed.
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
+            var candidates = ReadCandidates(connection, transaction, lifecycle, "SELECT NodeId FROM Projects WHERE Status = 'Archived'");
+            var paths = new Dictionary<long, string?>();
+            var rows = new List<BulkUnarchiveCandidate>();
+            foreach (var candidate in candidates)
+            {
+                if (candidate.Type != WorkspaceNodeType.Project)
+                    continue;
+                var state = NodeLifecycle.Of(lifecycle.Chain(candidate.Id)!);
+                if (state.State != LifecycleState.Archived || state.RootId != candidate.Id)
+                    continue; // trashed (itself or above), or inside an archived Folder: not listed (as ReadArchivedRoots)
+                string? path = null;
+                if (candidate.ParentId is { } parent && !paths.TryGetValue(parent, out path))
+                    paths[parent] = path = ReadPath(connection, transaction, parent);
+                rows.Add(new BulkUnarchiveCandidate(candidate.Id, candidate.Name, candidate.ParentId, path,
+                    ParseTime(ReadUpdatedAt(connection, transaction, candidate.Id)),
+                    candidate.ArchiveSerial ?? throw new InvalidDataException($"Archived Project {candidate.Id} has no archive serial.")));
+            }
+
+            transaction.Commit();
+            // The panel's order (Projects only: by name, then Id), then bounded (D8).
+            rows.Sort((a, b) => WorkspaceNodeOrder.Instance.Compare((WorkspaceNodeType.Project, a.Name, a.NodeId), (WorkspaceNodeType.Project, b.Name, b.NodeId)));
+            var truncated = rows.Count > BulkUnarchiveCandidates.MaxRows;
+            return new BulkUnarchiveCandidates(truncated ? rows.Take(BulkUnarchiveCandidates.MaxRows).ToList() : rows, truncated);
+        }, cancellationToken);
+
+    public Task<BulkUnarchiveResult> UnarchiveProjectBoundAsync(BulkUnarchiveTarget target, ProjectStatus status, CancellationToken cancellationToken = default) =>
+        Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false);
+            var nodeId = target.ProjectId;
+
+            // Fixed check order (§4.3.2, the order of UndoArchiveAsync), all under the write lock; every refusal writes nothing.
+            if (ReadArchiveState(connection, transaction, nodeId) is not { } state)
+                return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.NotFound);
+            if (state.Type != WorkspaceNodeType.Project)
+                return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.NotAProject);
+            if (state.Trashed)
+                return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.ProjectTrashed);
+            if (state.Status != ProjectStatus.Archived)
+                return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.NotArchived); // unarchived elsewhere, not archived again
+            if (state.Serial != target.ExpectedSerial)
+                return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.ArchivedAgain) with { CurrentSerial = state.Serial }; // a later event
+            switch (ParentState(connection, transaction, nodeId).State)
+            {
+                case LifecycleState.Trashed:
+                    return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.ParentTrashed);
+                case LifecycleState.Archived:
+                    return BulkUnarchiveResult.Refused(BulkUnarchiveOutcome.ParentArchived);
+            }
+
+            // The chosen status, guarded by status AND the serial the user saw (throws unless exactly one row changes); the serial
+            // is left as it is.
+            RequireArchiveParent(connection, transaction, nodeId, state.ParentId);
+            SetStatusFromArchived(connection, transaction, nodeId, status, target.ExpectedSerial);
+            var unarchived = ReadUnarchived(connection, transaction, nodeId, state.ParentId);
+            transaction.Commit();
+            return new BulkUnarchiveResult(BulkUnarchiveOutcome.Unarchived, unarchived, null);
+        }, cancellationToken);
+
     public Task<IReadOnlyList<ArchivedProjectEntry>> ListArchivedAsync(CancellationToken cancellationToken = default) =>
         Run<IReadOnlyList<ArchivedProjectEntry>>(connection =>
         {
