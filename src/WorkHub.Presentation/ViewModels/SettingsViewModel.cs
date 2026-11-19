@@ -20,6 +20,7 @@ public sealed class SettingsViewModel : ObservableObject
     private readonly IDialogService _dialogs;
     private readonly Func<string?> _detectTortoise;
     private readonly RepositorySettings _draft;
+    private readonly RepositorySettings _openedRepository;
     private RepositoryUsage _usage = RepositoryUsage.None;
     private SettingsPageItem _selectedPage;
     private string _sampleCode = DefaultSampleCode;
@@ -48,6 +49,7 @@ public sealed class SettingsViewModel : ObservableObject
         _dialogs = dialogs;
         _detectTortoise = detectTortoise;
         _draft = settings.CreateRepositoryDraft();
+        _openedRepository = _draft.Clone(); // the dialog's Repository baseline: decides whether the user edited it
         var opened = settings.Current.Ui.Workspace;
         _openedToolbars = new WorkspaceUiSettings
         {
@@ -312,30 +314,40 @@ public sealed class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Phase 18: the only change in this dialog is "Save notes automatically". Then Save writes only <c>ui.notes.autosave</c>
-    /// and sends no Repository draft, so Repository values another WorkHub saved after this dialog opened are kept.
+    /// True when the user edited the Repository section in this dialog: the draft differs from the Repository values the
+    /// dialog opened with (compared after trimming). A Repository saved meanwhile by another WorkHub is not an edit.
     /// </summary>
-    internal bool ChangesOnlyNotesAutoSave => ChangedNotesAutoSave is not null && ChangedToolbars.IsEmpty && !HasUnsavedRepositoryChanges;
+    internal bool IsRepositoryEdited => Differs(_draft, _openedRepository);
+
+    /// <summary>
+    /// Phase 18: the only change in this dialog is "Save notes automatically" (a case of <see cref="IsRepositoryEdited"/> = false,
+    /// which saves through <see cref="SettingsService.SaveUiPreferencesAsync"/>).
+    /// </summary>
+    internal bool ChangesOnlyNotesAutoSave => ChangedNotesAutoSave is not null && ChangedToolbars.IsEmpty && !IsRepositoryEdited;
 
     private async Task SaveAsync()
     {
         SaveError = null;
         SettingsSaveResult result;
-        var notesOnly = ChangesOnlyNotesAutoSave;
+        // Without a Repository edit, Save sends no Repository draft: only the toolbar values and autosave the user changed, in
+        // one commit, so values another WorkHub saved after this dialog opened (Repository, other toolbars, autosave) are kept.
+        var uiOnly = !IsRepositoryEdited;
+        var toolbars = ChangedToolbars;
+        var notesAutoSave = ChangedNotesAutoSave;
         // While Save runs, Import cannot start: a successful Save closes the window, which must not happen mid-import.
         SetSaving(true);
         try
         {
-            result = notesOnly
-                ? await _settings.SaveNotesAutoSaveAsync(ChangedNotesAutoSave!.Value, allowReplacingUnreadableFile: true)
-                : await _settings.SaveRepositoryAsync(_draft, _usage, ChangedToolbars, ChangedNotesAutoSave);
+            result = uiOnly
+                ? await _settings.SaveUiPreferencesAsync(toolbars, notesAutoSave, allowReplacingUnreadableFile: true)
+                : await _settings.SaveRepositoryAsync(_draft, _usage, toolbars, notesAutoSave);
         }
         finally
         {
             SetSaving(false);
         }
 
-        if (notesOnly)
+        if (uiOnly)
         {
             if (result.Saved)
                 CloseRequested?.Invoke(this, true);
@@ -358,17 +370,16 @@ public sealed class SettingsViewModel : ObservableObject
     }
 
     /// <summary>True when the Repository draft differs from the saved settings (values compared after trimming).</summary>
-    public bool HasUnsavedRepositoryChanges
+    public bool HasUnsavedRepositoryChanges => Differs(_draft, _settings.Current.Repository);
+
+    private static bool Differs(RepositorySettings left, RepositorySettings right)
     {
-        get
-        {
-            var draft = _draft.Trimmed();
-            var saved = _settings.Current.Repository.Trimmed();
-            return draft.Svn.Host != saved.Svn.Host || draft.Svn.SystemPrefix != saved.Svn.SystemPrefix
-                || draft.Svn.OraclePrefix != saved.Svn.OraclePrefix || draft.Svn.ReleasePrefix != saved.Svn.ReleasePrefix
-                || draft.Svn.TortoiseProcPath != saved.Svn.TortoiseProcPath || draft.Git.Host != saved.Git.Host
-                || draft.Git.SystemPrefix != saved.Git.SystemPrefix || draft.Git.OraclePrefix != saved.Git.OraclePrefix;
-        }
+        var draft = left.Trimmed();
+        var saved = right.Trimmed();
+        return draft.Svn.Host != saved.Svn.Host || draft.Svn.SystemPrefix != saved.Svn.SystemPrefix
+            || draft.Svn.OraclePrefix != saved.Svn.OraclePrefix || draft.Svn.ReleasePrefix != saved.Svn.ReleasePrefix
+            || draft.Svn.TortoiseProcPath != saved.Svn.TortoiseProcPath || draft.Git.Host != saved.Git.Host
+            || draft.Git.SystemPrefix != saved.Git.SystemPrefix || draft.Git.OraclePrefix != saved.Git.OraclePrefix;
     }
 
     /// <summary>

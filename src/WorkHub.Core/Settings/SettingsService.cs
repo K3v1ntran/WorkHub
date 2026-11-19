@@ -105,7 +105,24 @@ public sealed class SettingsService(ISettingsStore store, Func<string, bool>? fi
     /// dialog's Save passes <paramref name="allowReplacingUnreadableFile"/> = true, as its Repository save does.
     /// </summary>
     public Task<SettingsSaveResult> SaveNotesAutoSaveAsync(bool autoSave, bool allowReplacingUnreadableFile = false) =>
-        CommitAsync(new SettingsEdit { NotesAutoSave = autoSave, AllowReplacingUnreadableFile = allowReplacingUnreadableFile }, []);
+        SaveUiPreferencesAsync(toolbars: null, notesAutoSave: autoSave, allowReplacingUnreadableFile);
+
+    /// <summary>
+    /// The Settings dialog's Save when the user did not edit the Repository section: writes only the toolbar preferences that
+    /// are set in <paramref name="toolbars"/> and, when not null, <c>ui.notes.autosave</c>, in <b>one</b> merge/commit. No
+    /// Repository value is sent, so every member the dialog did not change (Repository, other toolbars, autosave, unknown
+    /// members) keeps the value on disk at commit time. The dialog passes <paramref name="allowReplacingUnreadableFile"/> = true,
+    /// as its Repository save does.
+    /// </summary>
+    public Task<SettingsSaveResult> SaveUiPreferencesAsync(WorkspaceToolbarChanges? toolbars, bool? notesAutoSave, bool allowReplacingUnreadableFile = false) =>
+        CommitAsync(
+            new SettingsEdit
+            {
+                Toolbars = toolbars is { IsEmpty: false } ? toolbars : null,
+                NotesAutoSave = notesAutoSave,
+                AllowReplacingUnreadableFile = allowReplacingUnreadableFile,
+            },
+            []);
 
     /// <summary>
     /// The quick toolbar action (a toolbar's right-click menu): saves only that toolbar's preference; the other two stay as
