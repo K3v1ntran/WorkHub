@@ -94,6 +94,9 @@
             <MenuItem Header="Move folder to Trash…" InputGestureText="Del" Command="{Binding TrashFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Trash}" /></MenuItem.Icon></MenuItem>
             <MenuItem Header="Remove folder…" InputGestureText="Del" Command="{Binding RemoveFolderCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.FolderRemove}" /></MenuItem.Icon></MenuItem>
             <Separator />
+            <!-- Phase 21: rename / merge a tag across Projects (this menu is the tree's right-click menu, also on empty space, and the strip's More). -->
+            <MenuItem Header="Manage tags…" Command="{Binding ManageTagsCommand}" AutomationProperties.Name="Manage tags" AutomationProperties.AutomationId="ManageTags"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Rename}" /></MenuItem.Icon></MenuItem>
+            <Separator />
             <MenuItem Header="Info" InputGestureText="Ctrl+I" Command="{Binding ToggleInfoCommand}"><MenuItem.Icon><Image Style="{StaticResource IconImage}" Source="{StaticResource Img.Info}" /></MenuItem.Icon></MenuItem>
         </ContextMenu>
 

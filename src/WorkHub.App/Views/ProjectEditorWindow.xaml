@@ -115,6 +115,16 @@
             <TextBlock Style="{StaticResource FieldError}" Text="{Binding TagError}" AutomationProperties.AutomationId="TagError" />
             <TextBlock Style="{StaticResource FieldHint}" Text="{Binding TagNote}" AutomationProperties.AutomationId="TagNote"
                        Visibility="{Binding TagNote, Converter={StaticResource NullToCollapsed}}" />
+            <!-- Phase 21 R2a: after a Save refused because the tags changed in another window. Save stays disabled until one is chosen. -->
+            <StackPanel Visibility="{Binding IsTagConflictPending, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="TagConflict">
+                <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding CurrentTagsText}" AutomationProperties.AutomationId="CurrentTags" />
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                    <Button Content="Use current tags" Command="{Binding UseCurrentTagsCommand}" AutomationProperties.AutomationId="UseCurrentTags"
+                            ToolTip="Replace your tags with the current ones; your other changes are kept" />
+                    <Button Content="Keep my tags" Margin="8,0,0,0" Command="{Binding KeepMyTagsCommand}" AutomationProperties.AutomationId="KeepMyTags"
+                            ToolTip="Save your tags over the current ones" />
+                </StackPanel>
+            </StackPanel>
             <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap"
                        Text="Workspace entries are WorkHub references only. No files or folders are created, moved or renamed." />
         </StackPanel>

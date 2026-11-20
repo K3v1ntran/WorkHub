@@ -1,0 +1,106 @@
+<Window x:Class="WorkHub.App.Views.ManageTagsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:WorkHub.Presentation.ViewModels;assembly=WorkHub.Presentation"
+        xmlns:views="clr-namespace:WorkHub.App.Views"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:ManageTagsViewModel}"
+        Title="{Binding Title}"
+        Width="600" Height="560" MinWidth="380" MinHeight="380" ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        Background="{StaticResource Brush.Surface}"
+        Foreground="{StaticResource Brush.Text}"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True"
+        FocusManager.FocusedElement="{Binding ElementName=FilterBox}">
+    <!-- Phase 21: Close is the default and the cancel button (Enter and Esc never write). Enter in the name box only previews. -->
+    <Window.Resources>
+        <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
+    </Window.Resources>
+    <DockPanel Margin="20,12,20,16">
+        <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" AutomationProperties.AutomationId="ManageTagsHint"
+                   Text="Rename a tag or merge it into another tag in every project that is not in the Trash. Projects in the Trash keep their tags." />
+        <StackPanel DockPanel.Dock="Top" Margin="0,10,0,0">
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Filter" />
+            <TextBox x:Name="FilterBox" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Filter tags" AutomationProperties.AutomationId="ManageTagsFilter" />
+        </StackPanel>
+
+        <Grid DockPanel.Dock="Bottom" Margin="0,16,0,0">
+            <Button Content="Cancel change" HorizontalAlignment="Left" Command="{Binding CancelChangeCommand}" AutomationProperties.AutomationId="ManageTagsCancelChange" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Close" IsCancel="True" IsDefault="True" Command="{Binding CloseCommand}" AutomationProperties.AutomationId="ManageTagsClose" />
+                <Button Content="Confirm" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}"
+                        AutomationProperties.Name="Confirm tag change" AutomationProperties.AutomationId="ManageTagsConfirm" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Rename…" Command="{Binding StartRenameCommand}" AutomationProperties.AutomationId="ManageTagsRename" />
+                <Button Content="Merge into…" Margin="8,0,0,0" Command="{Binding StartMergeCommand}" AutomationProperties.AutomationId="ManageTagsMerge" />
+            </StackPanel>
+            <StackPanel Margin="0,8,0,0" Visibility="{Binding IsRenameMode, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="New name" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="NewNameBox" MaxLength="200" Text="{Binding NewName, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.Name="New tag name" AutomationProperties.AutomationId="ManageTagsNewName">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Enter" Command="{Binding PreviewCommand}" />
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <Button Grid.Column="1" Margin="8,0,0,0" Content="Preview" Command="{Binding PreviewCommand}" AutomationProperties.AutomationId="ManageTagsPreviewRename" />
+                </Grid>
+                <TextBlock Style="{StaticResource FieldError}" Text="{Binding NameError}" AutomationProperties.AutomationId="ManageTagsNameError" />
+            </StackPanel>
+            <StackPanel Margin="0,8,0,0" Visibility="{Binding IsMergeMode, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Merge into" />
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ComboBox ItemsSource="{Binding MergeTargets}" SelectedItem="{Binding MergeTarget}" DisplayMemberPath="Spelling"
+                              AutomationProperties.Name="Merge into tag" AutomationProperties.AutomationId="ManageTagsMergeTarget" />
+                    <Button Grid.Column="1" Margin="8,0,0,0" Content="Preview" Command="{Binding PreviewCommand}" AutomationProperties.AutomationId="ManageTagsPreviewMerge" />
+                </Grid>
+            </StackPanel>
+            <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding PreviewText}" AutomationProperties.AutomationId="ManageTagsPreview"
+                       Visibility="{Binding PreviewText, Converter={StaticResource NullToCollapsed}}" />
+            <TextBlock Margin="0,6,0,0" Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding Message}" AutomationProperties.AutomationId="ManageTagsMessage"
+                       Visibility="{Binding Message, Converter={StaticResource NullToCollapsed}}" />
+        </StackPanel>
+
+        <ListBox x:Name="TagList" Margin="0,12,0,0" ItemsSource="{Binding FilteredRows}" SelectedItem="{Binding SelectedRow}" SelectionMode="Single"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 AutomationProperties.Name="Tags in use" AutomationProperties.AutomationId="ManageTagsList">
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:TagRowViewModel}">
+                    <Grid Margin="2,3">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="{Binding Spelling}" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0">
+                            <TextBlock Style="{StaticResource FieldHint}" Text="{Binding CountText}" />
+                            <TextBlock Style="{StaticResource FieldHint}" Margin="8,0,0,0" Text="{Binding TrashText}"
+                                       Visibility="{Binding TrashText, Converter={StaticResource NullToCollapsed}}" />
+                        </StackPanel>
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="AutomationProperties.Name" Value="{Binding Spelling}" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+        </ListBox>
+    </DockPanel>
+</Window>

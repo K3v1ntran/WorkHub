@@ -58,10 +58,21 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
         Gated("rename", () => inner.RenameAsync(nodeId, name, cancellationToken), readFirst: false);
 
     public Task<ProjectDetails?> GetProjectAsync(long nodeId, CancellationToken cancellationToken = default) =>
-        Gated($"details:{nodeId}", () => inner.GetProjectAsync(nodeId, CancellationToken.None));
+        ScriptProject.TryRemove(nodeId, out var script)
+            ? Gated($"details:{nodeId}", script)
+            : Gated($"details:{nodeId}", () => inner.GetProjectAsync(nodeId, CancellationToken.None));
 
-    public Task<ProjectDetails?> UpdateProjectAsync(long nodeId, ProjectDraft draft, CancellationToken cancellationToken = default) =>
-        Gated("update", () => inner.UpdateProjectAsync(nodeId, draft, cancellationToken), readFirst: false);
+    /// <summary>Phase 21: when set, the next "details" call for that node returns this (or throws) instead of reaching the database.</summary>
+    public ConcurrentDictionary<long, Func<Task<ProjectDetails?>>> ScriptProject { get; } = new();
+
+    /// <summary>Phase 21 R2a: every draft passed to UpdateProjectAsync, in call order (the "draft sent to the store").</summary>
+    public ConcurrentQueue<ProjectDraft> UpdateDrafts { get; } = new();
+
+    public Task<ProjectDetails?> UpdateProjectAsync(long nodeId, ProjectDraft draft, CancellationToken cancellationToken = default)
+    {
+        UpdateDrafts.Enqueue(draft);
+        return Gated("update", () => inner.UpdateProjectAsync(nodeId, draft, cancellationToken), readFirst: false);
+    }
 
     public Task<IReadOnlyList<WorkspaceFolderPath>> ListMoveTargetsAsync(long movingNodeId, CancellationToken cancellationToken = default) =>
         inner.ListMoveTargetsAsync(movingNodeId, cancellationToken);
@@ -162,6 +173,23 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
 
     public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default) =>
         Gated("listTagSuggestions", () => inner.ListTagSuggestionsAsync(excludeProjectNodeId, limit, CancellationToken.None));
+
+    // ---- Phase 21: "tagsInUse", "prepareTagChange" (held reads take their snapshot when called), "applyTagChange" (a held write
+    // runs on release, or commits first with HoldCommitted). Every apply call is recorded in ApplyTagChangeCalls.
+
+    public ConcurrentQueue<(TagChangeRequest Request, string Token)> ApplyTagChangeCalls { get; } = new();
+
+    public Task<IReadOnlyList<TagInUse>> ListTagsInUseAsync(CancellationToken cancellationToken = default) =>
+        Gated("tagsInUse", () => inner.ListTagsInUseAsync(CancellationToken.None));
+
+    public Task<TagChangePreview> PrepareTagChangeAsync(TagChangeRequest request, CancellationToken cancellationToken = default) =>
+        Gated("prepareTagChange", () => inner.PrepareTagChangeAsync(request, CancellationToken.None));
+
+    public Task<TagChangeResult> ApplyTagChangeAsync(TagChangeRequest request, string token, CancellationToken cancellationToken = default)
+    {
+        ApplyTagChangeCalls.Enqueue((request, token));
+        return Gated("applyTagChange", () => inner.ApplyTagChangeAsync(request, token, CancellationToken.None), readFirst: false);
+    }
 
     // ---- Folder Archive and Trash (schema v9): "prepareFolder" (a held read takes its snapshot when called); "archiveFolder",
     // "trashFolder", "unarchiveFolder", "restoreFolder", "undoFolder" (held writes run on release, or commit first with HoldCommitted).

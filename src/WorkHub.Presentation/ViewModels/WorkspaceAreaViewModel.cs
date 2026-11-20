@@ -199,6 +199,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         ArchiveProjectCommand = new AsyncRelayCommand(ArchiveSelectedProjectAsync, () => CanWrite() && SelectedNode?.IsProject == true, onError);
         ArchiveProjectsInFolderCommand = new AsyncRelayCommand(ArchiveProjectsInFolderAsync, () => CanWrite() && SelectedNode?.IsFolder == true, onError);
         ArchiveTopLevelProjectsCommand = new AsyncRelayCommand(ArchiveTopLevelProjectsAsync, CanWrite, onError);
+        ManageTagsCommand = new AsyncRelayCommand(ManageTagsAsync, CanWrite, onError);
         ShowBulkArchiveDetailsCommand = new RelayCommand(ShowBulkArchiveDetails, () => LastBulkArchiveDetails is not null);
         OpenArchivedCommand = new AsyncRelayCommand(OpenArchivedAsync, () => IsActivated && !IsArchivedOpen, onError);
         CloseArchivedCommand = new RelayCommand(() =>
@@ -257,6 +258,9 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
 
     /// <summary>Phase 19: "Archive projects at the top level…" (the top-level live Projects; checklist).</summary>
     public AsyncRelayCommand ArchiveTopLevelProjectsCommand { get; }
+
+    /// <summary>Phase 21: "Manage tags…" (rename and merge a tag across Projects). Disabled while a lifecycle write runs.</summary>
+    public AsyncRelayCommand ManageTagsCommand { get; }
 
     /// <summary>Phase 19: the banner's Details for the last Bulk Archive or Bulk Undo (one line per Project).</summary>
     public RelayCommand ShowBulkArchiveDetailsCommand { get; }
@@ -960,6 +964,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         ArchiveProjectCommand.RaiseCanExecuteChanged();
         ArchiveProjectsInFolderCommand.RaiseCanExecuteChanged();
         ArchiveTopLevelProjectsCommand.RaiseCanExecuteChanged();
+        ManageTagsCommand.RaiseCanExecuteChanged();
         RemoveFolderCommand.RaiseCanExecuteChanged();
         ArchiveFolderCommand.RaiseCanExecuteChanged();
         TrashFolderCommand.RaiseCanExecuteChanged();
@@ -972,6 +977,40 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
     {
         InvalidateReveal();
         ClearUndo();
+    }
+
+    // ---- Phase 21: Manage tags (proposal Revision 2 + R2a §3.1) ---------------------------------------------------------------
+    // A tag change writes only ProjectTags: the tree, the selection, the banner and an offered Undo are left as they are (TR7).
+    // The dialog applies each confirmed change while it holds the lifecycle slot; the selected Project's details are re-read after
+    // a committed change.
+
+    private async Task ManageTagsAsync()
+    {
+        if (!CanWrite())
+            return;
+        var dialog = new ManageTagsViewModel(_workspace, TryBeginTagWrite, () => IsLifecycleBusy = false, _log);
+        _dialogs.ShowManageTags(dialog);
+        if (dialog.ChangedAny && SelectedNode is { IsProject: true })
+        {
+            StartDetailsLoad();
+            await CurrentDetailsLoad;
+        }
+    }
+
+    /// <summary>Takes the lifecycle slot for one tag change (false while another lifecycle write holds it: nothing is written).</summary>
+    private bool TryBeginTagWrite()
+    {
+        if (!CanWrite())
+            return false;
+        IsLifecycleBusy = true;
+        return true;
+    }
+
+    /// <summary>Tests (TR14): takes the lifecycle slot as another lifecycle write would, and returns its release.</summary>
+    internal Action HoldLifecycleSlotForTests()
+    {
+        IsLifecycleBusy = true;
+        return () => IsLifecycleBusy = false;
     }
 
     private async Task NewFolderAsync()

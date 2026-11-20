@@ -153,6 +153,32 @@ public interface IWorkspaceStore
     /// </summary>
     Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? excludeProjectNodeId = null, int limit = 200, CancellationToken cancellationToken = default);
 
+    // ---- Phase 21: rename and merge of a tag across Projects (additive; schema v10, no migration) ----------------------------------
+
+    /// <summary>
+    /// The Manage tags list from ONE read transaction: one row per tag key in use, its most used spelling (ties: ordinal), the
+    /// number of Projects carrying it that are not in the Trash (live or archived, effective state) and of those in the Trash
+    /// (directly or through a Folder), in key order. Carries no token. Never writes.
+    /// </summary>
+    Task<IReadOnlyList<TagInUse>> ListTagsInUseAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The plan and token (<c>WH-TAGPLAN/1</c>) of <paramref name="request"/> from ONE read transaction (proposal §3.3.1). The new
+    /// name must already be a valid tag name (<see cref="ProjectTagName.TryNormalize"/>). Never writes.
+    /// </summary>
+    /// <exception cref="ArgumentException">The new name is not a valid tag name.</exception>
+    Task<TagChangePreview> PrepareTagChangeAsync(TagChangeRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// In ONE <c>BEGIN IMMEDIATE</c> transaction (proposal §3.3.2): rebuilds the plan with the same function as
+    /// <see cref="PrepareTagChangeAsync"/> and compares its token with <paramref name="token"/> FIRST (a difference is
+    /// <see cref="TagChangeOutcome.Stale"/> with the fresh plan); then an empty plan is NothingToRename and an all-spelled spelling
+    /// change is Unchanged; otherwise all deletes, then all inserts, keeping each source row's stored <c>CreatedAt</c> text. Projects
+    /// in the Trash (directly or through a Folder) are never written; <c>Projects</c> / <c>WorkspaceNodes</c> are never written. Any
+    /// error rolls everything back. Every non-committed outcome writes nothing.
+    /// </summary>
+    Task<TagChangeResult> ApplyTagChangeAsync(TagChangeRequest request, string token, CancellationToken cancellationToken = default);
+
     // ---- Folder Archive and Folder Trash (schema v9; Phase 13 proposal revision 4 §7) ------------------------------------------
     // M1: one marker on the Folder that roots the subtree; descendants are never written. Every Workspace node write above
     // requires the node's EFFECTIVE state to be Live (an archived or trashed ancestor refuses it: WorkspaceNotLiveException or

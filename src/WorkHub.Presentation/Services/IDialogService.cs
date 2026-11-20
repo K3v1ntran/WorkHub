@@ -63,6 +63,12 @@ public interface IDialogService
     /// <returns>True only when the user clicked the Unarchive button (the targets are <see cref="BulkUnarchiveViewModel.ConfirmedTargets"/>).</returns>
     bool ShowBulkUnarchive(BulkUnarchiveViewModel viewModel);
 
+    /// <summary>
+    /// Phase 21: "Manage tags…" (list, filter, Rename… / Merge into…, preview, Confirm). The dialog applies confirmed changes itself
+    /// and stays open; Close (also Esc) returns <see cref="ManageTagsViewModel.ChangedAny"/>.
+    /// </summary>
+    bool ShowManageTags(ManageTagsViewModel viewModel);
+
     /// <summary>Phase 15: Copy / Move to another project. True only after Confirm on a Ready preview (the view model holds the request and token).</summary>
     bool ShowCrossProject(CrossProjectDialogViewModel viewModel);
 

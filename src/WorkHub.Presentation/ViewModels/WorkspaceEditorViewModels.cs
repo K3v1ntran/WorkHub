@@ -140,6 +140,9 @@ public sealed class ProjectEditorViewModel : ObservableObject
     private string? _tagError;
     private string? _tagNote;
     private IReadOnlyList<string> _suggestions = [];
+    private IReadOnlyList<ProjectTag> _tagBaseline;
+    private IReadOnlyList<ProjectTag>? _presentedTags;
+    private bool _isTagConflictPending;
 
     private ProjectEditorViewModel(WorkspaceService workspace, long? parentId, ProjectDetails? existing, string? parentPath)
     {
@@ -154,11 +157,122 @@ public sealed class ProjectEditorViewModel : ObservableObject
         _owner = existing?.Owner ?? string.Empty;
         _projectManager = existing?.ProjectManager ?? string.Empty;
         LocationText = WorkspaceNameEditorViewModel.LocationOf(parentPath);
-        SaveCommand = new AsyncRelayCommand(SaveAsync);
+        SaveCommand = new AsyncRelayCommand(SaveAsync, () => !IsTagConflictPending);
         CancelCommand = new RelayCommand(() => CloseRequested?.Invoke(this, false), () => CanClose);
         AddTagCommand = new RelayCommand(() => AddPendingTag(), () => CanAddTag);
+        UseCurrentTagsCommand = new RelayCommand(UseCurrentTags, () => IsTagConflictPending);
+        KeepMyTagsCommand = new RelayCommand(KeepMyTags, () => IsTagConflictPending);
         foreach (var tag in existing?.Tags ?? [])
             Tags.Add(Chip(tag.Name));
+        _tagBaseline = existing?.Tags ?? []; // R2a: the set read when the editor opened; replaced only by a review button
+    }
+
+    // ---- Tag baseline (Phase 21 R2a, proposal ﾂｧ3.3.4) ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The tag set the user last accepted: the set read when the editor opened, then the set presented after a refused Save once the
+    /// user chose Use current tags or Keep my tags. It decides whether a Save sends tags (chips 竕 baseline) and is sent with them as
+    /// <see cref="ProjectDraft.TagsBaseline"/>. Completing the fresh read after a refusal does not change it.
+    /// </summary>
+    public IReadOnlyList<ProjectTag> TagBaseline => _tagBaseline;
+
+    /// <summary>True after a Save was refused with <see cref="WorkspaceFailure.TagsChanged"/> until the user picks a review button; Save is disabled.</summary>
+    public bool IsTagConflictPending
+    {
+        get => _isTagConflictPending;
+        private set
+        {
+            if (!SetProperty(ref _isTagConflictPending, value))
+                return;
+            SaveCommand.RaiseCanExecuteChanged();
+            UseCurrentTagsCommand.RaiseCanExecuteChanged();
+            KeepMyTagsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>The tag set read after the refusal and shown to the user (null before a refusal, or when it could not be read).</summary>
+    public IReadOnlyList<ProjectTag>? PresentedTags { get => _presentedTags; private set { if (SetProperty(ref _presentedTags, value)) OnPropertyChanged(nameof(CurrentTagsText)); } }
+
+    /// <summary>"Current tags: 窶ｦ" under the chips while a conflict is pending.</summary>
+    public string? CurrentTagsText => PresentedTags is { } tags
+        ? "Current tags: " + (tags.Count == 0 ? "(none)" : string.Join(", ", tags.Select(t => t.Name)))
+        : null;
+
+    /// <summary>Chips and baseline := the presented set; the other fields of the draft are kept.</summary>
+    public RelayCommand UseCurrentTagsCommand { get; }
+
+    /// <summary>Chips kept; baseline := the presented set, so the next Save sends the chips even when they equal the set first read.</summary>
+    public RelayCommand KeepMyTagsCommand { get; }
+
+    private void UseCurrentTags()
+    {
+        if (PresentedTags is not { } presented)
+            return;
+        Tags.Clear();
+        foreach (var tag in presented)
+            Tags.Add(Chip(tag.Name));
+        LimitChanged();
+        AcceptPresented(presented);
+    }
+
+    private void KeepMyTags()
+    {
+        if (PresentedTags is { } presented)
+            AcceptPresented(presented);
+    }
+
+    private void AcceptPresented(IReadOnlyList<ProjectTag> presented)
+    {
+        _tagBaseline = presented;
+        OnPropertyChanged(nameof(TagBaseline));
+        TagError = null;
+        PresentedTags = null;
+        IsTagConflictPending = false;
+    }
+
+    /// <summary>Chips and baseline compared as ordinal sets of (NameKey, Name) pairs.</summary>
+    private bool ChipsEqualBaseline()
+    {
+        var chips = Tags.Select(c => (ProjectTagName.Key(c.Name), c.Name)).ToHashSet();
+        return chips.SetEquals(_tagBaseline.Select(t => (t.NameKey, t.Name)));
+    }
+
+    /// <summary>After <see cref="WorkspaceFailure.TagsChanged"/>: keep the draft, read the Project and present its tags (read only).</summary>
+    private async Task PresentCurrentTagsAsync()
+    {
+        IsTagConflictPending = true;
+        ProjectDetails? fresh;
+        try
+        {
+            fresh = await _workspace.GetProjectAsync(_existing!.NodeId);
+        }
+        catch (Exception ex)
+        {
+            // A failed read says nothing about the Project: no NodeNotFound and no tag set is presented. Draft, chips and baseline are
+            // kept; Save stays disabled because there is no set to review. Cancel closes and the area reconciles (Refusal TagsChanged).
+            GeneralError = $"Could not read the project's current tags: {ex.Message}";
+            return;
+        }
+
+        if (fresh is null)
+        {
+            // The read completed and found no Project.
+            Refusal = WorkspaceFailure.NodeNotFound;
+            GeneralError = "This project no longer exists. Nothing was saved.";
+            return; // Save stays disabled; Cancel closes and the area reconciles
+        }
+
+        if (!fresh.Effective.IsLive)
+        {
+            // Not editable any more (itself or through a Folder): the existing refusal; the area reconciles after the dialog closes.
+            var own = fresh.Effective.RootId == fresh.NodeId;
+            var trashed = fresh.Effective.State == LifecycleState.Trashed;
+            Refusal = !own ? WorkspaceFailure.AncestorNotLive : trashed ? WorkspaceFailure.ProjectTrashed : WorkspaceFailure.ProjectArchived;
+            GeneralError = trashed ? WorkspaceService.ProjectInTrash : WorkspaceService.ProjectIsArchived;
+            return;
+        }
+
+        PresentedTags = fresh.Tags;
     }
 
     // ---- Tags (Phase 17 proposal R2b §4.1-§4.3, R2a-3) ---------------------------------------------------------------------------
@@ -392,24 +506,29 @@ public sealed class ProjectEditorViewModel : ObservableObject
         if (AddTagText(TagInput) is PendingTag.Invalid or PendingTag.Full)
             return;
 
-        var draft = new ProjectDraft(Name, Status.Status, Description, Owner, ProjectManager, Tags.Select(t => t.Name).ToList());
+        // Phase 21 R2a: an edit sends tags only when the chips differ from the accepted baseline, and then with that baseline.
+        var draft = _existing is not null && ChipsEqualBaseline()
+            ? new ProjectDraft(Name, Status.Status, Description, Owner, ProjectManager)
+            : new ProjectDraft(Name, Status.Status, Description, Owner, ProjectManager, Tags.Select(t => t.Name).ToList(),
+                _existing is null ? null : _tagBaseline);
 
         IsSaving = true;
         string? field, error;
+        WorkspaceFailure? failure = null; // this Save's own typed failure; Refusal also keeps an earlier one for the area
         try
         {
             if (_existing is null)
             {
                 var created = await _workspace.CreateProjectAsync(_parentId, draft);
-                (field, error) = (created.Field, created.Error);
-                Refusal = created.Failure ?? Refusal;
+                (field, error, failure) = (created.Field, created.Error, created.Failure);
+                Refusal = failure ?? Refusal;
                 CreatedNode = created.Value;
             }
             else
             {
                 var updated = await _workspace.UpdateProjectAsync(_existing.NodeId, draft);
-                (field, error) = (updated.Field, updated.Error);
-                Refusal = updated.Failure ?? Refusal;
+                (field, error, failure) = (updated.Field, updated.Error, updated.Failure);
+                Refusal = failure ?? Refusal;
                 SavedDetails = updated.Value;
             }
         }
@@ -426,6 +545,10 @@ public sealed class ProjectEditorViewModel : ObservableObject
         }
 
         ShowError(field, error); // set before closing is allowed again
+        // Only THIS Save's TagsChanged opens the review: a Refusal left from an earlier Save (for example a later Owner validation
+        // error, which has no typed failure) must not re-read and re-present the tags.
+        if (failure == WorkspaceFailure.TagsChanged && _existing is not null)
+            await PresentCurrentTagsAsync();
         IsSaving = false;
     }
 

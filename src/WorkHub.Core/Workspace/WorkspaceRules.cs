@@ -160,7 +160,9 @@ public static class ProjectDraftValidator
             tags = normalized.Select(t => t.Name).ToList();
         }
 
-        return (new ProjectDraft(name, draft.Status, description, owner, manager, tags), null, null);
+        // Phase 21 R2a: the baseline travels with the tags it guards (without tags there is nothing to guard).
+        var baseline = tags is null ? null : draft.TagsBaseline;
+        return (new ProjectDraft(name, draft.Status, description, owner, manager, tags, baseline), null, null);
     }
 
     private static string? PersonError(string? raw, string label, out string? value)

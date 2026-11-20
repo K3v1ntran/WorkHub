@@ -246,12 +246,21 @@ already used on other projects (not those in the Workspace Trash; archived ones 
   Adding a tag the project already has keeps the existing one and says "Already tagged “Infra”."
 - **Save** saves the tags together with the other details, in one step: both or neither. Text still in the box is added
   first; if it is not a valid tag, or would be the 21st, the dialog stays open and nothing is saved. A box with only spaces
-  counts as empty. A tag that stays keeps its spelling and creation date. With two editors on the same project, the last
-  Save decides the whole set, as for the other details.
+  counts as empty. A tag that stays keeps its spelling and creation date. A Save that does not change the tags leaves the
+  stored tags as they are. If the project's tags were changed in another window (or by **Manage tags…**) after the editor
+  read them, a Save that changes tags is refused: "The tags of this project were changed in another window. Nothing was
+  saved." Your edits stay in the dialog, the current tags are shown, and **Use current tags** or **Keep my tags** decides
+  before you save again.
 - **Info** shows the tags; clicking one puts its name into the search box and searches (the words are split as usual, so
   `Client A` searches `Client` and `A`).
-- There is no list of tags across projects: nothing to rename, merge or delete everywhere at once. Tags belong to projects
-  only (not to folders, links or notes).
+- **Manage tags…** (Workspace More (⋯) or right-click in the tree) lists the tags in use with how many projects carry them.
+  **Rename…** changes a tag's spelling or name, and **Merge into…** folds it into another tag, in every project that is not
+  in the Workspace Trash (archived ones included). **Preview** shows exactly what will change; **Confirm** applies it in one
+  step, or not at all. If the tags changed in another window after the preview, nothing is written and the new preview is
+  shown for a new Confirm. Projects in the Trash (directly or through a folder) keep their tags. A renamed tag keeps its
+  creation date; a project that already had the target tag keeps that one. There is no Undo (rename back instead; a merge
+  cannot be split automatically), and no delete of a tag everywhere. Tags belong to projects only (not to folders, links or
+  notes).
 - Tags follow their project: archived projects keep them (read-only, still found by search); a project in the Workspace
   Trash keeps them read-only and they are not searched; Archive, Unarchive, Move to Trash, Restore and Undo change none.
   Copy/Move between projects copies content only, never tags. Permanent deletion from a project's Trash leaves its tags.
@@ -368,8 +377,8 @@ confirmation.
 - The message after a copy or move offers **Open destination**, which shows the copy where it is now. There is **no Undo**
   across projects.
 
-Not available yet: permanent delete of projects or folders of the Workspace, tags on folders or content
-(and renaming a tag across projects), rich text, drag-and-drop and manual ordering (including of Favorites).
+Not available yet: permanent delete of projects or folders of the Workspace, tags on folders or content, rich text,
+drag-and-drop and manual ordering (including of Favorites).
 
 ### Workspace search
 

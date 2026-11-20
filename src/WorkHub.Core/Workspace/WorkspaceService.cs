@@ -133,6 +133,10 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         {
             return WorkspaceResult<ProjectDetails>.Failed(NotLiveText(ex), failure: WorkspaceFailure.AncestorNotLive);
         }
+        catch (ProjectTagsChangedException)
+        {
+            return WorkspaceResult<ProjectDetails>.Failed(TagsChangedElsewhere, ProjectDraftValidator.Fields.Tags, WorkspaceFailure.TagsChanged);
+        }
     }
 
     /// <summary>Folders the node may move into (its own subtree excluded), sorted by path.</summary>
@@ -281,6 +285,34 @@ public sealed class WorkspaceService(IWorkspaceStore store)
     /// <summary>Tag suggestions for the Project editor (Phase 17): see <see cref="IWorkspaceStore.ListTagSuggestionsAsync"/>.</summary>
     public Task<IReadOnlyList<string>> ListTagSuggestionsAsync(long? editingProjectNodeId = null, CancellationToken cancellationToken = default) =>
         store.ListTagSuggestionsAsync(editingProjectNodeId, 200, cancellationToken);
+
+    // ---- Phase 21: rename and merge of a tag across Projects -------------------------------------------------------------------
+
+    /// <summary>The Manage tags list: see <see cref="IWorkspaceStore.ListTagsInUseAsync"/>.</summary>
+    public Task<IReadOnlyList<TagInUse>> ListTagsInUseAsync(CancellationToken cancellationToken = default) =>
+        store.ListTagsInUseAsync(cancellationToken);
+
+    /// <summary>The preview (plan and token) of a tag change; an invalid new name is refused before the store is called.</summary>
+    public async Task<WorkspaceResult<TagChangePreview>> PrepareTagChangeAsync(TagChangeRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!ProjectTagName.TryNormalize(request.NewName, out _, out var error))
+            return WorkspaceResult<TagChangePreview>.Failed(error!, TagNameField);
+        return WorkspaceResult<TagChangePreview>.Ok(await store.PrepareTagChangeAsync(request, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Applies a previewed tag change with its token: see <see cref="IWorkspaceStore.ApplyTagChangeAsync"/>.</summary>
+    public Task<TagChangeResult> ApplyTagChangeAsync(TagChangeRequest request, string token, CancellationToken cancellationToken = default)
+    {
+        if (!ProjectTagName.TryNormalize(request.NewName, out _, out var error))
+            return Task.FromResult(new TagChangeResult(TagChangeOutcome.InvalidName, null, error)); // nothing is called
+        return store.ApplyTagChangeAsync(request, token, cancellationToken);
+    }
+
+    /// <summary>The Manage tags dialog's field name for the new tag name.</summary>
+    public const string TagNameField = "NewTagName";
+
+    /// <summary>Phase 21 R2a: the editor's Save was refused because the Project's tags changed after the editor read them.</summary>
+    public const string TagsChangedElsewhere = "The tags of this project were changed in another window. Nothing was saved.";
 
     // ---- Folder Archive and Folder Trash (schema v9) ---------------------------------------------------------------------------
 

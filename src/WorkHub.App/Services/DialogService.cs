@@ -99,6 +99,15 @@ public sealed class DialogService : IDialogService
         return window.ShowDialog() == true;
     }
 
+    public bool ShowManageTags(ManageTagsViewModel viewModel)
+    {
+        var window = new ManageTagsWindow { DataContext = viewModel, Owner = ActiveWindow() };
+        viewModel.CloseRequested += (_, changed) => window.DialogResult = changed;
+        window.Loaded += async (_, _) => await viewModel.LoadAsync();
+        window.ShowDialog();
+        return viewModel.ChangedAny;
+    }
+
     public bool ShowPurgeConfirmation(PurgeConfirmationViewModel viewModel)
     {
         var window = new PurgeConfirmationWindow { DataContext = viewModel, Owner = ActiveWindow() };

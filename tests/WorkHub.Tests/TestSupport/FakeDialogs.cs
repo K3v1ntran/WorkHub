@@ -117,6 +117,18 @@ internal sealed class FakeDialogs : IDialogService
         return OnBulkUnarchive(viewModel);
     }
 
+    /// <summary>Phase 21: plays the Manage tags dialog (the test drives the view model inside). By default it closes at once.</summary>
+    public Func<ManageTagsViewModel, bool> OnManageTags { get; set; } = vm => vm.ChangedAny;
+
+    /// <summary>Every Manage tags dialog shown, in order.</summary>
+    public List<ManageTagsViewModel> ManageTagsDialogs { get; } = [];
+
+    public bool ShowManageTags(ManageTagsViewModel viewModel)
+    {
+        ManageTagsDialogs.Add(viewModel);
+        return OnManageTags(viewModel);
+    }
+
     /// <summary>Plays the Copy / Move dialog: by default the user cancels.</summary>
     public Func<CrossProjectDialogViewModel, bool> OnCrossProject { get; set; } = _ => false;
 

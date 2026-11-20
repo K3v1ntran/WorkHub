@@ -12,7 +12,7 @@ namespace WorkHub.Infrastructure.Persistence;
 /// back every rule up; rules about DESCENDANTS of a marked Folder are enforced here only (Phase 13 D9): every write evaluates
 /// the effective lifecycle (<see cref="NodeLifecycle"/>) inside its own transaction.
 /// </summary>
-public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, TimeProvider? time = null) : IWorkspaceStore
+public sealed partial class SqliteWorkspaceStore(SqliteConnectionFactory connections, TimeProvider? time = null) : IWorkspaceStore
 {
     /// <summary>Bound for one folder's listing and for the Move destination list.</summary>
     public const int MaxRowsPerQuery = 10000;
@@ -152,6 +152,11 @@ public sealed class SqliteWorkspaceStore(SqliteConnectionFactory connections, Ti
                 throw new ProjectArchivedException(nodeId); // Phase 12 A3: a stale editor never silently unarchives
             if (state is not null)
                 RequireLive(new NodeLifecycle(connection, transaction, MaxDepth), nodeId); // below an archived or trashed Folder
+
+            // Phase 21 R2a: an editor that edited tags sends the set it last accepted; a different stored set refuses the WHOLE Save
+            // before any write (no field, tag or UpdatedAt changes).
+            if (state is not null && draft.Tags is not null && draft.TagsBaseline is { } baseline && !TagSetEquals(connection, transaction, nodeId, baseline))
+                throw new ProjectTagsChangedException(nodeId);
 
             using (var node = connection.CreateCommand())
             {

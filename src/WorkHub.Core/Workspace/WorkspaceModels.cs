@@ -98,6 +98,11 @@ public sealed record ProjectTag(string Name, string NameKey, DateTimeOffset Crea
 /// <summary>
 /// User-editable Project fields. Owner/ProjectManager are free text, unrelated to Owner Manager. <see cref="Tags"/> is the
 /// complete set of tag names the editor wants (Phase 17); null leaves the stored tags unchanged.
+/// <para>
+/// Phase 21 R2a: <see cref="TagsBaseline"/> is the tag set the editor last accepted (only <c>NameKey</c> and <c>Name</c> count). When
+/// it is given with <see cref="Tags"/>, the store compares it with the stored set inside the Save's transaction before any write and
+/// refuses a difference (<see cref="ProjectTagsChangedException"/>). Null keeps the Phase 17 behaviour (no check).
+/// </para>
 /// </summary>
 public sealed record ProjectDraft(
     string? Name,
@@ -105,7 +110,8 @@ public sealed record ProjectDraft(
     string? Description = null,
     string? Owner = null,
     string? ProjectManager = null,
-    IReadOnlyList<string>? Tags = null);
+    IReadOnlyList<string>? Tags = null,
+    IReadOnlyList<ProjectTag>? TagsBaseline = null);
 
 /// <summary>A folder offered as a Move destination, with its path from the root for display.</summary>
 public sealed record WorkspaceFolderPath(long Id, string Path);
@@ -128,6 +134,9 @@ public enum WorkspaceFailure
 
     /// <summary>Move: the destination Folder, or one of its ancestors, is archived or in the Trash; nothing was written.</summary>
     DestinationNotLive,
+
+    /// <summary>Phase 21 R2a: the Project's tags differ from the editor's tag baseline; nothing was written.</summary>
+    TagsChanged,
 }
 
 /// <summary>

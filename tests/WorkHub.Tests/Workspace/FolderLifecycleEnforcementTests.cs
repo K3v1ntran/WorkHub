@@ -92,7 +92,17 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         // Phase 15: Copy/Move across Projects. The target below F is refused while F is trashed (allowed while archived), and so is a source below F.
         ["ContentCrossProjectTarget"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.CrossProjectAsync)), async (t, x) => await t.CrossProject(new CrossProjectRequest(CrossProjectMode.Copy, new ContentRef(ContentKind.Note, x.OutsideNote), x.P, null))),
         ["ContentCrossProjectSource"] = (Rule.NotTrashed, C(nameof(IProjectContentStore.CrossProjectAsync)), async (t, x) => await t.CrossProject(new CrossProjectRequest(CrossProjectMode.Move, new ContentRef(ContentKind.Link, x.Link), x.Outside, null))),
+        // Phase 21: a tag rename changes P's tag below F while F is live or archived (D3) and leaves it while F is trashed (P is then
+        // excluded: the plan is empty, NothingToRename, nothing written).
+        ["ApplyTagChange"] = (Rule.NotTrashed, W(nameof(IWorkspaceStore.ApplyTagChangeAsync)), async (t, x) => await t.RenameTag("case-tag", "case-tag-2")),
     };
+
+    private async Task<bool> RenameTag(string from, string to)
+    {
+        var request = new TagChangeRequest(TagChangeKind.Rename, ProjectTagName.Key(from), to);
+        var preview = (await _workspace.PrepareTagChangeAsync(request)).Value!;
+        return (await _workspace.ApplyTagChangeAsync(request, preview.Token)).Committed;
+    }
 
     public static TheoryData<string, LifecycleState> Matrix()
     {
@@ -138,7 +148,7 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         var covered = Cases.Values.Select(c => c.Method).Distinct().Order(StringComparer.Ordinal).ToList();
 
         Assert.Equal(writes, covered);
-        Assert.Equal(29, writes.Count); // 16 Workspace writes (Move has a source and a destination case) and 13 content writes (Phase 15 CrossProject: source and target cases)
+        Assert.Equal(30, writes.Count); // 17 Workspace writes (Move has a source and a destination case; Phase 21 ApplyTagChange) and 13 content writes (Phase 15 CrossProject: source and target cases)
     }
 
     private async Task<bool> CrossProject(CrossProjectRequest request)
@@ -162,6 +172,7 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         var f = await Folder("F", null);
         var d = await Folder("D", f);
         var p = await Project("P", d);
+        Assert.True((await _workspace.UpdateProjectAsync(p, new ProjectDraft("P", ProjectStatus.Active, null, null, null, ["case-tag"]))).Succeeded); // Phase 21 case
         var archivedProject = await Project("Archived", d);
         var trashedProject = await Project("Trashed", d);
         var archivedFolder = await Folder("ArchivedFolder", d);

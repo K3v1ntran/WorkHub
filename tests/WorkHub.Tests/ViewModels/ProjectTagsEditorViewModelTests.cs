@@ -340,8 +340,13 @@ public sealed class ProjectTagsEditorViewModelTests : IDisposable
         Assert.Empty(editor.FilteredSuggestions);
     }
 
+    /// <summary>
+    /// Updated for Phase 21 R2a (proposal §3.3.4, D8 b): the second editor's tag Save no longer silently replaces the set the first
+    /// editor saved after it opened. It is refused (TagsChanged, nothing written, draft kept); after the user chooses Keep my tags,
+    /// the next Save decides the whole set, as before.
+    /// </summary>
     [Fact]
-    public async Task TwoEditors_SavedOneAfterTheOther_TheLastSaveDecidesTheWholeSet()
+    public async Task TwoEditors_SavedOneAfterTheOther_TheSecondIsRefusedUntilTheUserKeepsTheirTags_ThenItDecidesTheWholeSet()
     {
         var first = await Edit();
         var second = await Edit();
@@ -349,6 +354,12 @@ public sealed class ProjectTagsEditorViewModelTests : IDisposable
         await first.SaveCommand.ExecuteAsync();
         second.TagInput = "Web";
         second.Tags[0].Command.Execute(null); // removes Infra in the second editor
+        await second.SaveCommand.ExecuteAsync();
+
+        Assert.Equal(WorkspaceFailure.TagsChanged, second.Refusal);
+        Assert.Equal(["Client", "Infra"], (await Stored()).Tags.Select(t => t.Name));
+        Assert.Equal(["Web"], second.Tags.Select(t => t.Name));
+        second.KeepMyTagsCommand.Execute(null);
         await second.SaveCommand.ExecuteAsync();
 
         Assert.Equal(["Web"], (await Stored()).Tags.Select(t => t.Name));
