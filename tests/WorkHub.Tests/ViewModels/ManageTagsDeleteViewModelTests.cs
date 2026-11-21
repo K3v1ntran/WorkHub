@@ -484,7 +484,7 @@ public sealed class ManageTagsDeleteViewModelTests : IDisposable
     // ---- TD-VM13 - TD-VM15 (review fix 1): no close while the delete Apply writes; close allowed during the post-commit re-read ----
     // Scope: the test project has no WPF window (it does not reference WorkHub.App), so these prove the view-model state the window's
     // Closing handler reads (CanClose), the Close / Esc command (CloseCommand) and the result flow into the Workspace. That
-    // DialogService wires Closing to CanClose is TD-C6 (source contract). That a real title-bar X / Alt+F4 is refused is GUI GD6
+    // DialogService wires Closing to CanClose is TD-C6 (source contract). That a real title-bar X / Alt+F4 is refused is GUI GD8
     // (Phase22ContractTests), not provable here.
 
     [Fact]
