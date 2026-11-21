@@ -392,6 +392,74 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         Assert.Equal(afterB, Data());
     }
 
+    // ---- Phase 22 (proposal §4.3 TD-E1-TD-E3): window B deletes a tag everywhere while A's editor is open; no editor change ------
+
+    private async Task<long> PdAsync() =>
+        (await _b.CreateProjectAsync(null, new ProjectDraft("Pd", ProjectStatus.Active, null, "Od", null, ["clientA", "Infra"]))).Value!.Id;
+
+    private async Task BDeleteEverywhere(string name)
+    {
+        var key = ProjectTagName.Key(name);
+        var preview = (await _b.PrepareTagDeleteAsync(key)).Value!;
+        Assert.True((await _b.ApplyTagDeleteAsync(key, preview.Token)).Committed);
+    }
+
+    [Fact]
+    public async Task TD_E1_OwnerOnlyAfterBDeletesATagEverywhere_SendsTagsNull_TheDeletionIsKept()
+    {
+        var pd = await PdAsync();
+        var (editor, closed) = await OpenA(pd);
+        await BDeleteEverywhere("clientA");
+        editor.Owner = "Od2";
+
+        await editor.SaveCommand.ExecuteAsync();
+
+        Assert.Equal([true], closed);
+        Assert.Null(LastDraft.Tags);
+        Assert.Null(LastDraft.TagsBaseline);
+        var stored = await Stored(pd);
+        Assert.Equal("Od2", stored.Owner);
+        Assert.Equal(["Infra"], stored.Tags.Select(t => t.Name));
+    }
+
+    [Fact]
+    public async Task TD_E2_ATagEditAfterBDeletesATagEverywhere_IsRefused_NothingWritten_CurrentTagsPresented()
+    {
+        var pd = await PdAsync();
+        var (editor, closed) = await OpenA(pd);
+        await BDeleteEverywhere("clientA");
+        var afterB = Data();
+        AddChip(editor, "Extra");
+
+        await editor.SaveCommand.ExecuteAsync();
+
+        Assert.Empty(closed);
+        Assert.Equal(WorkspaceFailure.TagsChanged, editor.Refusal);
+        Assert.Equal(afterB, Data());
+        Assert.Equal(["Infra"], editor.PresentedTags!.Select(t => t.Name));
+        Assert.Equal(["Infra", "clientA"], Names(editor.TagBaseline.Select(t => t.Name))); // kept until a choice (ordinal order)
+        Assert.True(editor.IsTagConflictPending);
+        Assert.False(editor.SaveCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task TD_E3_KeepMyTags_AfterTheDelete_SendsTheChipsWithTheNewBaseline_AndReAddsTheTag()
+    {
+        var pd = await PdAsync();
+        var (editor, closed) = await OpenA(pd);
+        await BDeleteEverywhere("clientA");
+        AddChip(editor, "Extra");
+        await editor.SaveCommand.ExecuteAsync();
+        editor.KeepMyTagsCommand.Execute(null);
+
+        await editor.SaveCommand.ExecuteAsync();
+
+        Assert.Equal([true], closed);
+        Assert.Equal(["Extra", "Infra", "clientA"], Names(LastDraft.Tags!));      // ordinal order
+        Assert.Equal(["Infra"], LastDraft.TagsBaseline!.Select(t => t.Name));
+        Assert.Equal(["Extra", "Infra", "clientA"], Names((await Stored(pd)).Tags.Select(t => t.Name))); // the user's explicit choice
+    }
+
     [Fact]
     public async Task TE6_NoWindowB_AddSendsTheBaseline_OwnerOnlyAndAddThenRemoveSendTagsNull()
     {

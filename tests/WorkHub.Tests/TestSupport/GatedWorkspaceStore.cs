@@ -191,6 +191,20 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
         return Gated("applyTagChange", () => inner.ApplyTagChangeAsync(request, token, CancellationToken.None), readFirst: false);
     }
 
+    // ---- Phase 22: "prepareTagDelete" (a held read takes its snapshot when called), "applyTagDelete" (a held write runs on release,
+    // or commits first with HoldCommitted). Every apply call is recorded in ApplyTagDeleteCalls (the store-side Apply counter).
+
+    public ConcurrentQueue<(string FromKey, string Token)> ApplyTagDeleteCalls { get; } = new();
+
+    public Task<TagDeletePreview> PrepareTagDeleteAsync(string fromKey, CancellationToken cancellationToken = default) =>
+        Gated("prepareTagDelete", () => inner.PrepareTagDeleteAsync(fromKey, CancellationToken.None));
+
+    public Task<TagDeleteResult> ApplyTagDeleteAsync(string fromKey, string token, CancellationToken cancellationToken = default)
+    {
+        ApplyTagDeleteCalls.Enqueue((fromKey, token));
+        return Gated("applyTagDelete", () => inner.ApplyTagDeleteAsync(fromKey, token, CancellationToken.None), readFirst: false);
+    }
+
     // ---- Folder Archive and Trash (schema v9): "prepareFolder" (a held read takes its snapshot when called); "archiveFolder",
     // "trashFolder", "unarchiveFolder", "restoreFolder", "undoFolder" (held writes run on release, or commit first with HoldCommitted).
 

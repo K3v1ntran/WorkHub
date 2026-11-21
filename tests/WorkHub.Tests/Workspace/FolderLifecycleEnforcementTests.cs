@@ -95,7 +95,17 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         // Phase 21: a tag rename changes P's tag below F while F is live or archived (D3) and leaves it while F is trashed (P is then
         // excluded: the plan is empty, NothingToRename, nothing written).
         ["ApplyTagChange"] = (Rule.NotTrashed, W(nameof(IWorkspaceStore.ApplyTagChangeAsync)), async (t, x) => await t.RenameTag("case-tag", "case-tag-2")),
+        // Phase 22 (TD17): deleting P's tag everywhere works while F is live or archived (D4) and leaves it while F is trashed (P is
+        // then excluded: the plan has no eligible row, NothingToDelete, nothing written).
+        ["ApplyTagDelete"] = (Rule.NotTrashed, W(nameof(IWorkspaceStore.ApplyTagDeleteAsync)), async (t, x) => await t.DeleteTag("case-tag")),
     };
+
+    private async Task<bool> DeleteTag(string name)
+    {
+        var key = ProjectTagName.Key(name);
+        var preview = (await _workspace.PrepareTagDeleteAsync(key)).Value!;
+        return (await _workspace.ApplyTagDeleteAsync(key, preview.Token)).Committed;
+    }
 
     private async Task<bool> RenameTag(string from, string to)
     {
@@ -148,7 +158,7 @@ public sealed class FolderLifecycleEnforcementTests : IDisposable
         var covered = Cases.Values.Select(c => c.Method).Distinct().Order(StringComparer.Ordinal).ToList();
 
         Assert.Equal(writes, covered);
-        Assert.Equal(30, writes.Count); // 17 Workspace writes (Move has a source and a destination case; Phase 21 ApplyTagChange) and 13 content writes (Phase 15 CrossProject: source and target cases)
+        Assert.Equal(31, writes.Count); // 18 Workspace writes (Move has a source and a destination case; Phase 21 ApplyTagChange; Phase 22 ApplyTagDelete) and 13 content writes (Phase 15 CrossProject: source and target cases)
     }
 
     private async Task<bool> CrossProject(CrossProjectRequest request)

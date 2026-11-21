@@ -257,6 +257,125 @@ public sealed partial class SqliteWorkspaceStore
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
     }
 
+    // ---- Phase 22: delete a tag everywhere (proposal Revision 2 + R2a §3.3) ---------------------------------------------------
+
+    /// <summary>The token format of a tag delete plan (§3.3). Distinct from <see cref="TagPlanFormat"/>: tokens are never interchangeable.</summary>
+    internal const string TagDeletePlanFormat = "WH-TAGDEL/1";
+
+    /// <summary>
+    /// Phase 22 test seam: runs inside <see cref="ApplyTagDeleteAsync"/>'s transaction after the first eligible row was deleted
+    /// (TD12: an exception here must roll everything back). Null in production.
+    /// </summary>
+    internal Action<SqliteConnection, SqliteTransaction>? AfterTagDeleteRows { get; set; }
+
+    public Task<TagDeletePreview> PrepareTagDeleteAsync(string fromKey, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fromKey);
+        return Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var plan = BuildTagDeletePlan(connection, transaction, fromKey);
+            transaction.Commit();
+            return plan.Preview;
+        }, cancellationToken);
+    }
+
+    public Task<TagDeleteResult> ApplyTagDeleteAsync(string fromKey, string token, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fromKey);
+        ArgumentNullException.ThrowIfNull(token);
+        return Run(connection =>
+        {
+            using var transaction = connection.BeginTransaction(deferred: false); // BEGIN IMMEDIATE: the plan cannot change before the write
+            var plan = BuildTagDeletePlan(connection, transaction, fromKey);
+            var preview = plan.Preview;
+            // Step 1 runs FIRST: a different token is Stale with the fresh plan, also when that plan is empty (TD10, TD11c, TD11d).
+            if (!string.Equals(preview.Token, token, StringComparison.Ordinal))
+                return new TagDeleteResult(TagDeleteOutcome.Stale, preview); // rolled back by Dispose: nothing written
+            // Step 2: the confirmed plan itself has nothing to delete (TD10b, TD11b).
+            if (preview.Deleted == 0)
+                return new TagDeleteResult(TagDeleteOutcome.NothingToDelete, preview);
+
+            // Step 3: every eligible row, each exactly once; any surprise rolls everything back.
+            var first = true;
+            foreach (var row in plan.Rows.Where(r => r.Eligible))
+            {
+                using (var delete = connection.CreateCommand())
+                {
+                    delete.Transaction = transaction;
+                    delete.CommandText = "DELETE FROM ProjectTags WHERE ProjectNodeId = $id AND NameKey = $key;";
+                    delete.Parameters.AddWithValue("$id", row.ProjectNodeId);
+                    delete.Parameters.AddWithValue("$key", preview.FromKey);
+                    if (delete.ExecuteNonQuery() != 1)
+                        throw new InvalidOperationException("A planned tag row was not found under the write lock.");
+                }
+
+                if (first)
+                {
+                    AfterTagDeleteRows?.Invoke(connection, transaction);
+                    first = false;
+                }
+            }
+
+            transaction.Commit();
+            return new TagDeleteResult(TagDeleteOutcome.Deleted, preview);
+        }, cancellationToken);
+    }
+
+    private sealed record TagDeletePlanRow(long ProjectNodeId, string Name, string CreatedAt, bool Eligible);
+
+    private sealed record TagDeletePlan(TagDeletePreview Preview, IReadOnlyList<TagDeletePlanRow> Rows);
+
+    /// <summary>
+    /// The ONE plan function of delete preview and apply (§3.3): every row of the key in ProjectNodeId order with its stored Name,
+    /// raw <c>CreatedAt</c> text and eligibility (same rule as rename/merge, D4), the counts and the token. Same data → same token.
+    /// </summary>
+    private TagDeletePlan BuildTagDeletePlan(SqliteConnection connection, SqliteTransaction transaction, string fromKey)
+    {
+        var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
+        var sources = new List<(long Project, string Name, string CreatedAt)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT ProjectNodeId, Name, CreatedAt FROM ProjectTags WHERE NameKey = $key;";
+            command.Parameters.AddWithValue("$key", fromKey);
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                sources.Add((reader.GetInt64(0), reader.GetString(1), reader.GetString(2)));
+        }
+
+        sources.Sort((x, y) => x.Project.CompareTo(y.Project));
+        var rows = sources
+            .Select(s => new TagDeletePlanRow(s.Project, s.Name, s.CreatedAt, IsTagEligible(lifecycle, s.Project)))
+            .ToList();
+        var deleted = rows.Count(r => r.Eligible);
+        var basis = deleted > 0 ? rows.Where(r => r.Eligible) : rows;
+        var spelling = basis.GroupBy(r => r.Name, StringComparer.Ordinal)
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => g.Key).FirstOrDefault() ?? string.Empty;
+        var token = TagDeletePlanToken(fromKey, rows);
+        return new TagDeletePlan(new TagDeletePreview(fromKey, spelling, deleted, rows.Count - deleted, token), rows);
+    }
+
+    /// <summary>
+    /// Lowercase hex SHA-256 of the canonical delete plan bytes: the format tag, the length-prefixed key, then per source row in
+    /// ProjectNodeId order: id, length-prefixed stored Name, length-prefixed raw CreatedAt text and eligibility E/X. Nothing else.
+    /// </summary>
+    private static string TagDeletePlanToken(string fromKey, IReadOnlyList<TagDeletePlanRow> rows)
+    {
+        static string Lp(string s) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{Encoding.UTF8.GetByteCount(s)}:{s}");
+        var sb = new StringBuilder();
+        sb.Append(TagDeletePlanFormat).Append('\n');
+        sb.Append(Lp(fromKey)).Append('\n');
+        foreach (var row in rows)
+        {
+            sb.Append(row.ProjectNodeId.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append('|')
+              .Append(Lp(row.Name)).Append(Lp(row.CreatedAt)).Append(row.Eligible ? 'E' : 'X').Append('\n');
+        }
+
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
+    }
+
     /// <summary>R2a: the stored tag set equals <paramref name="baseline"/> as ordinal (NameKey, Name) pairs (CreatedAt not compared).</summary>
     private static bool TagSetEquals(SqliteConnection connection, SqliteTransaction transaction, long nodeId, IReadOnlyList<ProjectTag> baseline)
     {

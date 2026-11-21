@@ -103,6 +103,8 @@ public sealed class DialogService : IDialogService
     {
         var window = new ManageTagsWindow { DataContext = viewModel, Owner = ActiveWindow() };
         viewModel.CloseRequested += (_, changed) => window.DialogResult = changed;
+        // Phase 22: X / Alt+F4 / owner close are refused while a Delete everywhere… Apply writes (CanClose); Rename / Merge unchanged.
+        window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;
         window.Loaded += async (_, _) => await viewModel.LoadAsync();
         window.ShowDialog();
         return viewModel.ChangedAny;

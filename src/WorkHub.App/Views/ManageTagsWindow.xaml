@@ -15,13 +15,15 @@
         TextOptions.TextFormattingMode="Display"
         UseLayoutRounding="True"
         FocusManager.FocusedElement="{Binding ElementName=FilterBox}">
-    <!-- Phase 21: Close is the default and the cancel button (Enter and Esc never write). Enter in the name box only previews. -->
+    <!-- Phase 21: Close is the default and the cancel button (Enter and Esc never write). Enter in the name box only previews.
+         Phase 22: in Delete everywhere… Enter on the focused Confirm is swallowed (ConfirmButton_PreviewKeyDown); Space on the focused,
+         enabled Confirm is the deliberate keyboard confirmation. Rename/Merge keyboard behaviour is unchanged. -->
     <Window.Resources>
         <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
     </Window.Resources>
     <DockPanel Margin="20,12,20,16">
         <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" AutomationProperties.AutomationId="ManageTagsHint"
-                   Text="Rename a tag or merge it into another tag in every project that is not in the Trash. Projects in the Trash keep their tags." />
+                   Text="Rename a tag, merge it into another tag, or delete it, in every project that is not in the Trash. Projects in the Trash keep their tags." />
         <StackPanel DockPanel.Dock="Top" Margin="0,10,0,0">
             <TextBlock Style="{StaticResource FieldLabel}" Text="Filter" />
             <TextBox x:Name="FilterBox" Text="{Binding Filter, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Filter tags" AutomationProperties.AutomationId="ManageTagsFilter" />
@@ -31,7 +33,8 @@
             <Button Content="Cancel change" HorizontalAlignment="Left" Command="{Binding CancelChangeCommand}" AutomationProperties.AutomationId="ManageTagsCancelChange" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Close" IsCancel="True" IsDefault="True" Command="{Binding CloseCommand}" AutomationProperties.AutomationId="ManageTagsClose" />
-                <Button Content="Confirm" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}"
+                <Button x:Name="ConfirmButton" Content="Confirm" Margin="8,0,0,0" Style="{StaticResource PrimaryButton}" Command="{Binding ConfirmCommand}"
+                        PreviewKeyDown="ConfirmButton_PreviewKeyDown"
                         AutomationProperties.Name="Confirm tag change" AutomationProperties.AutomationId="ManageTagsConfirm" />
             </StackPanel>
         </Grid>
@@ -40,6 +43,20 @@
             <StackPanel Orientation="Horizontal">
                 <Button Content="Rename…" Command="{Binding StartRenameCommand}" AutomationProperties.AutomationId="ManageTagsRename" />
                 <Button Content="Merge into…" Margin="8,0,0,0" Command="{Binding StartMergeCommand}" AutomationProperties.AutomationId="ManageTagsMerge" />
+                <Button Content="Delete everywhere…" Margin="8,0,0,0" Command="{Binding StartDeleteCommand}" AutomationProperties.AutomationId="ManageTagsDelete" />
+            </StackPanel>
+            <StackPanel Margin="0,8,0,0" Visibility="{Binding IsDeleteMode, Converter={StaticResource BoolToVisibility}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
+                               Text="Delete the selected tag from every project that is not in the Trash. Preview first." />
+                    <Button Grid.Column="1" Margin="8,0,0,0" Content="Preview" Command="{Binding PreviewCommand}" AutomationProperties.AutomationId="ManageTagsPreviewDelete" />
+                </Grid>
+                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding DeletePreviewText}" AutomationProperties.AutomationId="ManageTagsDeletePreview"
+                           Visibility="{Binding DeletePreviewText, Converter={StaticResource NullToCollapsed}}" />
             </StackPanel>
             <StackPanel Margin="0,8,0,0" Visibility="{Binding IsRenameMode, Converter={StaticResource BoolToVisibility}}">
                 <TextBlock Style="{StaticResource FieldLabel}" Text="New name" />

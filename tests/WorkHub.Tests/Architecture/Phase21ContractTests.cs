@@ -43,10 +43,11 @@ public sealed class Phase21ContractTests
     {
         var store = typeof(IWorkspaceStore);
         var tagMembers = store.GetMethods().Where(m => m.Name.Contains("Tag", StringComparison.Ordinal)).Select(m => m.Name).Order(StringComparer.Ordinal).ToArray();
+        // Phase 22 (proposal D6): the only change to this contract — the exact list gains the two delete members.
         Assert.Equal(new[]
         {
-            nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ListTagsInUseAsync),
-            nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.PrepareTagChangeAsync),
+            nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListTagsInUseAsync),
+            nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
         }, tagMembers);
         Assert.Equal([typeof(CancellationToken)], store.GetMethod(nameof(IWorkspaceStore.ListTagsInUseAsync))!.GetParameters().Select(p => p.ParameterType));
         Assert.Equal(typeof(Task<IReadOnlyList<TagInUse>>), store.GetMethod(nameof(IWorkspaceStore.ListTagsInUseAsync))!.ReturnType);

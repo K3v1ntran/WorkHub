@@ -308,6 +308,27 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         return store.ApplyTagChangeAsync(request, token, cancellationToken);
     }
 
+    // ---- Phase 22: delete a tag everywhere -----------------------------------------------------------------------------------
+
+    /// <summary>The preview (plan and token) of deleting a tag everywhere; an empty key is refused before the store is called.</summary>
+    public async Task<WorkspaceResult<TagDeletePreview>> PrepareTagDeleteAsync(string fromKey, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(fromKey))
+            return WorkspaceResult<TagDeletePreview>.Failed(NoTagSelected, TagNameField);
+        return WorkspaceResult<TagDeletePreview>.Ok(await store.PrepareTagDeleteAsync(fromKey, cancellationToken).ConfigureAwait(false));
+    }
+
+    /// <summary>Applies a previewed delete with its token: see <see cref="IWorkspaceStore.ApplyTagDeleteAsync"/>. An empty key is refused before the store.</summary>
+    public Task<TagDeleteResult> ApplyTagDeleteAsync(string fromKey, string token, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(fromKey))
+            return Task.FromResult(new TagDeleteResult(TagDeleteOutcome.InvalidKey, null, NoTagSelected)); // nothing is called
+        return store.ApplyTagDeleteAsync(fromKey, token, cancellationToken);
+    }
+
+    /// <summary>Phase 22: the refusal text for an empty tag key.</summary>
+    public const string NoTagSelected = "Choose a tag first.";
+
     /// <summary>The Manage tags dialog's field name for the new tag name.</summary>
     public const string TagNameField = "NewTagName";
 

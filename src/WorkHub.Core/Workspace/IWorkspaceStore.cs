@@ -179,6 +179,26 @@ public interface IWorkspaceStore
     /// </summary>
     Task<TagChangeResult> ApplyTagChangeAsync(TagChangeRequest request, string token, CancellationToken cancellationToken = default);
 
+    // ---- Phase 22: delete a tag everywhere (additive; schema v10, no migration) -------------------------------------------------
+
+    /// <summary>
+    /// The delete plan and token (<c>WH-TAGDEL/1</c>) of <paramref name="fromKey"/> from ONE read transaction (proposal §3.3). A key
+    /// nobody carries yields an empty plan (not confirmable) with its own token. Never writes.
+    /// </summary>
+    /// <exception cref="ArgumentException">The key is empty or white space.</exception>
+    Task<TagDeletePreview> PrepareTagDeleteAsync(string fromKey, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// In ONE <c>BEGIN IMMEDIATE</c> transaction (proposal §3.3): rebuilds the plan with the same function as
+    /// <see cref="PrepareTagDeleteAsync"/> and compares its token with <paramref name="token"/> FIRST (any difference, also on an empty
+    /// plan, is <see cref="TagDeleteOutcome.Stale"/> with the fresh plan); then a plan without eligible rows is NothingToDelete;
+    /// otherwise deletes every eligible row of the key. Projects in the Trash (directly or through a Folder) keep the key;
+    /// <c>Projects</c> / <c>WorkspaceNodes</c> are never written. Any error rolls everything back. Every non-Deleted outcome writes
+    /// nothing.
+    /// </summary>
+    /// <exception cref="ArgumentException">The key is empty or white space.</exception>
+    Task<TagDeleteResult> ApplyTagDeleteAsync(string fromKey, string token, CancellationToken cancellationToken = default);
+
     // ---- Folder Archive and Folder Trash (schema v9; Phase 13 proposal revision 4 §7) ------------------------------------------
     // M1: one marker on the Folder that roots the subtree; descendants are never written. Every Workspace node write above
     // requires the node's EFFECTIVE state to be Live (an archived or trashed ancestor refuses it: WorkspaceNotLiveException or
