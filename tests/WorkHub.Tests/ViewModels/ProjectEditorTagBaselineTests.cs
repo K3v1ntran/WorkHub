@@ -135,11 +135,11 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
 
         Assert.Empty(closed);
         Assert.Equal(WorkspaceFailure.TagsChanged, editor.Refusal);
-        Assert.Equal(["clientA", "Extra"], Names(LastDraft.Tags!));               // draft sent: chips + baseline {clientA}
+        Assert.Equal(["Extra", "clientA"], Names(LastDraft.Tags!));               // draft sent: chips + baseline {clientA}
         Assert.Equal([$"{ClientA}|clientA"], Pairs(LastDraft.TagsBaseline!));
         Assert.Equal(afterB, Data());                                              // no field, tag or UpdatedAt written
         Assert.Equal("O2", editor.Owner);                                          // draft kept
-        Assert.Equal(["clientA", "Extra"], Names(editor.Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names(editor.Tags.Select(t => t.Name)));
         Assert.True(editor.IsTagConflictPending);
         Assert.Equal(["ClientX"], editor.PresentedTags!.Select(t => t.Name));
         Assert.Equal("Current tags: ClientX", editor.CurrentTagsText);
@@ -222,9 +222,9 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         await editor.SaveCommand.ExecuteAsync();
 
         Assert.Equal([true], closed);
-        Assert.Equal(["clientA", "Extra"], Names(LastDraft.Tags!));
+        Assert.Equal(["Extra", "clientA"], Names(LastDraft.Tags!));
         Assert.Equal(["ClientX"], LastDraft.TagsBaseline!.Select(t => t.Name));
-        Assert.Equal(["clientA", "Extra"], Names((await Stored(_p1)).Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names((await Stored(_p1)).Tags.Select(t => t.Name)));
     }
 
     [Fact]
@@ -322,7 +322,7 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         else
         {
             Assert.Equal(["ClientX"], LastDraft.TagsBaseline!.Select(t => t.Name));
-            Assert.Equal(["clientA", "Extra"], Names(stored.Tags.Select(t => t.Name)));
+            Assert.Equal(["Extra", "clientA"], Names(stored.Tags.Select(t => t.Name)));
         }
     }
 
@@ -350,7 +350,7 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         Assert.Null(editor.PresentedTags);                                         // no unread set presented
         Assert.Null(editor.CurrentTagsText);
         Assert.Equal("O2", editor.Owner);
-        Assert.Equal(["clientA", "Extra"], Names(editor.Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names(editor.Tags.Select(t => t.Name)));
         Assert.Equal([$"{ClientA}|clientA"], Pairs(editor.TagBaseline));
         Assert.Equal(afterB, Data());
         Assert.True(editor.IsTagConflictPending);
@@ -364,7 +364,7 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         Assert.Equal(updates, _gated.UpdateDrafts.Count);
         Assert.True(editor.IsTagConflictPending);
         Assert.False(editor.SaveCommand.CanExecute(null));
-        Assert.Equal(["clientA", "Extra"], Names(editor.Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names(editor.Tags.Select(t => t.Name)));
         Assert.Equal([$"{ClientA}|clientA"], Pairs(editor.TagBaseline));
         Assert.Equal(afterB, Data());
         Assert.Empty(closed);
@@ -386,7 +386,7 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         Assert.Equal(WorkspaceFailure.NodeNotFound, editor.Refusal);
         Assert.Equal("This project no longer exists. Nothing was saved.", editor.GeneralError);
         Assert.Null(editor.PresentedTags);
-        Assert.Equal(["clientA", "Extra"], Names(editor.Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names(editor.Tags.Select(t => t.Name)));
         Assert.Equal([$"{ClientA}|clientA"], Pairs(editor.TagBaseline));
         Assert.False(editor.SaveCommand.CanExecute(null));
         Assert.Equal(afterB, Data());
@@ -468,7 +468,7 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         await a.SaveCommand.ExecuteAsync();
         Assert.Equal([true], closedA);
         Assert.Equal([$"{ClientA}|clientA"], Pairs(LastDraft.TagsBaseline!));
-        Assert.Equal(["clientA", "Extra"], Names((await Stored(_p1)).Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names((await Stored(_p1)).Tags.Select(t => t.Name)));
 
         var (b, closedB) = await OpenA(_p1);
         b.Owner = "O3";
@@ -485,6 +485,6 @@ public sealed class ProjectEditorTagBaselineTests : IDisposable
         Assert.Null(LastDraft.Tags);
         var stored = await Stored(_p1);
         Assert.Equal("O4", stored.Owner);
-        Assert.Equal(["clientA", "Extra"], Names(stored.Tags.Select(t => t.Name)));
+        Assert.Equal(["Extra", "clientA"], Names(stored.Tags.Select(t => t.Name)));
     }
 }
