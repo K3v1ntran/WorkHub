@@ -259,7 +259,8 @@ already used on other projects (not those in the Workspace Trash; archived ones 
   step, or not at all. If the tags changed in another window after the preview, nothing is written and the new preview is
   shown for a new Confirm. Projects in the Trash (directly or through a folder) keep their tags. A renamed tag keeps its
   creation date; a project that already had the target tag keeps that one. There is no Undo (rename back instead; a merge
-  cannot be split automatically). Tags belong to projects only (not to folders, links or notes).
+  cannot be split automatically). Tags belong to projects only (not to folders, links or notes). While a change is being written
+  the dialog cannot be closed; if the list cannot be refreshed afterwards, the change is still made and the result message says so.
 - **Delete everywhere…** in the same dialog removes the selected tag from every project that is not in the Workspace Trash
   (archived ones included); projects in the Trash, directly or through a folder, keep it. **Preview** shows how many projects
   lose it and how many in the Trash keep it; **Confirm** deletes it in one step, or not at all. Confirm with the mouse, or

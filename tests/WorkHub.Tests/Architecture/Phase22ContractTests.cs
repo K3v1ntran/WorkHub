@@ -122,7 +122,8 @@ public sealed class Phase22ContractTests
     /// <item>While held: click the title-bar X, then press Alt+F4 (WM_SYSKEYDOWN to the dialog), then Esc: the dialog stays open (UIA: window
     /// still present, ManageTagsClose disabled), the tag is still stored.</item>
     /// <item>Release the lock: the success text appears; press Alt+F4 (or X): the dialog closes and the Workspace details of the selected
-    /// Project no longer show the tag. Control: during a held Rename Apply, X closes the dialog as in Phase 21.</item>
+    /// Project no longer show the tag. Control: during a held Rename Apply, X closes the dialog as in Phase 21 (Phase 22 snapshot
+    /// e4d86a7 only; on Phase 23 this control is GP3-R: the dialog stays open while the Rename writes).</item>
     /// </list>
     /// </summary>
     [Fact]
@@ -136,9 +137,12 @@ public sealed class Phase22ContractTests
         var body = source[start..end];
         Assert.Contains("window.Closing += (_, e) => e.Cancel |= !viewModel.CanClose;", body, StringComparison.Ordinal);
 
+        // Phase 23 (D2): the flag assertions follow the shared IsWriting flag; the Closing wiring assertion above is unchanged. On the
+        // Phase 22 snapshot e4d86a7 this test asserted IsDeleteWriting (Phase 22 evidence only).
         var vm = File.ReadAllText(RepoFile("src", "WorkHub.Presentation", "ViewModels", "ManageTagsViewModel.cs"));
-        Assert.Contains("public bool CanClose => !IsDeleteWriting;", vm, StringComparison.Ordinal);
-        Assert.Equal(1, CountOf(vm, "IsDeleteWriting = true;"));                                       // only the delete Apply sets it
+        Assert.Contains("public bool CanClose => !IsWriting;", vm, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsDeleteWriting", vm, StringComparison.Ordinal);
+        Assert.Equal(2, CountOf(vm, "IsWriting = true;"));                                             // the Rename/Merge and the Delete Apply
     }
 
     private static XElement Button(XDocument doc, string automationId) =>

@@ -481,7 +481,7 @@ public sealed class ManageTagsDeleteViewModelTests : IDisposable
         Assert.Equal(1, Applies);
     }
 
-    // ---- TD-VM13 - TD-VM15 (review fix 1): no close while the delete Apply writes; close allowed during the post-commit re-read ----
+    // ---- TD-VM13, TP-R14, TD-VM15: no close while an Apply writes; close allowed during the post-commit re-read ------------------
     // Scope: the test project has no WPF window (it does not reference WorkHub.App), so these prove the view-model state the window's
     // Closing handler reads (CanClose), the Close / Esc command (CloseCommand) and the result flow into the Workspace. That
     // DialogService wires Closing to CanClose is TD-C6 (source contract). That a real title-bar X / Alt+F4 is refused is GUI GD8
@@ -501,7 +501,7 @@ public sealed class ManageTagsDeleteViewModelTests : IDisposable
         apply.WaitEntered();
 
         // ---- write phase: every close path refused
-        Assert.True(vm.IsDeleteWriting);
+        Assert.True(vm.IsWriting);
         Assert.False(vm.CanClose);                                          // the window's Closing cancels X / Alt+F4
         Assert.False(vm.CloseCommand.CanExecute(null));                     // Close button and Esc
         vm.CloseCommand.Execute(null);
@@ -514,7 +514,7 @@ public sealed class ManageTagsDeleteViewModelTests : IDisposable
         apply.Release();
         reread.WaitEntered();
 
-        Assert.False(vm.IsDeleteWriting);
+        Assert.False(vm.IsWriting);
         Assert.True(vm.ChangedAny);                                         // set before closing became possible
         Assert.True(vm.CanClose);
         Assert.True(vm.IsRefreshing);
@@ -532,8 +532,12 @@ public sealed class ManageTagsDeleteViewModelTests : IDisposable
         Assert.Equal([true], closed);                                       // the re-read finishing closes nothing by itself
     }
 
+    /// <summary>
+    /// Phase 23 TP-R14 (proposal Revision 2 §4.5): replaces Phase 22's TD-VM14 on the Phase 23 branch. TD-VM14 (Rename write: CanClose
+    /// true) stays Phase 22 evidence on snapshot e4d86a7 only; here the Rename control follows the new contract.
+    /// </summary>
     [Fact]
-    public async Task TD_VM14_Control_RenameKeepsItsCloseBehaviour_WindowCloseNotRefusedWhileItsApplyRuns()
+    public async Task TP_R14_Control_RenameWrite_WindowCloseRefusedWhileItsApplyRuns_AllowedAfter()
     {
         await SeedAsync();
         var vm = await Select(Dialog(), ClientA);
@@ -546,13 +550,14 @@ public sealed class ManageTagsDeleteViewModelTests : IDisposable
         var confirm = vm.ConfirmCommand.ExecuteAsync();
         apply.WaitEntered();
 
-        Assert.False(vm.IsDeleteWriting);
-        Assert.True(vm.CanClose);                                           // Phase 21: the window guard never refuses Rename / Merge
-        Assert.False(vm.CloseCommand.CanExecute(null));                     // Phase 21: Close / Esc wait for the outcome (unchanged)
+        Assert.True(vm.IsWriting);
+        Assert.False(vm.CanClose);                                          // Phase 23: the window refuses X / Alt+F4 while Rename writes
+        Assert.False(vm.CloseCommand.CanExecute(null));                     // Close / Esc wait for the outcome (unchanged)
         apply.Release();
         await confirm;
+        Assert.False(vm.IsWriting);
         Assert.True(vm.CanClose);
-        Assert.Equal(0, Applies);
+        Assert.Equal(0, Applies);                                           // no delete Apply
     }
 
     [Fact]

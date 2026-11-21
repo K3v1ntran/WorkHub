@@ -20,7 +20,14 @@ namespace WorkHub.Presentation.ViewModels;
 /// used preview is invalid and every new action is locked (<see cref="IsRefreshing"/>; <see cref="RefreshFailed"/> keeps the lock
 /// after a failed re-read); Close stays available. While the delete Apply writes, the dialog cannot be closed at all
 /// (<see cref="CanClose"/>: Close / Esc disabled, the window refuses X / Alt+F4); <see cref="ChangedAny"/> is set as soon as Apply
-/// returns Deleted, before closing is allowed again. The rename/merge flow is unchanged.
+/// returns Deleted, before closing is allowed again.
+/// </para>
+/// <para>
+/// Phase 23 (proposal Revision 2, D1–D8): Rename… and Merge into… follow the same close and refresh contract as the delete. While
+/// any Apply writes, <see cref="IsWriting"/> is true and the dialog cannot be closed; a committed Apply sets <see cref="ChangedAny"/>
+/// before closing is allowed again; the slot is released before the list re-read; the used preview is invalid and every new action
+/// locked during the re-read (Close allowed); a failed re-read keeps the success text and adds a note. Non-committed outcomes, their
+/// texts and the keyboard behaviour are unchanged.
 /// </para>
 /// </summary>
 public sealed class ManageTagsViewModel : ObservableObject
@@ -45,7 +52,7 @@ public sealed class ManageTagsViewModel : ObservableObject
     private TagDeletePreview? _deletePreview;
     private bool _isRefreshing;
     private bool _refreshFailed;
-    private bool _isDeleteWriting;
+    private bool _isWriting;
 
     /// <param name="tryBeginWrite">Takes the Workspace lifecycle slot; false when another lifecycle write holds it (nothing is written).</param>
     /// <param name="endWrite">Releases the slot taken by <paramref name="tryBeginWrite"/>.</param>
@@ -74,15 +81,15 @@ public sealed class ManageTagsViewModel : ObservableObject
     public bool ChangedAny { get; private set; }
 
     /// <summary>
-    /// Phase 22: true only while a Delete everywhere… Apply is writing (from the Apply call until it returns or throws). Never true for
-    /// Rename / Merge, whose close behaviour is unchanged. When a delete commits, <see cref="ChangedAny"/> is set before this drops.
+    /// Phase 22 / 23 (D2): true only while an Apply is writing (Rename, Merge or Delete everywhere…; from the Apply call until it returns
+    /// or throws). When an Apply commits, <see cref="ChangedAny"/> is set before this drops.
     /// </summary>
-    public bool IsDeleteWriting
+    public bool IsWriting
     {
-        get => _isDeleteWriting;
+        get => _isWriting;
         private set
         {
-            if (!SetProperty(ref _isDeleteWriting, value))
+            if (!SetProperty(ref _isWriting, value))
                 return;
             OnPropertyChanged(nameof(CanClose));
             RaiseCommands();
@@ -90,10 +97,10 @@ public sealed class ManageTagsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Phase 22: the window-level close guard (title-bar X, Alt+F4, owner close; the window's <c>Closing</c> cancels while false). False
-    /// only while a delete Apply is writing; true during the post-commit list re-read (R2a) and in every Rename / Merge state.
+    /// Phase 22 / 23: the window-level close guard (title-bar X, Alt+F4, owner close; the window's <c>Closing</c> cancels while false).
+    /// False only while an Apply is writing; true during the post-commit list re-read (R2a, D3) and in every other state.
     /// </summary>
-    public bool CanClose => !IsDeleteWriting;
+    public bool CanClose => !IsWriting;
 
     public IReadOnlyList<TagRowViewModel> Rows { get => _rows; private set { if (SetProperty(ref _rows, value)) RefreshRows(); } }
 
@@ -165,7 +172,7 @@ public sealed class ManageTagsViewModel : ObservableObject
     /// <summary>Phase 22: the delete confirmation line built from the delete preview only.</summary>
     public string? DeletePreviewText => DeletePreview is { } p ? DescribeDelete(p, DisplaySpelling(p)) : null;
 
-    /// <summary>Phase 22 R2a: true from a committed delete until the list re-read ends; every new action and Confirm are locked, Close is not.</summary>
+    /// <summary>Phase 22 R2a / Phase 23: true from a committed Apply (Rename, Merge or Delete) until the list re-read ends; every new action and Confirm are locked, Close is not.</summary>
     public bool IsRefreshing
     {
         get => _isRefreshing;
@@ -176,7 +183,7 @@ public sealed class ManageTagsViewModel : ObservableObject
         }
     }
 
-    /// <summary>Phase 22: the re-read after a committed delete failed; the lock stays until a successful <see cref="LoadAsync"/> (reopen). Close is not locked.</summary>
+    /// <summary>Phase 22 / 23: the re-read after a committed Apply failed; the lock stays until a successful <see cref="LoadAsync"/> (reopen). Close is not locked.</summary>
     public bool RefreshFailed
     {
         get => _refreshFailed;
@@ -187,7 +194,7 @@ public sealed class ManageTagsViewModel : ObservableObject
         }
     }
 
-    /// <summary>Busy, refreshing after a committed delete, or a failed post-commit refresh: no new change and no Confirm.</summary>
+    /// <summary>Busy, refreshing after a committed Apply, or a failed post-commit refresh: no new change and no Confirm.</summary>
     private bool IsLocked => IsBusy || IsRefreshing || RefreshFailed;
 
     public bool IsRenameMode => Mode == TagChangeKind.Rename;
@@ -385,16 +392,26 @@ public sealed class ManageTagsViewModel : ObservableObject
         }
 
         TagChangeResult result;
+        var committed = false;
         IsBusy = true;
+        IsWriting = true; // Phase 23: the window refuses X / Alt+F4 until Apply returns; Close and Esc are disabled by IsBusy
         try
         {
             result = await _workspace.ApplyTagChangeAsync(request, preview.Token);
+            if (result.Committed)
+            {
+                ChangedAny = true; // set before the window may close: the caller then reloads the selected Project's details
+                committed = true;
+            }
         }
         finally
         {
-            _endWrite();
+            _endWrite(); // released before any refresh
+            if (committed)
+                IsRefreshing = true; // Confirm and every new action stay locked from the commit until the list re-read ends
+            IsWriting = false; // from here the window may close (also during the post-commit re-read, D3)
             IsBusy = false;
-        }
+        } // a write failure still reaches the command's error handler: "Could not rename the tag. Nothing was changed." (unchanged)
 
         var from = _selected?.Spelling ?? request.FromKey;
         switch (result.Outcome)
@@ -415,11 +432,37 @@ public sealed class ManageTagsViewModel : ObservableObject
                 NameError = result.Error;
                 break;
             default:
-                ChangedAny = true;
-                Message = Done(result, from);
+                // committed: ChangedAny, the released slot and the lock were set above. Synchronously before the first await:
+                // invalidate the used preview (Mode = null bumps the input version), then the shared refresh step (D4, D5).
+                var success = Done(result, from);
                 Mode = null;
-                await LoadAsync();
+                await RefreshAfterCommitAsync(success);
                 break;
+        }
+    }
+
+    /// <summary>
+    /// Phase 22 / 23: the refresh phase after any committed Apply (Rename, Merge, Delete). Entered with <see cref="IsRefreshing"/> true,
+    /// the slot released and the used preview invalid. Sets the success text, re-reads the list and ends the lock; a failed re-read
+    /// keeps the success text, adds <see cref="RefreshFailedNote"/> and keeps the lock (<see cref="RefreshFailed"/>; Close stays
+    /// available). Never applies again and never reports a rollback.
+    /// </summary>
+    private async Task RefreshAfterCommitAsync(string success)
+    {
+        Message = success;
+        try
+        {
+            ApplyRows(await _workspace.ListTagsInUseAsync());
+        }
+        catch (Exception ex)
+        {
+            _log?.Error("The tag list could not be refreshed after a committed change.", ex); // no tag or project names
+            RefreshFailed = true;
+            Message = success + RefreshFailedNote;
+        }
+        finally
+        {
+            IsRefreshing = false;
         }
     }
 
@@ -470,7 +513,7 @@ public sealed class ManageTagsViewModel : ObservableObject
         Exception? writeFailure = null;
         var committed = false;
         IsBusy = true;
-        IsDeleteWriting = true; // the window refuses X / Alt+F4 until Apply returns; Close and Esc are disabled by IsBusy
+        IsWriting = true; // the window refuses X / Alt+F4 until Apply returns; Close and Esc are disabled by IsBusy
         try
         {
             result = await _workspace.ApplyTagDeleteAsync(row.NameKey, preview.Token);
@@ -489,7 +532,7 @@ public sealed class ManageTagsViewModel : ObservableObject
             _endWrite(); // released before any refresh (§3.1 step 4)
             if (committed)
                 IsRefreshing = true; // Confirm and every new action stay locked from the commit until the list re-read ends
-            IsDeleteWriting = false; // from here the window may close (also during the post-commit re-read, R2a)
+            IsWriting = false; // from here the window may close (also during the post-commit re-read, R2a)
             IsBusy = false;
         }
 
@@ -524,21 +567,7 @@ public sealed class ManageTagsViewModel : ObservableObject
         var applied = result.Preview!;
         var success = DeletedMessage(applied, DisplaySpelling(applied, row));
         IsDeleteMode = false; // bumps the input version and clears DeletePreview: the used preview can never be confirmed again
-        Message = success;
-        try
-        {
-            ApplyRows(await _workspace.ListTagsInUseAsync());
-        }
-        catch (Exception ex)
-        {
-            _log?.Error("The tag list could not be refreshed after a committed delete.", ex); // no tag or project names
-            RefreshFailed = true; // keeps the lock (Close stays available)
-            Message = success + RefreshFailedNote;
-        }
-        finally
-        {
-            IsRefreshing = false;
-        }
+        await RefreshAfterCommitAsync(success);
     }
 
     private string DisplaySpelling(TagDeletePreview p, TagRowViewModel? row = null) =>
