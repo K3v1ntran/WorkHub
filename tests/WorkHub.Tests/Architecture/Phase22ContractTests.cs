@@ -114,7 +114,7 @@ public sealed class Phase22ContractTests
     /// <summary>
     /// Review fix 1: the Manage tags window's Closing handler (title-bar X, Alt+F4, owner close) is wired to the view model's
     /// <c>CanClose</c>, which is false only while a delete Apply writes (behaviour: TD-VM13 - TD-VM15). Proves the WIRING only; that a
-    /// real X / Alt+F4 is refused is GUI case GD6:
+    /// real X / Alt+F4 is refused is GUI case GD8:
     /// <list type="number">
     /// <item>Isolated profile; seed a tag carried by a live Project; open Manage tags…, select it, Delete everywhere…, Preview.</item>
     /// <item>Hold the delete write: take <c>BEGIN EXCLUSIVE</c> on the isolated DB from a second connection (shorter than the busy
