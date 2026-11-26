@@ -49,12 +49,15 @@ public sealed class Phase25ContractTests
     public void TG25_C2_TheDropHoldsTheSlot_BeginWorkspaceWriteOnlyAfter_ReleasedInFinally_OutcomesSeparated()
     {
         var source = DragDropSource();
-        var entry = Between(source, "public Task<WorkspaceDropOutcome> MoveByDropAsync(", "private async Task<WorkspaceDropOutcome> MoveByDropCoreAsync(");
+        var entry = Between(source, "public WorkspaceDropEffect Drop(", "/// <summary>Tests: <see cref=\"Drop\"/>");
         Assert.DoesNotContain("await", entry, StringComparison.Ordinal);                         // the entry is synchronous
         var resolve = entry.IndexOf("TryResolveDrop(", StringComparison.Ordinal);
         var slot = entry.IndexOf("IsLifecycleBusy = true;", StringComparison.Ordinal);
         var begin = entry.IndexOf("BeginWorkspaceWrite();", StringComparison.Ordinal);
-        Assert.True(resolve >= 0 && slot > resolve && begin > slot);                              // re-check → slot → BeginWorkspaceWrite
+        var start = entry.IndexOf("CurrentDrop = MoveByDropCoreAsync(source, target);", StringComparison.Ordinal);
+        var move = entry.IndexOf("return WorkspaceDropEffect.Move;", StringComparison.Ordinal);
+        Assert.True(resolve >= 0 && slot > resolve && begin > slot && start > begin && move > start); // re-check → slot → Begin → core → Move
+        Assert.Equal(1, CountOf(entry, "return WorkspaceDropEffect.Move;"));                     // Move only on the accepted path
 
         var core = Between(source, "private async Task<WorkspaceDropOutcome> MoveByDropCoreAsync(", "/// <summary>§2.1 step 5;");
         Assert.Contains("await _workspace.MoveAsync(sourceId, targetId);", core, StringComparison.Ordinal);
@@ -114,7 +117,23 @@ public sealed class Phase25ContractTests
         Assert.Contains("if (workspace.IsTrashOpen)", left, StringComparison.Ordinal);            // the Trash case, on a row area only
         Assert.Contains("SystemParameters.MinimumHorizontalDragDistance", code, StringComparison.Ordinal);
         Assert.Contains("new DataObject(WorkspaceNodeDragFormat, candidate.NodeId)", code, StringComparison.Ordinal); // the Id only
-        Assert.Equal(2, CountOf(code, "workspace.MoveByDropAsync("));                                // the tree and the root strip
+        // Review fix: both drop handlers report the view model's synchronous acceptance; nothing reports Move on its own at drop time.
+        Assert.DoesNotContain("workspace.MoveByDropAsync(", code, StringComparison.Ordinal);
+        Assert.Equal(2, CountOf(code, "e.Effects = ToWpf(workspace.Drop("));
+        foreach (var drop in new[]
+                 {
+                     Between(code, "private void WorkspaceTree_Drop(", "private static DragDropEffects ToWpf("),
+                     Between(code, "private void RootDropStrip_Drop(", "\n    }"),
+                 })
+        {
+            Assert.DoesNotContain("e.Effects = DragDropEffects.Move;", drop, StringComparison.Ordinal);
+            Assert.DoesNotContain("await", drop, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("workspace.DragHoverEnter(drag.Session, hover, FolderRowUnderPointer);", code, StringComparison.Ordinal);
+        var probe = Between(code, "private long? FolderRowUnderPointer()", "\n    }");
+        Assert.Contains("VisualTreeHelper.HitTest(WorkspaceTree, p)", probe, StringComparison.Ordinal);
+        Assert.Contains("ClassifyTreePoint(visual)", probe, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -133,6 +152,8 @@ public sealed class Phase25ContractTests
         Assert.Contains("session != _dragSession", elapsed, StringComparison.Ordinal);
         Assert.Contains("current.FolderId != folderId", elapsed, StringComparison.Ordinal);
         Assert.Contains("_nodes.TryGetValue(folderId, out var folder)", elapsed, StringComparison.Ordinal);
+        Assert.Contains("_hoverProbe?.Invoke() != folderId", elapsed, StringComparison.Ordinal);          // the row under the pointer NOW
+        Assert.Contains("!CanDrop(session, _dragSourceId, folderId)", elapsed, StringComparison.Ordinal);
         Assert.Equal(TimeSpan.FromMilliseconds(800), WorkHub.Presentation.ViewModels.WorkspaceAreaViewModel.HoverExpandDelay);
     }
 

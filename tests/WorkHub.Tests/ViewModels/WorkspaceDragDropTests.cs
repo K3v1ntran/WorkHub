@@ -448,8 +448,8 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var f1 = Node(area.Roots, "F1");
         var s = Session(area, p);
 
-        area.DragHoverEnter(s, f1.Id);
-        area.DragHoverEnter(s, f1.Id);                                      // the same pair keeps the pending timer
+        area.DragHoverEnter(s, f1.Id, () => f1.Id);
+        area.DragHoverEnter(s, f1.Id, () => f1.Id);                                      // the same pair keeps the pending timer
         Assert.Single(_clock.Scheduled);
         Assert.Equal(WorkspaceAreaViewModel.HoverExpandDelay, _clock.Scheduled[0].Delay);
         _clock.Fire(0);
@@ -468,8 +468,8 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var (f1, f2) = (Node(area.Roots, "F1"), Node(area.Roots, "F2"));
         var s = Session(area, p);
 
-        area.DragHoverEnter(s, f1.Id);
-        area.DragHoverEnter(s, f2.Id);
+        area.DragHoverEnter(s, f1.Id, () => f1.Id);
+        area.DragHoverEnter(s, f2.Id, () => f2.Id);
         Assert.True(_clock.Scheduled[0].Disposed);
         _clock.Fire(0);                                                     // a late F1 timer
         Assert.False(f1.IsExpanded);
@@ -489,7 +489,7 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var area = await AreaAsync();
 
         var s1 = Session(area, p);                                          // drop
-        area.DragHoverEnter(s1, Node(area.Roots, "F1").Id);
+        area.DragHoverEnter(s1, Node(area.Roots, "F1").Id, () => Node(area.Roots, "F1").Id);
         Assert.Equal(WorkspaceDropOutcome.Moved, await area.MoveByDropAsync(s1, p, target));
         _clock.Fire(0);
         Assert.False(Node(area.Roots, "F1").IsExpanded);
@@ -498,13 +498,13 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var t = Node(area.Roots, "T");
         var moved = Node(t.Children, "P");
         var s2 = Session(area, moved.Id);                                   // drag cancelled (session ends)
-        area.DragHoverEnter(s2, Node(area.Roots, "F2").Id);
+        area.DragHoverEnter(s2, Node(area.Roots, "F2").Id, () => Node(area.Roots, "F2").Id);
         area.EndDragSession(s2);
         _clock.Fire(1);
         Assert.False(Node(area.Roots, "F2").IsExpanded);
 
         var s3 = Session(area, moved.Id);                                   // search replaces the tree
-        area.DragHoverEnter(s3, Node(area.Roots, "F3").Id);
+        area.DragHoverEnter(s3, Node(area.Roots, "F3").Id, () => Node(area.Roots, "F3").Id);
         area.Search!.SearchText = "x";
         Assert.True(_clock.Scheduled[2].Disposed);
         _clock.Fire(2);
@@ -521,10 +521,10 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var (f1, f2) = (Node(area.Roots, "F1"), Node(area.Roots, "F2"));
 
         var s1 = Session(area, p);
-        area.DragHoverEnter(s1, f1.Id);
+        area.DragHoverEnter(s1, f1.Id, () => f1.Id);
         area.EndDragSession(s1);
         var s2 = Session(area, p);
-        area.DragHoverEnter(s2, f2.Id);                                     // the row container may now show F2: keys are Ids
+        area.DragHoverEnter(s2, f2.Id, () => f2.Id);                                     // the row container may now show F2: keys are Ids
         _clock.Fire(0);                                                     // session 1's timer, late
 
         Assert.False(f1.IsExpanded);
@@ -542,7 +542,7 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var area = await AreaAsync();
         var f1 = Node(area.Roots, "F1");
         var s = Session(area, p);
-        area.DragHoverEnter(s, f1Id);
+        area.DragHoverEnter(s, f1Id, () => f1Id);
 
         await MarkFolder(f1Id, FolderLifecycleKind.Trash);                  // window B
         await area.ReconcileNodeAsync(f1Id);                                // A learns it
@@ -551,6 +551,113 @@ public sealed class WorkspaceDragDropTests : IDisposable
 
         Assert.False(f1.IsExpanded);
         Assert.DoesNotContain("F1", Names(area.Roots));
+    }
+
+    // ---- Review fix 1: the WPF effect of a drop is Move only for an accepted drop that took the slot ----------------------------------
+
+    [Theory]
+    [InlineData(false)] // a Folder row of the tree
+    [InlineData(true)]  // the root strip (top level)
+    public async Task DropEffect_SlotTakenAfterAValidDragOver_DropReportsNone_NoMove_BannerAndUndoUnchanged(bool rootStrip)
+    {
+        var f = await Folder("F");
+        var b = await Folder("B");
+        var p = await Project("P", b);
+        await Project("P2");
+        var area = await AreaAsync();
+        await Expand(area, Node(area.Roots, "B"));
+        area.SelectedNode = Node(area.Roots, "P2");
+        await area.TrashProjectCommand.ExecuteAsync();
+        await area.CurrentLifecycleOperation;
+        Assert.True(area.IsUndoAvailable);
+        var banner = area.BannerMessage;
+        long? target = rootStrip ? null : f;
+        var s = Session(area, p);
+        Assert.True(area.CanDrop(s, p, target));                            // the DragOver was valid (effect Move there)
+
+        var release = area.HoldLifecycleSlotForTests();                     // another write takes the slot before the Drop
+        try
+        {
+            Assert.Equal(WorkspaceDropEffect.None, area.Drop(s, p, target));
+            Assert.Equal(0, Moves);
+            Assert.Equal(banner, area.BannerMessage);
+            Assert.True(area.IsUndoAvailable);
+        }
+        finally
+        {
+            release();
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DropEffect_AcceptedDrop_ReportsMove_WithTheSlotAlreadyTaken_WithoutWaitingForTheStore(bool rootStrip)
+    {
+        var f = await Folder("F");
+        var b = await Folder("B");
+        var p = await Project("P", b);
+        var area = await AreaAsync();
+        await Expand(area, Node(area.Roots, "B"));
+        long? target = rootStrip ? null : f;
+        var s = Session(area, p);
+        var gate = _treeStore.Hold("move");                                 // the store has not answered when Drop returns
+
+        Assert.Equal(WorkspaceDropEffect.Move, area.Drop(s, p, target));
+        Assert.True(area.IsLifecycleBusy);                                  // the slot was taken in the same synchronous step
+        gate.WaitEntered();
+        Assert.Equal(1, Moves);
+        gate.Release();
+        Assert.Equal(WorkspaceDropOutcome.Moved, await area.CurrentDrop);
+        Assert.False(area.IsLifecycleBusy);
+        Assert.Equal(target, ParentInDatabase(p));
+    }
+
+    // ---- Review fix 2: hover expiry re-checks the row actually under the pointer and CanDrop -------------------------------------------
+
+    [Fact]
+    public async Task DH6_TheRowUnderThePointerChangedWithoutANewDragOver_TheFolderStaysCollapsed()
+    {
+        await Folder("F1");
+        await Folder("F2");
+        var p = await Project("P");
+        var area = await AreaAsync();
+        var (f1, f2) = (Node(area.Roots, "F1"), Node(area.Roots, "F2"));
+        var s = Session(area, p);
+        long? underPointer = f1.Id;
+        area.DragHoverEnter(s, f1.Id, () => underPointer);
+
+        underPointer = f2.Id;                                               // layout change / recycled container: F2's row is under the pointer now, no DragOver
+        _clock.Fire(0);
+        Assert.False(f1.IsExpanded);
+        Assert.False(f2.IsExpanded);
+
+        underPointer = null;                                                // … or no Folder row at all
+        area.DragHoverLeave(s);
+        area.DragHoverEnter(s, f1.Id, () => underPointer);
+        _clock.Fire(1);
+        Assert.False(f1.IsExpanded);
+    }
+
+    [Fact]
+    public async Task DH7_ReconcileMovedTheFolderBelowTheSourceWhileTheTimerWaited_SameIdUnderThePointer_StaysCollapsed()
+    {
+        var sId = await Folder("S");
+        var tId = await Folder("T");
+        var area = await AreaAsync();
+        await Expand(area, Node(area.Roots, "S"));                          // S (the source) loaded and expanded
+        var s = Session(area, sId);
+        area.DragHoverEnter(s, tId, () => tId);                             // T is under the pointer and stays there (same Id, cached)
+
+        Assert.True((await _other.MoveAsync(tId, sId)).Value);              // window B: T below S
+        await area.ReconcileNodeAsync(tId);                                 // A reconciles while the timer waits
+        var t = area.CachedNode(tId);
+        Assert.NotNull(t);                                                  // still registered under the same Id …
+        Assert.Same(Node(area.Roots, "S"), t!.Parent);                      // … now below the source
+        Assert.False(area.CanDrop(s, sId, tId));
+        _clock.Fire(0);
+
+        Assert.False(t.IsExpanded);
     }
 
     /// <summary>A hand-fired clock: every scheduled callback is kept (also after it was cancelled) so a late fire can be tested.</summary>

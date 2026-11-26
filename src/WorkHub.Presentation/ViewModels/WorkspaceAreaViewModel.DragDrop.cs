@@ -2,6 +2,16 @@ using WorkHub.Core.Workspace;
 
 namespace WorkHub.Presentation.ViewModels;
 
+/// <summary>
+/// Phase 25 review fix: what the window reports to WPF for a drop. <see cref="Move"/> only when the drop was accepted at drop time
+/// and the write slot was taken; <see cref="None"/> for every rejected drop.
+/// </summary>
+public enum WorkspaceDropEffect
+{
+    None,
+    Move,
+}
+
 /// <summary>Phase 25 drop result (tests and diagnostics).</summary>
 public enum WorkspaceDropOutcome
 {
@@ -40,6 +50,7 @@ public sealed partial class WorkspaceAreaViewModel
     private long _dragSourceId;
     private bool _isDragActive;
     private (int Session, long FolderId)? _hover;
+    private Func<long?>? _hoverProbe;
     private IDisposable? _hoverTimer;
 
     /// <summary>Tests: the hover-expand clock (production: a delay posted back to the UI context).</summary>
@@ -129,8 +140,13 @@ public sealed partial class WorkspaceAreaViewModel
     /// §2.1 step 7: the pointer is over the row area of Folder <paramref name="folderId"/>. Starts the one pending hover for (session,
     /// Folder Id) when it is a collapsed, valid target; the same pair again keeps the pending one; anything else cancels it first.
     /// </summary>
-    public void DragHoverEnter(int? session, long folderId)
+    /// <param name="folderUnderPointer">
+    /// Review fix: asked again when the timer expires — the Folder Id whose row area is under the pointer NOW (the window hit-tests
+    /// the current pointer position with the §2.3 classifier), or null. The Id of the last DragOver alone never confirms the position.
+    /// </param>
+    public void DragHoverEnter(int? session, long folderId, Func<long?> folderUnderPointer)
     {
+        ArgumentNullException.ThrowIfNull(folderUnderPointer);
         if (session is null || session != _dragSession)
             return;
         if (_hover is { } current && current.Session == session && current.FolderId == folderId)
@@ -140,6 +156,7 @@ public sealed partial class WorkspaceAreaViewModel
             return;
         var hoverSession = session.Value;
         _hover = (hoverSession, folderId);
+        _hoverProbe = folderUnderPointer;
         _hoverTimer = HoverClock.Schedule(HoverExpandDelay, () => OnDragHoverElapsed(hoverSession, folderId));
     }
 
@@ -155,16 +172,24 @@ public sealed partial class WorkspaceAreaViewModel
         _hoverTimer?.Dispose();
         _hoverTimer = null;
         _hover = null;
+        _hoverProbe = null;
     }
 
-    /// <summary>On expiry everything is checked again: session, pointer target (by Id), node registered, live collapsed Folder, writes allowed.</summary>
+    /// <summary>
+    /// On expiry everything is checked again: the session; the pending (session, Folder Id); the row ACTUALLY under the pointer now
+    /// (the probe re-runs the hit test — a layout change or a recycled container without a new DragOver is caught); the node still
+    /// registered as a live collapsed Folder; and <see cref="CanDrop"/> for the current source and this Folder (a reconcile that moved
+    /// the Folder below the source makes it an invalid target).
+    /// </summary>
     private void OnDragHoverElapsed(int session, long folderId)
     {
         if (session != _dragSession || _hover is not { } current || current.Session != session || current.FolderId != folderId)
             return; // a late timer of another session or another Folder: never expands anything
         _hoverTimer = null;
+        if (_hoverProbe?.Invoke() != folderId)
+            return; // the pointer is no longer over this Folder's row area
         if (!_nodes.TryGetValue(folderId, out var folder) || !folder.IsFolder || folder.IsPlaceholder || folder.IsExpanded
-            || !CanWrite() || IsTreeReplacedBySearch)
+            || !CanWrite() || IsTreeReplacedBySearch || !CanDrop(session, _dragSourceId, folderId))
             return;
         folder.IsExpanded = true; // loads the children through OnExpanded
     }
@@ -172,19 +197,26 @@ public sealed partial class WorkspaceAreaViewModel
     // ---- R1: the drop -------------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// §2.1 step 4. Synchronously, before any await: re-check (step 4.1; a rejected drop changes nothing — no store call, banner and
-    /// Undo unchanged), take the slot, then <see cref="BeginWorkspaceWrite"/> (step 4.2). The rest runs in
-    /// <see cref="MoveByDropCoreAsync"/>, which releases the slot in its finally.
+    /// §2.1 step 4, the drop as the window performs it. Synchronously, on the UI thread, in ONE step: re-check (step 4.1; a rejected
+    /// drop changes nothing — no store call, banner and Undo unchanged) and, when accepted, take the slot, then
+    /// <see cref="BeginWorkspaceWrite"/> (step 4.2), then start <see cref="MoveByDropCoreAsync"/> (its first await comes after), which
+    /// releases the slot in its finally. Returns <see cref="WorkspaceDropEffect.Move"/> exactly when the drop was accepted and the slot
+    /// taken; the window reports that effect to WPF and never waits for the store.
     /// </summary>
-    public Task<WorkspaceDropOutcome> MoveByDropAsync(int? session, long sourceId, long? targetFolderId)
+    public WorkspaceDropEffect Drop(int? session, long sourceId, long? targetFolderId)
     {
         if (!TryResolveDrop(session, sourceId, targetFolderId, out var source, out var target))
-            return Task.FromResult(WorkspaceDropOutcome.Rejected);
+            return WorkspaceDropEffect.None;
         CancelDragHover();
         IsLifecycleBusy = true; // the slot, on the UI thread, before the core starts (this method never suspends)
         BeginWorkspaceWrite();  // only now: an accepted drop is a Workspace write (withdraws an offered Undo)
-        return CurrentDrop = MoveByDropCoreAsync(source, target);
+        CurrentDrop = MoveByDropCoreAsync(source, target);
+        return WorkspaceDropEffect.Move;
     }
+
+    /// <summary>Tests: <see cref="Drop"/> and the drop's outcome (<see cref="WorkspaceDropOutcome.Rejected"/> when not accepted).</summary>
+    public Task<WorkspaceDropOutcome> MoveByDropAsync(int? session, long sourceId, long? targetFolderId) =>
+        Drop(session, sourceId, targetFolderId) == WorkspaceDropEffect.Move ? CurrentDrop : Task.FromResult(WorkspaceDropOutcome.Rejected);
 
     private async Task<WorkspaceDropOutcome> MoveByDropCoreAsync(WorkspaceNodeViewModel source, WorkspaceNodeViewModel? target)
     {

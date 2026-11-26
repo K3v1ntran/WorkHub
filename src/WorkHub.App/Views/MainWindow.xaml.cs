@@ -318,6 +318,42 @@ public partial class MainWindow : Window
 
     private (Point Start, long NodeId)? _treeDragCandidate;
     private int? _treeDragSession;
+    private Point? _lastTreeDragPosition;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    /// <summary>
+    /// Review fix (hover expiry): the Folder whose row area is under the pointer NOW, by the same §2.3 classifier — the current cursor
+    /// position (the last DragOver position if it cannot be read) is hit-tested against the tree as it is laid out at this moment, so a
+    /// layout change or a recycled container is seen without a new DragOver. Null when it is not a Folder row area.
+    /// </summary>
+    private long? FolderRowUnderPointer()
+    {
+        Point? position = _lastTreeDragPosition;
+        try
+        {
+            if (PresentationSource.FromVisual(WorkspaceTree) is not null && GetCursorPos(out var cursor))
+                position = WorkspaceTree.PointFromScreen(new Point(cursor.X, cursor.Y));
+        }
+        catch (InvalidOperationException)
+        {
+            // not connected to a presentation source: keep the last DragOver position
+        }
+
+        if (position is not { } p || p.X < 0 || p.Y < 0 || p.X >= WorkspaceTree.ActualWidth || p.Y >= WorkspaceTree.ActualHeight)
+            return null;
+        var visual = System.Windows.Media.VisualTreeHelper.HitTest(WorkspaceTree, p)?.VisualHit;
+        return ClassifyTreePoint(visual) is { Kind: TreeHitKind.Row, Node: { IsPlaceholder: false, IsFolder: true } folder } ? folder.Id : null;
+    }
 
     /// <summary>§2.3: classifies a pointer position from the event's original source (first ScrollBar / Expander / Row / the tree wins).</summary>
     private TreeHit ClassifyTreePoint(object? originalSource) => WorkspaceTreeHitTest.Classify(TreeHitChain(originalSource as DependencyObject));
@@ -421,6 +457,7 @@ public partial class MainWindow : Window
         {
             workspace.EndDragSession(session); // drop done, cancelled (Esc) or left the window
             _treeDragSession = null;
+            _lastTreeDragPosition = null;
         }
     }
 
@@ -448,9 +485,10 @@ public partial class MainWindow : Window
         e.Effects = DragDropEffects.None;
         if (CurrentTreeDrag(e) is not { } drag || Main?.Workspace is not { } workspace)
             return;
+        _lastTreeDragPosition = e.GetPosition(WorkspaceTree);
         var target = TreeDropTarget(e);
         if (target.HoverFolderId is { } hover)
-            workspace.DragHoverEnter(drag.Session, hover);
+            workspace.DragHoverEnter(drag.Session, hover, FolderRowUnderPointer);
         else
             workspace.DragHoverLeave(drag.Session);
         if (target.IsTarget && workspace.CanDrop(drag.Session, drag.SourceId, target.FolderId))
@@ -480,10 +518,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        // The view model re-checks everything synchronously and takes the slot before its first await; the store decides.
-        _ = workspace.MoveByDropAsync(drag.Session, drag.SourceId, target.FolderId);
-        e.Effects = DragDropEffects.Move;
+        // Review fix: the view model re-checks and takes the slot in ONE synchronous step (before BeginWorkspaceWrite and its first
+        // await); Move is reported only when it accepted. The store's result is not awaited here.
+        e.Effects = ToWpf(workspace.Drop(drag.Session, drag.SourceId, target.FolderId));
     }
+
+    /// <summary>Move only for an accepted drop (slot taken); None for every rejected one.</summary>
+    private static DragDropEffects ToWpf(WorkspaceDropEffect effect) =>
+        effect == WorkspaceDropEffect.Move ? DragDropEffects.Move : DragDropEffects.None;
 
     private void RootDropStrip_DragOver(object sender, DragEventArgs e)
     {
@@ -502,8 +544,7 @@ public partial class MainWindow : Window
         e.Effects = DragDropEffects.None;
         if (CurrentTreeDrag(e) is not { } drag || Main?.Workspace is not { } workspace)
             return;
-        _ = workspace.MoveByDropAsync(drag.Session, drag.SourceId, null);
-        e.Effects = DragDropEffects.Move;
+        e.Effects = ToWpf(workspace.Drop(drag.Session, drag.SourceId, null)); // review fix: Move only when accepted
     }
 
     private ProjectContentViewModel? ProjectContent => Main?.Workspace.SelectedContent;
