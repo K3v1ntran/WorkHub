@@ -1,13 +1,13 @@
 # WorkHub Phase 25 proposal: Workspace tree interactions
 
-Status: **proposal, awaiting review** (Revision 2). Nothing here is implemented. Baseline: `main` = `9ddbafc` (Phase 24 merged).
+Status: **proposal, awaiting review** (Revision 2 + R2a). Nothing here is implemented. Baseline: `main` = `9ddbafc` (Phase 24 merged).
 Branch: `codex/phase-25-workspace-interactions`. Use the tracked .NET 10 solution; real profiles stay out of scope. D1–D6 are open.
 
 ### Revision 1 → Revision 2
 
 | # | Review point | Revision 2 change |
 | --- | --- | --- |
-| 1 | The drop must hold the write slot for the whole operation | §2.1 step 4 rewritten: `CanWrite()` only reads the state and `BeginWorkspaceWrite()` takes no slot; at the drop the conditions are re-checked and the slot is taken on the UI thread before the first `await`; `BeginWorkspaceWrite()` runs only for an accepted drop; the slot is held through `MoveAsync`, the apply or reconcile, and released in `finally`. DD8 split into DD8a–DD8e with gates (§4.1); risk added (§3). |
+| 1 | The drop must hold the write slot for the whole operation | §2.1 step 4 rewritten: `CanWrite()` only reads the state and `BeginWorkspaceWrite()` takes no slot; at the drop the conditions are re-checked and the slot is taken on the UI thread before the first `await`; `BeginWorkspaceWrite()` runs only for an accepted drop; the slot is held through `MoveAsync`, the apply or reconcile, and released in `finally`. DD8 split into DD8a–DD8e with gates (§4.1); risk added (§3). **R2a (follow-up review):** the write outcome of `MoveAsync` is kept apart from the tree update after it: a write that failed before commit → "Nothing was changed" (DD8e); a typed refusal keeps its text even if the reconcile then fails (DD8d); a committed move whose tree update fails → "Moved … The Workspace tree could not be updated…", never "Nothing was changed", no second `MoveAsync` (new DD8f); the slot rules are unchanged. |
 | 2 | Define the row area and the background of the tree | New §2.3 hit-test contract: the row area is the item template's `Row` border (full width, including the space right of a short label), not "any ancestor `TreeViewItem`"; expander, scroll bar and background defined. New BG6 / BG7 and GUI GT25-7 (right of a short row in an expanded Folder), GT25-8 (expander), GT25-9 (scroll bar), GT25-10 / GT25-11 (row click while the Workspace Trash is open, also on the selected row). |
 | 3 | Hover-expand bound to the Folder and the drag; DD4 with a visible target | §2.1 step 7: the timer carries the drag session and the target Folder **Id**; cancelled on leave, drop, drag cancel, search; re-checked on expiry (D5(a) only). New DH1–DH5 with a controllable timer. DD4 rewritten: the target is the Folder shown at drop time, window B moved it below the source in the database, A's pre-check allows, the store returns `MoveCycle`, nothing is written, and the target is reconciled (§2.1 step 5). |
 | 4 | Esc must match D6 | §2.2 step 5 lists both D6 options, recommending to keep Esc unchanged; the required R2 cases are mouse-only; the Esc case is listed separately (BG-E1) for D6(a). D7–D11 are marked as questions for later phases, not conditions for Phase 25. |
@@ -119,10 +119,26 @@ own regression risk (concurrent saves, Repository preservation). Proposed **Phas
       one. Any failure = **rejected drop**: no store call, no `BeginWorkspaceWrite()`, banner and offered Undo unchanged.
    2. Still before the first `await`: take the slot (`IsLifecycleBusy = true`), then `BeginWorkspaceWrite()` (only now: an
       accepted drop is a Workspace write and withdraws Undo like every other write).
-   3. `try`: `await WorkspaceService.MoveAsync(sourceId, targetId)`; success → `await ApplyMovedAsync`; `false` ("already there") →
-      nothing; refusal → the service's banner text and the reconciliation of step 5, awaited; an exception → logged without names,
-      banner "Could not move “X”. Nothing was changed."
-   4. `finally`: release the slot (`IsLifecycleBusy = false`), after the apply or reconcile finished.
+   3. `try`, in two phases whose outcomes are kept apart:
+      - **Write phase:** `await WorkspaceService.MoveAsync(sourceId, targetId)`. The store does every check and the update in one
+        `BEGIN IMMEDIATE` transaction and commits as its last step, so an exception out of this call means the move was **not
+        committed** (rolled back). Three results:
+        - *write failed (exception, not committed)* → logged without names; banner **"Could not move “X”. Nothing was changed."**;
+          no tree update, no reconcile (DD8e);
+        - *typed refusal* (`WorkspaceResult` with a `WorkspaceFailure`) → banner = the service's refusal text; then the
+          reconciliation of step 5. If that reconcile itself fails, the refusal text **stays** the banner (it is the true outcome of
+          the write; the reconcile failure is only logged, without names) (DD8d);
+        - *committed* → `true` (moved) or `false` ("already there": nothing written, no banner, no tree update).
+      - **Tree phase (only after a committed `true`):** `await ApplyMovedAsync`, which reports whether the tree was updated. A
+        failed destination load (`EnsureChildrenLoadedAsync` returns false or throws) or any exception while applying = **tree
+        update failed**. Then: the node is taken out of its stale place (as `ApplyMovedAsync` already does when the destination
+        cannot be shown: `ForgetSubtree`, selection cleared); banner **"Moved “X” to “F”. The Workspace tree could not be updated;
+        reopen the folder to see it."** (top level: "… to the top level. …"); never "Nothing was changed"; `MoveAsync` is **not**
+        called again (DD8f). A destination that is simply not loaded (collapsed, never opened) is not a failure: the node is
+        forgotten below it as today and the success banner of D3 applies.
+   4. `finally`, on every branch above (rejected after the slot was taken, write failed, refusal with or without a failed
+      reconcile, committed with or without a failed tree update): release the slot (`IsLifecycleBusy = false`) — only after the
+      tree phase or the reconcile has finished.
    The store remains the only authority (a stale tree or another window cannot bypass a rule).
 5. **Refusals and reconcile.** As Move to… (`:1134–1138`): `ProjectTrashed` / `ProjectArchived` / `NodeNotFound` /
    `AncestorNotLive` → `ReconcileNodeAsync(source)`; `ParentNotFound` / `DestinationNotLive` →
@@ -195,7 +211,9 @@ keyboard moves; any schema, package, settings or version change; R3 and R4.
   naming the source and destination (D3/D4 may change this).
 - **Background click hit testing** at the edges (expander, row padding, horizontal area right of a short row): covered by GUI cases.
 - **Overlapping writes during a drop.** Without the slot, a second drop or a lifecycle command could start while the first
-  `MoveAsync` or its apply is pending. Mitigation: §2.1 step 4 (slot taken before the first `await`, released in `finally`), DD8a–e.
+  `MoveAsync` or its apply is pending. Mitigation: §2.1 step 4 (slot taken before the first `await`, released in `finally`), DD8a–f.
+- **A misleading result after a committed move.** If the tree update failed and the banner said "Nothing was changed", the user
+  could repeat the move or distrust the data. Mitigation: §2.1 step 4.3 keeps the write outcome apart from the tree outcome; DD8f.
 - **Undo withdrawn by a rejected gesture.** Calling `BeginWorkspaceWrite()` before the drop is accepted would clear an offered Undo
   for a drop that writes nothing. Mitigation: it runs only after acceptance (DD8b).
 - **Wrong row from hit testing.** "Any ancestor `TreeViewItem`" mis-classifies points in a parent's children area. Mitigation:
@@ -220,8 +238,9 @@ keyboard moves; any schema, package, settings or version change; R3 and R4.
 | DD8a | Move to Trash of P2 offered Undo; `HoldLifecycleSlotForTests()`; drop P onto F | rejected: 0 `move` calls; banner text and Undo unchanged (`IsUndoAvailable` still true) |
 | DD8b | `Hold("move")`; drop P onto F (held); then drop Q onto F | the store receives **exactly one** `move` call; the second drop is rejected before the store; `IsLifecycleBusy` true while held; the banner is the same before and after the rejected drop |
 | DD8c | release DD8b's held move (success) | P under F; slot released (`IsLifecycleBusy` false, `CanWrite()` true) only after `ApplyMovedAsync` completed; a new drop is accepted |
-| DD8d | as DD8b, the store refuses (`DuplicateName` / `DestinationNotLive` via window B) | refusal banner; reconcile (if any) awaited; slot released afterwards |
-| DD8e | as DD8b, the held move is released with an `IOException` | banner "Could not move “P”. Nothing was changed."; nothing written; slot released |
+| DD8d | as DD8b, the store refuses (`DuplicateName` / `DestinationNotLive` via window B); variant: the reconcile read that follows is held and failed (`Hold("nodeState")` / the children read, released with an `IOException`) | refusal banner (the service's text) — also in the variant, where the reconcile failure is only logged; nothing written; slot held until the reconcile ended, then released |
+| DD8e | **write fails, not committed**: as DD8b, the held move is released with an `IOException` (the store call throws; nothing commits) | data snapshot unchanged (P's parent unchanged); exactly one `move` call; banner "Could not move “P”. Nothing was changed."; no tree update or reconcile; slot released |
+| DD8f | **write commits, tree update fails**: F collapsed and not loaded; `Hold("children:F")` armed; drop P onto F (the `move` is **not** held: it commits); `WaitEntered` on the children read of `ApplyMovedAsync` | while held: the database already has P under F, `IsLifecycleBusy` is true (slot still held), no banner yet. Release the gate with an `IOException`: exactly one `move` call (no retry); the database still has P under F; banner "Moved “P” to “F”. The Workspace tree could not be updated; reopen the folder to see it." (never "Nothing was changed"); P is not shown at its old place; slot released (`IsLifecycleBusy` false, `CanWrite()` true). Gates only, no `Sleep` |
 | DD9 | drop while the tree is replaced by search results | not draggable |
 | BG1 | select Folder F, then background left-click | `SelectedNode` null; Info closed; no details load started |
 | BG2 | select F, background right-click → New Folder… | the editor opens with parent = top level; the created folder is a root |
@@ -241,7 +260,8 @@ keyboard moves; any schema, package, settings or version change; R3 and R4.
 
 No migration (LatestVersion 10), packages unchanged; the tree has `AllowDrop` and the four drag handlers; the drop path calls
 `WorkspaceService.MoveAsync` and never a new store member; in `MoveByDropAsync` the slot is taken (`IsLifecycleBusy = true`) before
-the first `await` and released in a `finally`, and `BeginWorkspaceWrite()` appears only after the slot is taken; the hit-test helper
+the first `await` and released in a `finally`, and `BeginWorkspaceWrite()` appears only after the slot is taken; the text "Nothing was
+changed" occurs only on the write-failure branch, never after a committed move; the hit-test helper
 names `Row`, `Expander` and `ScrollBar` (not "any ancestor `TreeViewItem`"); `IWorkspaceStore` unchanged; Move to… unchanged.
 
 ### 4.3 GUI (test profile only; isolated launcher, `--data-root`)
