@@ -47,8 +47,8 @@ public sealed class Phase21ContractTests
         Assert.Equal(new[]
         {
             nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListProjectsWithTagAsync), // Phase 24 snapshot (§4.6)
-            nameof(IWorkspaceStore.ListTagsInUseAsync),
-            nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
+            nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.ListTagsInUseAsync), // ordinal: 'S' (U+0053) < 's' (U+0073)
+            nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
         }, tagMembers);
         Assert.Equal([typeof(CancellationToken)], store.GetMethod(nameof(IWorkspaceStore.ListTagsInUseAsync))!.GetParameters().Select(p => p.ParameterType));
         Assert.Equal(typeof(Task<IReadOnlyList<TagInUse>>), store.GetMethod(nameof(IWorkspaceStore.ListTagsInUseAsync))!.ReturnType);

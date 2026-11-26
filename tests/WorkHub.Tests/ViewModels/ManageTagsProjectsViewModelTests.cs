@@ -295,6 +295,59 @@ public sealed class ManageTagsProjectsViewModelTests : IDisposable
         Assert.False(vm.ShowInWorkspaceCommand.CanExecute(null));
     });
 
+    // ---- TGV8 (review fix): a double-click reveals the row under the pointer, under the button's rule -----------------------------
+
+    [Fact]
+    public Task TGV8_ShowProjectInWorkspace_UsesTheGivenRow_NotTheSelection_UnderTheSameRule() => InContext(async () =>
+    {
+        var vm = await OpenAsync();
+        await Select(vm, ClientA);
+        var before = Data();
+        var closed = new List<bool>();
+        vm.CloseRequested += (_, changed) => closed.Add(changed);
+        vm.SelectedTaggedProject = Row(vm, "P1");                           // a revealable row is selected
+        Assert.True(vm.ShowInWorkspaceCommand.CanExecute(null));
+
+        // A row in the Trash under the pointer: refused although P1 (revealable) is selected.
+        Assert.False(vm.CanShowInWorkspaceFor(Row(vm, "P5")));
+        Assert.False(vm.ShowProjectInWorkspace(Row(vm, "P5")));
+        Assert.False(vm.ShowProjectInWorkspace(Row(vm, "P6")));
+        Assert.False(vm.ShowProjectInWorkspace(null));                      // empty area / scroll bar: no row
+        Assert.Empty(closed);
+        Assert.Null(vm.RevealTarget);
+
+        // A row of an older list (a stale container) is refused too.
+        var stale = Row(vm, "P2");
+        await Select(vm, Infra);
+        await Select(vm, ClientA);
+        Assert.False(vm.ShowProjectInWorkspace(stale));
+        Assert.Empty(closed);
+        vm.SelectedTaggedProject = Row(vm, "P1");
+
+        // While an Apply writes: refused for any row (the button's rule).
+        vm.StartRenameCommand.Execute(null);
+        vm.NewName = "ClientX";
+        await vm.PreviewCommand.ExecuteAsync();
+        var apply = _gated.Hold("applyTagChange");
+        var confirm = vm.ConfirmCommand.ExecuteAsync();
+        apply.WaitEntered();
+        Assert.False(vm.ShowProjectInWorkspace(Row(vm, "P2")));
+        Assert.Empty(closed);
+        apply.Release();
+        await confirm;
+        await Select(vm, ProjectTagName.Key("ClientX"));                    // P1, P3, P4, P2 now carry ClientX
+
+        // A revealable row OTHER than the selected one: that row is the target, not the selection.
+        vm.SelectedTaggedProject = Row(vm, "P1");
+        Assert.True(vm.ShowProjectInWorkspace(Row(vm, "P2")));
+        Assert.Equal([true], closed);                                       // ChangedAny from the committed rename
+        Assert.Equal(_x.P2, vm.RevealTarget);
+        Assert.Equal(_x.P1, vm.SelectedTaggedProject!.ProjectNodeId);       // the selection itself is untouched
+        Assert.Single(_gated.ApplyTagChangeCalls);                          // no write by the reveal
+        Assert.Empty(_gated.ApplyTagDeleteCalls);
+        Assert.NotEqual(before, Data());                                    // only the rename changed data
+    });
+
     // ---- TGV6, TGV7 -------------------------------------------------------------------------------------------------------------
 
     [Fact]

@@ -304,7 +304,15 @@ public sealed class ManageTagsViewModel : ObservableObject
     public long? RevealTarget { get; private set; }
 
     /// <summary>One selected list row that is not in the Trash, and no Apply writing and no post-commit refresh running.</summary>
-    public bool CanShowInWorkspace => SelectedTaggedProject is { CanReveal: true } && !IsWriting && !IsRefreshing;
+    public bool CanShowInWorkspace => CanShowInWorkspaceFor(SelectedTaggedProject);
+
+    /// <summary>
+    /// The ONE reveal rule of Show in Workspace, for any row: a row of the CURRENT list that is not in the Trash, while no Apply writes
+    /// and no post-commit refresh runs. The button and Enter apply it to the selection; a double-click applies it to the row under the
+    /// pointer (<see cref="ShowProjectInWorkspace"/>).
+    /// </summary>
+    public bool CanShowInWorkspaceFor(TaggedProjectRowViewModel? row) =>
+        row is { CanReveal: true } && !IsWriting && !IsRefreshing && _taggedProjects.Contains(row);
 
     /// <summary>Tests: the most recent list read (it never throws; faults are handled inside).</summary>
     internal Task CurrentProjectsLoad { get; private set; } = Task.CompletedTask;
@@ -356,12 +364,21 @@ public sealed class ManageTagsViewModel : ObservableObject
         }
     }
 
-    private void ShowInWorkspace()
+    /// <summary>The button and Enter: the selected row.</summary>
+    private void ShowInWorkspace() => ShowProjectInWorkspace(SelectedTaggedProject);
+
+    /// <summary>
+    /// Show in Workspace for exactly <paramref name="row"/> (a double-click passes the row under the pointer, never the selection).
+    /// Refused — nothing closes, <see cref="RevealTarget"/> unchanged — unless <see cref="CanShowInWorkspaceFor"/> allows it.
+    /// </summary>
+    /// <returns>True when the dialog was asked to close for the reveal.</returns>
+    public bool ShowProjectInWorkspace(TaggedProjectRowViewModel? row)
     {
-        if (!CanShowInWorkspace || SelectedTaggedProject is not { } project)
-            return;
-        RevealTarget = project.ProjectNodeId; // read only: nothing is written; the caller resolves the Project's CURRENT place
+        if (!CanShowInWorkspaceFor(row))
+            return false;
+        RevealTarget = row!.ProjectNodeId; // read only: nothing is written; the caller resolves the Project's CURRENT place
         CloseRequested?.Invoke(this, ChangedAny);
+        return true;
     }
 
     internal const string CouldNotListProjects = "The projects could not be listed.";

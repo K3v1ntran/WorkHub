@@ -229,5 +229,6 @@ from. Phase 24 results close nothing of Phase 14–23, D10 or P3.
 | GT24-1 list | open Manage tags, select `clientA` | rows, markers and header as TG1 / TGV1 (UIA texts) |
 | GT24-2 reveal | Show in Workspace on P2; then on P3 | dialog closes; tree selects P2; Archived opens with P3 and its banner |
 | GT24-3 keyboard | Enter in the list on P1; Enter on Confirm in Delete mode | reveal of P1; Confirm never applies on Enter (Phase 22 GD5 unchanged) |
+| GT24-4 double-click (review fix) | with P1 selected: (a) right double-click on P2; (b) left double-click on P5 ("In the Trash"); (c) left double-click on the empty area below the rows and on the scroll bar; (d) left double-click on P2 | (a)–(c): the dialog stays open, nothing is revealed, no banner; (d): the dialog closes and the tree selects **P2** (the row under the pointer, not the previously selected P1). Behaviour of the rule: TGV8; wiring: TG-C3 |
 
 No real profile, not even its metadata.

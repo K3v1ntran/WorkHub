@@ -98,7 +98,19 @@ public sealed class Phase24ContractTests
         var codeBehind = File.ReadAllText(RepoFile("src", "WorkHub.App", "Views", "ManageTagsWindow.xaml.cs"));
         Assert.Contains("e.Key == Key.Enter && DataContext is ManageTagsViewModel { IsDeleteMode: true }", codeBehind, StringComparison.Ordinal);
         Assert.DoesNotContain("Key.Space", codeBehind, StringComparison.Ordinal);
-        Assert.Equal(2, CountOf(codeBehind, "ShowInWorkspaceCommand.Execute(null)")); // Enter and double-click on the list, nothing else
+        Assert.Equal(1, CountOf(codeBehind, "ShowInWorkspaceCommand.Execute(null)")); // Enter on the list: the selection
+
+        // Double-click (review fix): left button only; the row comes from the ListBoxItem under the pointer, never the selection, and
+        // goes through the same reveal rule as the button (behaviour: TGV8; real mouse: GUI GT24-4).
+        var start2 = codeBehind.IndexOf("private void ProjectsList_MouseDoubleClick(", StringComparison.Ordinal);
+        Assert.True(start2 >= 0);
+        var doubleClick = codeBehind[start2..];
+        Assert.Contains("e.ChangedButton != MouseButton.Left", doubleClick, StringComparison.Ordinal);
+        Assert.Contains("ItemsControl.ContainerFromElement(ProjectsList, source) is not ListBoxItem container", doubleClick, StringComparison.Ordinal);
+        Assert.Contains("ItemContainerGenerator.ItemFromContainer(container) is not TaggedProjectRowViewModel row", doubleClick, StringComparison.Ordinal);
+        Assert.Contains("viewModel.ShowProjectInWorkspace(row)", doubleClick, StringComparison.Ordinal);
+        Assert.DoesNotContain("SelectedTaggedProject", doubleClick, StringComparison.Ordinal);
+        Assert.DoesNotContain("ShowInWorkspaceCommand", doubleClick, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -111,7 +123,9 @@ public sealed class Phase24ContractTests
         Assert.Equal(2, CountOf(vm, "ChangedAny = true;"));                   // Show in Workspace never sets it
         Assert.Contains("var version = ++_listVersion;", vm, StringComparison.Ordinal);
         Assert.Equal(2, CountOf(vm, "version != _listVersion"));              // result and fault, both by version only
-        Assert.Contains("SelectedTaggedProject is { CanReveal: true } && !IsWriting && !IsRefreshing", vm, StringComparison.Ordinal);
+        Assert.Contains("public bool CanShowInWorkspace => CanShowInWorkspaceFor(SelectedTaggedProject);", vm, StringComparison.Ordinal);
+        Assert.Contains("row is { CanReveal: true } && !IsWriting && !IsRefreshing && _taggedProjects.Contains(row);", vm, StringComparison.Ordinal);
+        Assert.Contains("private void ShowInWorkspace() => ShowProjectInWorkspace(SelectedTaggedProject);", vm, StringComparison.Ordinal);
 
         var area = File.ReadAllText(RepoFile("src", "WorkHub.Presentation", "ViewModels", "WorkspaceAreaViewModel.cs"));
         var start = area.IndexOf("private async Task ManageTagsAsync()", StringComparison.Ordinal);

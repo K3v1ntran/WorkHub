@@ -286,7 +286,8 @@ public sealed class ManageTagsRevealTests : IDisposable
         Assert.Equal(p1Before + 1, _treeStore.Calls($"details:{_x.P1}"));
         Assert.True(area.CurrentDetailsLoad.IsCompleted);
         Assert.Equal(p2Before, _treeStore.Calls($"details:{_x.P2}"));
-        Assert.Equal(["ClientX"], area.SelectedProject!.Tags.Select(t => t.Name));
+        // P1 carries clientA and Infra (§4.1): after the rename it has exactly ClientX and Infra (order-independent).
+        Assert.Equal(["ClientX", "Infra"], area.SelectedProject!.Tags.Select(t => t.Name).Order(StringComparer.Ordinal));
         resolve.Release();
         await command;
         await area.CurrentDetailsLoad;

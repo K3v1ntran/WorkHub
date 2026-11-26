@@ -37,12 +37,21 @@ public partial class ManageTagsWindow : Window
             viewModel.ShowInWorkspaceCommand.Execute(null);
     }
 
-    /// <summary>Phase 24 (D4): a double-click on a list row = Show in Workspace (when enabled).</summary>
+    /// <summary>
+    /// Phase 24 (D4): a LEFT double-click on a Project row = Show in Workspace for THAT row — the row is taken from the
+    /// <see cref="ListBoxItem"/> under the pointer, never from the selection — under the same rule as the button
+    /// (<see cref="ManageTagsViewModel.CanShowInWorkspaceFor"/>). A right (or other button) double-click, the empty area, the scroll bar
+    /// or a row in the Trash opens nothing and leaves the dialog open, also while another, revealable row is selected.
+    /// </summary>
     private void ProjectsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.OriginalSource is not DependencyObject source || ItemsControl.ContainerFromElement(ProjectsList, source) is not ListBoxItem)
+        if (e.ChangedButton != MouseButton.Left || DataContext is not ManageTagsViewModel viewModel)
+            return;
+        if (e.OriginalSource is not DependencyObject source
+            || ItemsControl.ContainerFromElement(ProjectsList, source) is not ListBoxItem container
+            || ProjectsList.ItemContainerGenerator.ItemFromContainer(container) is not TaggedProjectRowViewModel row)
             return; // not on a row (scroll bar, empty area)
-        if (DataContext is ManageTagsViewModel viewModel && viewModel.ShowInWorkspaceCommand.CanExecute(null))
-            viewModel.ShowInWorkspaceCommand.Execute(null);
+        if (viewModel.ShowProjectInWorkspace(row))
+            e.Handled = true;
     }
 }

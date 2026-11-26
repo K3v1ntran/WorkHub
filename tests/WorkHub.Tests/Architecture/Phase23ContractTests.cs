@@ -29,8 +29,8 @@ public sealed class Phase23ContractTests
         Assert.Equal(new[]
         {
             nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListProjectsWithTagAsync), // Phase 24 snapshot (§4.6)
-            nameof(IWorkspaceStore.ListTagsInUseAsync),
-            nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
+            nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.ListTagsInUseAsync), // ordinal: 'S' (U+0053) < 's' (U+0073)
+            nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
         }, tagMembers);
         Assert.Equal(["Microsoft.Data.Sqlite@10.0.13"],
             XDocument.Load(RepoFile("src", "WorkHub.Infrastructure", "WorkHub.Infrastructure.csproj")).Descendants("PackageReference")
