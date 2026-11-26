@@ -326,6 +326,20 @@ public sealed class WorkspaceService(IWorkspaceStore store)
         return store.ApplyTagDeleteAsync(fromKey, token, cancellationToken);
     }
 
+    // ---- Phase 24: Projects with this tag ---------------------------------------------------------------------------------------
+
+    /// <summary>Phase 24 (D6): the most rows the "Projects with this tag" list shows.</summary>
+    public const int TaggedProjectsLimit = 500;
+
+    /// <summary>The Projects carrying a tag key (read only): see <see cref="IWorkspaceStore.ListProjectsWithTagAsync"/>. An empty key is refused before the store.</summary>
+    public async Task<WorkspaceResult<TaggedProjectsResult>> ListProjectsWithTagAsync(string nameKey, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(nameKey))
+            return WorkspaceResult<TaggedProjectsResult>.Failed(NoTagSelected, TagNameField);
+        return WorkspaceResult<TaggedProjectsResult>.Ok(
+            await store.ListProjectsWithTagAsync(nameKey, TaggedProjectsLimit, cancellationToken).ConfigureAwait(false));
+    }
+
     /// <summary>Phase 22: the refusal text for an empty tag key.</summary>
     public const string NoTagSelected = "Choose a tag first.";
 

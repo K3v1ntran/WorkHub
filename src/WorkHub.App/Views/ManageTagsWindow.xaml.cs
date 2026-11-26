@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using WorkHub.Presentation.ViewModels;
 
@@ -21,5 +22,27 @@ public partial class ManageTagsWindow : Window
     {
         if (e.Key == Key.Enter && DataContext is ManageTagsViewModel { IsDeleteMode: true })
             e.Handled = true;
+    }
+
+    /// <summary>
+    /// Phase 24 (D4): Enter in the Projects with this tag list = Show in Workspace (when enabled). It is always marked handled, so
+    /// the default Close button never takes an Enter pressed in this list. Enter anywhere else is unchanged.
+    /// </summary>
+    private void ProjectsList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not ManageTagsViewModel viewModel)
+            return;
+        e.Handled = true;
+        if (viewModel.ShowInWorkspaceCommand.CanExecute(null))
+            viewModel.ShowInWorkspaceCommand.Execute(null);
+    }
+
+    /// <summary>Phase 24 (D4): a double-click on a list row = Show in Workspace (when enabled).</summary>
+    private void ProjectsList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source || ItemsControl.ContainerFromElement(ProjectsList, source) is not ListBoxItem)
+            return; // not on a row (scroll bar, empty area)
+        if (DataContext is ManageTagsViewModel viewModel && viewModel.ShowInWorkspaceCommand.CanExecute(null))
+            viewModel.ShowInWorkspaceCommand.Execute(null);
     }
 }

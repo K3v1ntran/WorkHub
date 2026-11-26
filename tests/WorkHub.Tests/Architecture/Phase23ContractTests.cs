@@ -28,7 +28,8 @@ public sealed class Phase23ContractTests
             .Select(m => m.Name).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(new[]
         {
-            nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListTagsInUseAsync),
+            nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListProjectsWithTagAsync), // Phase 24 snapshot (§4.6)
+            nameof(IWorkspaceStore.ListTagsInUseAsync),
             nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
         }, tagMembers);
         Assert.Equal(["Microsoft.Data.Sqlite@10.0.13"],

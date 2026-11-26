@@ -199,6 +199,16 @@ public interface IWorkspaceStore
     /// <exception cref="ArgumentException">The key is empty or white space.</exception>
     Task<TagDeleteResult> ApplyTagDeleteAsync(string fromKey, string token, CancellationToken cancellationToken = default);
 
+    // ---- Phase 24: Projects with this tag (additive, read only; schema v10, no migration) -------------------------------------------
+
+    /// <summary>
+    /// The Projects carrying <paramref name="nameKey"/> from ONE deferred read transaction (proposal §3.3): every <c>ProjectTags</c> row
+    /// of the key with the Project's name, folder path, stored spelling and effective state (the <c>NodeLifecycle</c> of tag
+    /// eligibility). The totals are counted over all rows BEFORE the cap; the rows are sorted by <see cref="TaggedProjectOrder"/> and
+    /// the first <paramref name="limit"/> are kept. An unknown key yields no rows and zero totals. Never writes; reads no content.
+    /// </summary>
+    Task<TaggedProjectsResult> ListProjectsWithTagAsync(string nameKey, int limit, CancellationToken cancellationToken = default);
+
     // ---- Folder Archive and Folder Trash (schema v9; Phase 13 proposal revision 4 §7) ------------------------------------------
     // M1: one marker on the Folder that roots the subtree; descendants are never written. Every Workspace node write above
     // requires the node's EFFECTIVE state to be Live (an archived or trashed ancestor refuses it: WorkspaceNotLiveException or

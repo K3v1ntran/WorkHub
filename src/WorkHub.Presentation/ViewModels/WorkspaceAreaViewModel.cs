@@ -993,8 +993,33 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         if (dialog.ChangedAny && SelectedNode is { IsProject: true })
         {
             StartDetailsLoad();
-            await CurrentDetailsLoad;
+            await CurrentDetailsLoad; // Phase 24 (D7): completes BEFORE a Show in Workspace reveal starts
         }
+
+        if (dialog.RevealTarget is { } projectNodeId)
+            await RevealTaggedProjectAsync(projectNodeId);
+    }
+
+    /// <summary>
+    /// Phase 24 Show in Workspace (proposal §3.5): the Project is found by its id and revealed at its CURRENT place through the same
+    /// fresh resolve as a search result (moved → its new place; archived → Archived; changed twice → WorkspaceChanged). Never writes.
+    /// </summary>
+    private async Task RevealTaggedProjectAsync(long projectNodeId)
+    {
+        var outcome = await RevealAsync(new SearchItemRef(SearchResultKind.Project, projectNodeId));
+        BannerMessage = outcome switch
+        {
+            WorkspaceRevealOutcome.Selected or WorkspaceRevealOutcome.Superseded => BannerMessage,
+            WorkspaceRevealOutcome.Archived => "The project is archived — it is selected under Archived.",
+            WorkspaceRevealOutcome.InArchivedFolder => "The project is in an archived folder — that folder is selected under Archived.",
+            WorkspaceRevealOutcome.NotFound => "The project no longer exists.",
+            WorkspaceRevealOutcome.Trashed or WorkspaceRevealOutcome.ProjectTrashed => "The project is in the Trash.",
+            WorkspaceRevealOutcome.FolderTrashed => "The project's folder is in the Trash.",
+            WorkspaceRevealOutcome.WorkspaceChanged or WorkspaceRevealOutcome.NoLongerArchived or WorkspaceRevealOutcome.MovedMeanwhile
+                or WorkspaceRevealOutcome.ContainerMissing => "The project was moved or changed meanwhile. Try Show in Workspace again.",
+            WorkspaceRevealOutcome.Busy => "The database stayed busy (another program or window is writing). Try again.",
+            _ => "The project could not be shown. Try again.",
+        };
     }
 
     /// <summary>Takes the lifecycle slot for one tag change (false while another lifecycle write holds it: nothing is written).</summary>

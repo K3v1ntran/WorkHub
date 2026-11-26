@@ -269,6 +269,11 @@ already used on other projects (not those in the Workspace Trash; archived ones 
   tag). If the list or the project's details cannot be refreshed afterwards, the tag is still deleted and the message says
   so; close and reopen **Manage tags…** to see the list. A project editor that was open keeps working: a Save that does not
   change the tags keeps the deletion, and a Save that changes them asks you to review the current tags first.
+- **Projects with this tag** (below the actions in **Manage tags…**) lists every project that carries the selected tag, with its
+  folder (top level: "Workspace"), "Archived" or "In the Trash", and its own spelling when it differs; the header counts them
+  ("4 projects, 2 in the Trash keep it", "— and N more" beyond the first 500). **Show in Workspace** (or **Enter** / double-click on
+  a row) closes the dialog and selects that project where it is now — under **Archived** when it is archived; projects in the Trash
+  cannot be shown, and the list never changes tags and does not filter the tree.
 - Tags follow their project: archived projects keep them (read-only, still found by search); a project in the Workspace
   Trash keeps them read-only and they are not searched; Archive, Unarchive, Move to Trash, Restore and Undo change none.
   Copy/Move between projects copies content only, never tags. Permanent deletion from a project's Trash leaves its tags.

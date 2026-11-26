@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using WorkHub.Core.Workspace;
+using WorkHub.Core.Workspace.Search;
 
 namespace WorkHub.Infrastructure.Persistence;
 
@@ -374,6 +375,57 @@ public sealed partial class SqliteWorkspaceStore
         }
 
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
+    }
+
+    // ---- Phase 24: Projects with this tag (proposal Revision 2 + R2a §3.3) -----------------------------------------------------
+
+    public Task<TaggedProjectsResult> ListProjectsWithTagAsync(string nameKey, int limit, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(nameKey);
+        ArgumentOutOfRangeException.ThrowIfNegative(limit);
+        return Run(connection =>
+        {
+            // ONE snapshot: the key's rows, each Project's effective state, name and folder path, all inside one deferred read.
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var lifecycle = new NodeLifecycle(connection, transaction, MaxDepth);
+            var sources = new List<(long Project, string Spelling)>();
+            using (var command = connection.CreateCommand())
+            {
+                command.Transaction = transaction;
+                command.CommandText = "SELECT ProjectNodeId, Name FROM ProjectTags WHERE NameKey = $key;";
+                command.Parameters.AddWithValue("$key", nameKey);
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                    sources.Add((reader.GetInt64(0), reader.GetString(1)));
+            }
+
+            var listed = new List<(TaggedProjectOrder.Key Key, string Spelling)>(sources.Count);
+            foreach (var (project, spelling) in sources)
+            {
+                // A ProjectTags row always has its Project (foreign key); a missing node fails closed like the other tag reads.
+                var chain = lifecycle.Chain(project) ?? throw new InvalidDataException("A tagged Project node is missing.");
+                var effective = NodeLifecycle.Of(chain);
+                var state = effective.State switch
+                {
+                    LifecycleState.Trashed => TaggedProjectState.Trashed,
+                    LifecycleState.Archived => TaggedProjectState.Archived,
+                    _ => TaggedProjectState.Live,
+                };
+                var folders = chain.Take(chain.Count - 1).Select(r => r.Name).ToList();
+                listed.Add((new TaggedProjectOrder.Key(state, folders, chain[^1].Name, project), spelling));
+            }
+
+            transaction.Commit();
+
+            // Totals over ALL rows before the cap; then the total order (§3.3) on the full set; then the first `limit` rows.
+            var trashed = listed.Count(r => r.Key.State == TaggedProjectState.Trashed);
+            var rows = listed
+                .OrderBy(r => r.Key, TaggedProjectOrder.Instance)
+                .Take(limit)
+                .Select(r => new TaggedProject(r.Key.ProjectNodeId, r.Key.Name, WorkspaceSearchText.JoinPath(r.Key.Folders), r.Spelling, r.Key.State))
+                .ToList();
+            return new TaggedProjectsResult(rows, listed.Count - trashed, trashed);
+        }, cancellationToken);
     }
 
     /// <summary>R2a: the stored tag set equals <paramref name="baseline"/> as ordinal (NameKey, Name) pairs (CreatedAt not compared).</summary>

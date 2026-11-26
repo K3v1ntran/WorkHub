@@ -44,7 +44,8 @@ public sealed class Phase22ContractTests
         var tagMembers = store.GetMethods().Where(m => m.Name.Contains("Tag", StringComparison.Ordinal)).Select(m => m.Name).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(new[]
         {
-            nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListTagsInUseAsync),
+            nameof(IWorkspaceStore.ApplyTagChangeAsync), nameof(IWorkspaceStore.ApplyTagDeleteAsync), nameof(IWorkspaceStore.ListProjectsWithTagAsync), // Phase 24 snapshot (§4.6)
+            nameof(IWorkspaceStore.ListTagsInUseAsync),
             nameof(IWorkspaceStore.ListTagSuggestionsAsync), nameof(IWorkspaceStore.PrepareTagChangeAsync), nameof(IWorkspaceStore.PrepareTagDeleteAsync),
         }, tagMembers);
 

@@ -53,9 +53,18 @@ internal sealed class GatedSearchStore(IWorkspaceSearchStore inner) : IWorkspace
         return await early;
     }
 
+    /// <summary>Phase 24: when set, the next resolve returns this instead of reaching the database (e.g. a removed Project).</summary>
+    public Func<SearchItemRef, RevealResolution>? ScriptResolve { get; set; }
+
     public async Task<RevealResolution> ResolveAsync(SearchItemRef item, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _resolves);
+        if (ScriptResolve is { } script)
+        {
+            ScriptResolve = null;
+            return script(item);
+        }
+
         if (!_gates.TryRemove("resolve", out var gate))
             return await inner.ResolveAsync(item, cancellationToken);
 

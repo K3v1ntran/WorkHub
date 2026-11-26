@@ -29,6 +29,14 @@ namespace WorkHub.Presentation.ViewModels;
 /// locked during the re-read (Close allowed); a failed re-read keeps the success text and adds a note. Non-committed outcomes, their
 /// texts and the keyboard behaviour are unchanged.
 /// </para>
+/// <para>
+/// Phase 24 (proposal Revision 2 + R2a, D1–D9): the selected tag row also loads a read-only <b>Projects with this tag</b> list (§3.1,
+/// §3.4). Every list read gets a new request version; a result or fault is applied only while its version is still the current one
+/// (the key alone is never trusted). The header comes only from the list result. A current-version fault shows
+/// <see cref="CouldNotListProjects"/> in the list area only (never <see cref="Message"/>, never <see cref="RefreshFailed"/>, never a
+/// lock). <see cref="ShowInWorkspaceCommand"/> closes the dialog with <see cref="RevealTarget"/> set; the caller reveals the Project
+/// by id. The list is re-read for the still-selected key inside the post-commit refresh.
+/// </para>
 /// </summary>
 public sealed class ManageTagsViewModel : ObservableObject
 {
@@ -53,6 +61,11 @@ public sealed class ManageTagsViewModel : ObservableObject
     private bool _isRefreshing;
     private bool _refreshFailed;
     private bool _isWriting;
+    private IReadOnlyList<TaggedProjectRowViewModel> _taggedProjects = [];
+    private string? _taggedProjectsHeader;
+    private string? _taggedProjectsError;
+    private TaggedProjectRowViewModel? _selectedTaggedProject;
+    private int _listVersion;
 
     /// <param name="tryBeginWrite">Takes the Workspace lifecycle slot; false when another lifecycle write holds it (nothing is written).</param>
     /// <param name="endWrite">Releases the slot taken by <paramref name="tryBeginWrite"/>.</param>
@@ -71,6 +84,7 @@ public sealed class ManageTagsViewModel : ObservableObject
         ConfirmCommand = new AsyncRelayCommand(ConfirmAsync, () => CanConfirm, ex => ReportError(CouldNotRename, ex));
         CancelChangeCommand = new RelayCommand(ResetChange, () => (Mode is not null || IsDeleteMode) && !IsLocked);
         CloseCommand = new RelayCommand(() => CloseRequested?.Invoke(this, ChangedAny), () => !IsBusy);
+        ShowInWorkspaceCommand = new RelayCommand(ShowInWorkspace, () => CanShowInWorkspace);
     }
 
     public event EventHandler<bool>? CloseRequested;
@@ -122,6 +136,7 @@ public sealed class ManageTagsViewModel : ObservableObject
                 return;
             ResetChange();
             OnPropertyChanged(nameof(MergeTargets));
+            StartProjectsLoad(value?.NameKey); // Phase 24: a new request version for every selection change
             RaiseCommands();
         }
     }
@@ -256,6 +271,111 @@ public sealed class ManageTagsViewModel : ObservableObject
     public RelayCommand CancelChangeCommand { get; }
 
     public RelayCommand CloseCommand { get; }
+
+    // ---- Phase 24: Projects with this tag (proposal Revision 2 + R2a §3.1, §3.4) ----------------------------------------------
+
+    /// <summary>The Projects carrying the selected tag, in the store's order (§3.3); empty while none is selected or after a failure.</summary>
+    public IReadOnlyList<TaggedProjectRowViewModel> TaggedProjects
+    {
+        get => _taggedProjects;
+        private set => SetProperty(ref _taggedProjects, value);
+    }
+
+    /// <summary>"E projects, T in the Trash keep it — and N more", built ONLY from the list result (never from the tag row's counts).</summary>
+    public string? TaggedProjectsHeader { get => _taggedProjectsHeader; private set => SetProperty(ref _taggedProjectsHeader, value); }
+
+    /// <summary>The list area's own error (<see cref="CouldNotListProjects"/>), or null.</summary>
+    public string? TaggedProjectsError { get => _taggedProjectsError; private set => SetProperty(ref _taggedProjectsError, value); }
+
+    public TaggedProjectRowViewModel? SelectedTaggedProject
+    {
+        get => _selectedTaggedProject;
+        set
+        {
+            if (SetProperty(ref _selectedTaggedProject, value))
+                ShowInWorkspaceCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    /// <summary>Show in Workspace (also Enter / double-click on a list row): closes the dialog and asks the caller to reveal the Project.</summary>
+    public RelayCommand ShowInWorkspaceCommand { get; }
+
+    /// <summary>The Project the caller reveals by id after the dialog closed through Show in Workspace; null otherwise.</summary>
+    public long? RevealTarget { get; private set; }
+
+    /// <summary>One selected list row that is not in the Trash, and no Apply writing and no post-commit refresh running.</summary>
+    public bool CanShowInWorkspace => SelectedTaggedProject is { CanReveal: true } && !IsWriting && !IsRefreshing;
+
+    /// <summary>Tests: the most recent list read (it never throws; faults are handled inside).</summary>
+    internal Task CurrentProjectsLoad { get; private set; } = Task.CompletedTask;
+
+    /// <summary>
+    /// Starts a list read for <paramref name="nameKey"/> with a NEW request version (also for the same key again); the list area is
+    /// cleared until it answers. Null clears the list (no read).
+    /// </summary>
+    private void StartProjectsLoad(string? nameKey)
+    {
+        var version = ++_listVersion;
+        SelectedTaggedProject = null;
+        TaggedProjects = [];
+        TaggedProjectsHeader = null;
+        TaggedProjectsError = null;
+        CurrentProjectsLoad = nameKey is null ? Task.CompletedTask : LoadProjectsAsync(nameKey, version);
+    }
+
+    private async Task LoadProjectsAsync(string nameKey, int version)
+    {
+        try
+        {
+            var result = await _workspace.ListProjectsWithTagAsync(nameKey);
+            if (version != _listVersion)
+                return; // a late answer of an older request: dropped, also when its key equals the selected one
+            if (result.Value is not { } list)
+            {
+                TaggedProjectsError = result.Error ?? CouldNotListProjects;
+                return;
+            }
+
+            var spelling = _selected is { } row && string.Equals(row.NameKey, nameKey, StringComparison.Ordinal) ? row.Spelling : null;
+            TaggedProjects = list.Rows.Select(r => new TaggedProjectRowViewModel(r, spelling)).ToList();
+            TaggedProjectsHeader = DescribeTaggedProjects(list);
+            TaggedProjectsError = null;
+        }
+        catch (Exception ex)
+        {
+            if (version != _listVersion)
+            {
+                _log?.Error("An older read of the projects with a tag failed after a newer one started; it was dropped.", ex); // no names
+                return;
+            }
+
+            _log?.Error("The projects with a tag could not be listed.", ex); // no tag or project names
+            TaggedProjects = [];
+            TaggedProjectsHeader = null;
+            TaggedProjectsError = CouldNotListProjects;
+        }
+    }
+
+    private void ShowInWorkspace()
+    {
+        if (!CanShowInWorkspace || SelectedTaggedProject is not { } project)
+            return;
+        RevealTarget = project.ProjectNodeId; // read only: nothing is written; the caller resolves the Project's CURRENT place
+        CloseRequested?.Invoke(this, ChangedAny);
+    }
+
+    internal const string CouldNotListProjects = "The projects could not be listed.";
+
+    /// <summary>The list header (§3.1 step 2) from one list result only.</summary>
+    internal static string DescribeTaggedProjects(TaggedProjectsResult result)
+    {
+        var text = Projects(result.EligibleTotal);
+        if (result.TrashedTotal > 0)
+            text += string.Create(CultureInfo.InvariantCulture, $", {result.TrashedTotal} in the Trash keep{(result.TrashedTotal == 1 ? "s" : string.Empty)} it");
+        if (result.Hidden > 0)
+            text += string.Create(CultureInfo.InvariantCulture, $" — and {result.Hidden} more");
+        return text;
+    }
 
     private bool CanStart => _selected is { ChangeableProjects: > 0 } && !IsLocked;
 
@@ -450,15 +570,27 @@ public sealed class ManageTagsViewModel : ObservableObject
     private async Task RefreshAfterCommitAsync(string success)
     {
         Message = success;
+        var listedKey = _selected?.NameKey;
         try
         {
-            ApplyRows(await _workspace.ListTagsInUseAsync());
-        }
-        catch (Exception ex)
-        {
-            _log?.Error("The tag list could not be refreshed after a committed change.", ex); // no tag or project names
-            RefreshFailed = true;
-            Message = success + RefreshFailedNote;
+            try
+            {
+                ApplyRows(await _workspace.ListTagsInUseAsync());
+            }
+            catch (Exception ex)
+            {
+                _log?.Error("The tag list could not be refreshed after a committed change.", ex); // no tag or project names
+                RefreshFailed = true;
+                Message = success + RefreshFailedNote;
+            }
+
+            // Phase 24: re-read the Projects list with a NEW version for the still-selected key (a key that vanished reads as
+            // "0 projects"). Its faults stay in the list area: they never change Message or RefreshFailed.
+            if ((_selected?.NameKey ?? listedKey) is { } key)
+            {
+                StartProjectsLoad(key);
+                await CurrentProjectsLoad;
+            }
         }
         finally
         {
@@ -609,7 +741,9 @@ public sealed class ManageTagsViewModel : ObservableObject
         ConfirmCommand.RaiseCanExecuteChanged();
         CancelChangeCommand.RaiseCanExecuteChanged();
         CloseCommand.RaiseCanExecuteChanged();
+        ShowInWorkspaceCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanConfirm));
+        OnPropertyChanged(nameof(CanShowInWorkspace));
     }
 
     // ---- texts (proposal §3.4) -------------------------------------------------------------------------------------------------
@@ -675,4 +809,34 @@ public sealed class TagRowViewModel(TagInUse tag)
     public string? TrashText => TrashedProjects == 0 ? null : $"+ {TrashedProjects} in the Trash";
 
     public override string ToString() => Spelling;
+}
+
+/// <summary>Phase 24: one row of the Projects with this tag list.</summary>
+public sealed class TaggedProjectRowViewModel(TaggedProject project, string? displaySpelling)
+{
+    public long ProjectNodeId { get; } = project.ProjectNodeId;
+
+    public string Name { get; } = project.Name;
+
+    /// <summary>The folder path; "Workspace" at the top level.</summary>
+    public string PathText { get; } = project.Path.Length == 0 ? "Workspace" : project.Path;
+
+    public TaggedProjectState State { get; } = project.State;
+
+    /// <summary>None for a live Project, "Archived", or "In the Trash".</summary>
+    public string? StateText { get; } = project.State switch
+    {
+        TaggedProjectState.Archived => "Archived",
+        TaggedProjectState.Trashed => "In the Trash",
+        _ => null,
+    };
+
+    /// <summary>The Project's stored spelling when it differs (ordinal) from the tag row's display spelling; otherwise null.</summary>
+    public string? SpellingText { get; } =
+        displaySpelling is not null && string.Equals(project.StoredSpelling, displaySpelling, StringComparison.Ordinal) ? null : project.StoredSpelling;
+
+    /// <summary>A Project in the Trash is listed for the totals but cannot be revealed.</summary>
+    public bool CanReveal => State != TaggedProjectState.Trashed;
+
+    public override string ToString() => Name;
 }

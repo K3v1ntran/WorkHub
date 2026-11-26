@@ -8,7 +8,7 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=vm:ManageTagsViewModel}"
         Title="{Binding Title}"
-        Width="600" Height="560" MinWidth="380" MinHeight="380" ResizeMode="CanResize"
+        Width="600" Height="720" MinWidth="380" MinHeight="520" ResizeMode="CanResize"
         WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
         Background="{StaticResource Brush.Surface}"
         Foreground="{StaticResource Brush.Text}"
@@ -17,7 +17,9 @@
         FocusManager.FocusedElement="{Binding ElementName=FilterBox}">
     <!-- Phase 21: Close is the default and the cancel button (Enter and Esc never write). Enter in the name box only previews.
          Phase 22: in Delete everywhere… Enter on the focused Confirm is swallowed (ConfirmButton_PreviewKeyDown); Space on the focused,
-         enabled Confirm is the deliberate keyboard confirmation. Rename/Merge keyboard behaviour is unchanged. -->
+         enabled Confirm is the deliberate keyboard confirmation. Rename/Merge keyboard behaviour is unchanged.
+         Phase 24: Projects with this tag (read only). Enter / double-click on a row of THAT list only = Show in Workspace
+         (ProjectsList_PreviewKeyDown, ProjectsList_MouseDoubleClick); Enter elsewhere keeps its Phase 21/22 meaning. -->
     <Window.Resources>
         <views:NullToCollapsedConverter x:Key="NullToCollapsed" />
     </Window.Resources>
@@ -38,6 +40,58 @@
                         AutomationProperties.Name="Confirm tag change" AutomationProperties.AutomationId="ManageTagsConfirm" />
             </StackPanel>
         </Grid>
+
+        <!-- Phase 24: below the actions (D3: always visible for the selected tag row). -->
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+            <Grid DockPanel.Dock="Top">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Projects with this tag" />
+                    <TextBlock Style="{StaticResource FieldHint}" TextWrapping="Wrap" Text="{Binding TaggedProjectsHeader}"
+                               AutomationProperties.AutomationId="ManageTagsProjectsHeader"
+                               Visibility="{Binding TaggedProjectsHeader, Converter={StaticResource NullToCollapsed}}" />
+                </StackPanel>
+                <Button Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Bottom" Content="Show in Workspace" Command="{Binding ShowInWorkspaceCommand}"
+                        AutomationProperties.AutomationId="ManageTagsShowInWorkspace" />
+            </Grid>
+            <TextBlock DockPanel.Dock="Top" Margin="0,6,0,0" Style="{StaticResource FieldError}" TextWrapping="Wrap" Text="{Binding TaggedProjectsError}"
+                       AutomationProperties.AutomationId="ManageTagsProjectsError"
+                       Visibility="{Binding TaggedProjectsError, Converter={StaticResource NullToCollapsed}}" />
+            <ListBox x:Name="ProjectsList" Margin="0,6,0,0" Height="150" ItemsSource="{Binding TaggedProjects}" SelectedItem="{Binding SelectedTaggedProject}"
+                     SelectionMode="Single" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     PreviewKeyDown="ProjectsList_PreviewKeyDown" MouseDoubleClick="ProjectsList_MouseDoubleClick"
+                     AutomationProperties.Name="Projects with this tag" AutomationProperties.AutomationId="ManageTagsProjects">
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:TaggedProjectRowViewModel}">
+                        <Grid Margin="2,3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                <TextBlock Style="{StaticResource FieldHint}" Text="{Binding PathText}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Style="{StaticResource FieldHint}" Text="{Binding SpellingText}"
+                                           Visibility="{Binding SpellingText, Converter={StaticResource NullToCollapsed}}" />
+                                <TextBlock Style="{StaticResource FieldHint}" Margin="8,0,0,0" Text="{Binding StateText}"
+                                           Visibility="{Binding StateText, Converter={StaticResource NullToCollapsed}}" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                        <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
+            </ListBox>
+        </DockPanel>
 
         <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
             <StackPanel Orientation="Horizontal">

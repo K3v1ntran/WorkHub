@@ -205,6 +205,17 @@ internal sealed class GatedWorkspaceStore(IWorkspaceStore inner) : IWorkspaceSto
         return Gated("applyTagDelete", () => inner.ApplyTagDeleteAsync(fromKey, token, CancellationToken.None), readFirst: false);
     }
 
+    // ---- Phase 24: "taggedProjects" (a held read takes its snapshot when called and delivers it, or the failure, on release).
+    // Every call's key is recorded in TaggedProjectsCalls, in call order.
+
+    public ConcurrentQueue<string> TaggedProjectsCalls { get; } = new();
+
+    public Task<TaggedProjectsResult> ListProjectsWithTagAsync(string nameKey, int limit, CancellationToken cancellationToken = default)
+    {
+        TaggedProjectsCalls.Enqueue(nameKey);
+        return Gated("taggedProjects", () => inner.ListProjectsWithTagAsync(nameKey, limit, CancellationToken.None));
+    }
+
     // ---- Folder Archive and Trash (schema v9): "prepareFolder" (a held read takes its snapshot when called); "archiveFolder",
     // "trashFolder", "unarchiveFolder", "restoreFolder", "undoFolder" (held writes run on release, or commit first with HoldCommitted).
 
