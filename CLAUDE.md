@@ -5,3 +5,7 @@
 - During development, push only the phase branch. When the user closes the phase, review the commits, merge the branch into `main`, and push the reviewed `main`. Create the next phase branch from that merged commit. A source push does not create a release.
 - Keep pending checks marked pending. Follow the current request for test and release authorization.
 - Develop against the tracked .NET 10 solution. The local .NET 8 legacy variant is outside the development and release scope.
+
+## Current implementation brief
+
+Phase 24: [Projects with this tag](docs/phase-24-tagged-projects.md).
