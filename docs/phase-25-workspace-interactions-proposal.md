@@ -1,7 +1,8 @@
 # WorkHub Phase 25 proposal: Workspace tree interactions
 
-Status: **proposal, awaiting review** (Revision 2 + R2a). Nothing here is implemented. Baseline: `main` = `9ddbafc` (Phase 24 merged).
-Branch: `codex/phase-25-workspace-interactions`. Use the tracked .NET 10 solution; real profiles stay out of scope. D1–D6 are open.
+Status: **approved** (Revision 2 + R2a; D1–D6 approved, §5) and **implemented on this branch; every verification is pending**
+(§6). Baseline: `main` = `9ddbafc` (Phase 24 merged); proposal head `6538a40`.
+Branch: `codex/phase-25-workspace-interactions`. Use the tracked .NET 10 solution; real profiles stay out of scope.
 
 ### Revision 1 → Revision 2
 
@@ -280,7 +281,11 @@ names `Row`, `Expander` and `ScrollBar` (not "any ancestor `TreeViewItem`"); `IW
 | GT25-10 | select F; open the Workspace Trash; left-click another row G | the Trash closes; G is selected |
 | GT25-11 | select F; open the Workspace Trash; left-click F (already selected) | the Trash closes; F is shown |
 
-## 5. Decisions awaiting approval (D1–D6 open)
+## 5. Decisions (D1–D6 approved)
+
+Approved: **D1** Phase 25 = R1 + R2 (R3 auto-hiding messages and R4 per-button toolbars belong to later phases); **D2(a)** a Project
+row is not a drop target; **D3(a)** no confirmation, a result banner; **D4(a)** no Undo for a drop; **D5(a)** hover-expand after
+~0.8 s, keyed by drag session and Folder Id; **D6(b)** Esc unchanged (BG-E1 does not apply). The options as they were proposed:
 
 - **D1 scope**: Phase 25 = R1 + R2; R3 → Phase 26; R4 → Phase 27. (Alternative: R2 alone first, R1 in 26.)
 - **D2 dropping on a Project row**: (a) not a target (recommended); (b) treated as its parent Folder.
@@ -304,6 +309,31 @@ Questions for later phases (**not** conditions for approving Phase 25):
   existing `show*Toolbar` switches stay and win when off); saves through `SettingsEdit` with per-key members so Repository and
   other windows' changes are kept (regression: concurrent window B save, unreadable file, Repository untouched).
 
-## 6. Not changed by this proposal
+## 6. Implementation status (pending verification)
+
+Implemented on `codex/phase-25-workspace-interactions` after `6538a40`. Tests and contracts are written but **not run**; no SQL probe
+and no GUI run. Pending: the Phase 25 test groups (`WorkspaceDragDropTests` DD1–DD9 with DD8a–f and DH1–DH5,
+`WorkspaceBackgroundSelectionTests` BG1–BG7, `Phase25ContractTests` TG25-C1–C4) in Debug and Release, the full suites, and GUI
+GT25-1–11 (real mouse drag, drop, hover-expand, background, expander, scroll bar and Trash clicks). Phase 24 evidence (§0) and the
+separately tracked Phase 15–23, D10 and P3 items are unchanged.
+
+Implementation notes (for review):
+
+- **Files.** `WorkspaceAreaViewModel.DragDrop.cs` (session, pre-check, hover, `MoveByDropAsync`), `WorkspaceTreeHitTest.cs` (the §2.3
+  classifier as a pure function over the element chain the window builds, and the injectable hover clock),
+  `WorkspaceAreaViewModel.cs` (the class is `partial`; `ApplyMovedAsync` returns whether the tree was updated — Move to… ignores the
+  value and behaves as before; search activation cancels a pending hover), `MainWindow.xaml` / `.xaml.cs` (the root strip, drag
+  handlers and the §2.3 hit test replacing "any ancestor `TreeViewItem`").
+- **Refusal then reconcile.** The refusal text is set first; a reconcile that then finds the node archived or trashed may replace it
+  with its own notice, exactly as after a refused Move to… (DD7 asserts the reconciliation, not the final text). A reconcile that
+  fails keeps the refusal (DD8d).
+- **Expander right-click.** Under §2.3 an expander is not a row area, so a right-click on it no longer selects the row (the menu
+  acts on the current selection). GUI to confirm.
+- **Root strip.** The "Move to top level" strip is docked above the tree while a drag runs, so the rows shift down by its height
+  during the drag. GUI GT25-1 to confirm the feel.
+- **BG7.** Automated at the classifier level and by contract (the window clears only on Background and selects only a node row);
+  real clicks are GT25-8 / GT25-9.
+
+## 7. Not changed by this proposal
 
 Schema, migrations, packages, version, Phase 24 behaviour, the .NET 8 legacy variant. No release.

@@ -82,6 +82,13 @@ creating, renaming or moving a folder or project never creates, moves, renames o
   **tags** (schema v10, below).
 - **Move to…** moves a folder or project to another folder or the top level; a folder cannot move into itself or one of
   its subfolders, and a name clash at the destination is rejected without changing anything.
+- **Drag and drop** (Phase 25) does the same as Move to…, without the dialog: drag a project or folder row onto a folder row to move
+  it into that folder, or onto the empty space below the rows or the "Move to top level" strip shown at the top during the drag.
+  A project row is not a target. The same rules apply (checked again when you drop; another window's changes are respected); the
+  result is shown in the banner; there is no confirmation and no Undo. Resting on a collapsed folder for about 0.8 seconds opens it.
+- **Clicking empty space** in the tree clears the selection. Right-clicking empty space clears it too, so **New Folder…** and
+  **New Project…** in that menu create at the top level; right-clicking a folder still creates inside it. The space to the right
+  of a short name belongs to that row. Esc is unchanged.
 - The tree loads when the tab is first opened, and a folder's contents load when it is first expanded.
 
 **Layout.**

@@ -24,7 +24,7 @@ namespace WorkHub.Presentation.ViewModels;
 /// </list>
 /// Workspace is metadata only: nothing here creates, moves or renames files or folders on disk.
 /// </summary>
-public sealed class WorkspaceAreaViewModel : ObservableObject
+public sealed partial class WorkspaceAreaViewModel : ObservableObject
 {
     private readonly WorkspaceService _workspace;
     private readonly IDialogService _dialogs;
@@ -178,6 +178,12 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         {
             _resolveRunner = new LatestOnlyRunner<SearchItemRef, RevealResolution>((item, token) => search.ResolveAsync(item, token));
             Search = new WorkspaceSearchViewModel(search, this, log, searchDelayMs);
+            // Phase 25 (§2.1 step 7): search replacing the tree cancels a pending hover-expand.
+            Search.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(WorkspaceSearchViewModel.IsActive) && Search.IsActive)
+                    CancelDragHover();
+            };
         }
 
         Roots.CollectionChanged += (_, _) => _rootsStamp++;
@@ -3305,7 +3311,11 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             node.IsSelected = true; // keep the selection across the re-sort
     }
 
-    private async Task ApplyMovedAsync(WorkspaceNodeViewModel node, long? targetId)
+    /// <summary>
+    /// Applies a committed move to the tree. Phase 25: returns false when the tree could not be updated (the destination's children
+    /// could not be loaded; the node then leaves its stale place); true otherwise, also when the destination is simply not loaded.
+    /// </summary>
+    private async Task<bool> ApplyMovedAsync(WorkspaceNodeViewModel node, long? targetId)
     {
         var oldParent = node.Parent;
         if (oldParent?.ChildrenLoad is { } pendingSource)
@@ -3325,7 +3335,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             {
                 ForgetSubtree(node);
                 SelectedNode = null;
-                return;
+                return false;
             }
 
             MergeInto(target.Children, node);
@@ -3336,7 +3346,7 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
             // Destination folder not loaded anywhere in the tree: the node now lives below a collapsed, unloaded folder.
             ForgetSubtree(node);
             SelectedNode = null;
-            return;
+            return true;
         }
 
         if (ReferenceEquals(SelectedNode, node))
@@ -3348,6 +3358,8 @@ public sealed class WorkspaceAreaViewModel : ObservableObject
         {
             SelectedNode = node;
         }
+
+        return true;
     }
 
     /// <param name="keep">Nodes (with their subtrees) that must stay registered because they are placed elsewhere.</param>

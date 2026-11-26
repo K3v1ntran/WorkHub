@@ -311,36 +311,199 @@ public partial class MainWindow : Window
             Main?.Owner.OpenItemCommand.Execute(null);
     }
 
+    // ---- Phase 25 (proposal Revision 2 + R2a): the tree's hit-test contract (§2.3), background click (R2), drag and drop (R1) ----
+
+    /// <summary>The drag data format: the dragged node's Id only (never a container; the tree recycles them).</summary>
+    private const string WorkspaceNodeDragFormat = "WorkHub.WorkspaceNodeId";
+
+    private (Point Start, long NodeId)? _treeDragCandidate;
+    private int? _treeDragSession;
+
+    /// <summary>§2.3: classifies a pointer position from the event's original source (first ScrollBar / Expander / Row / the tree wins).</summary>
+    private TreeHit ClassifyTreePoint(object? originalSource) => WorkspaceTreeHitTest.Classify(TreeHitChain(originalSource as DependencyObject));
+
+    private IEnumerable<TreeHitElement> TreeHitChain(DependencyObject? d)
+    {
+        for (; d is not null; d = d is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                 ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+        {
+            if (ReferenceEquals(d, WorkspaceTree))
+            {
+                yield return new TreeHitElement(TreeHitElementKind.Tree);
+                yield break;
+            }
+
+            yield return d switch
+            {
+                System.Windows.Controls.Primitives.ScrollBar => new TreeHitElement(TreeHitElementKind.ScrollBar),
+                System.Windows.Controls.Primitives.ToggleButton { Name: "Expander", TemplatedParent: TreeViewItem item } =>
+                    new TreeHitElement(TreeHitElementKind.Expander, item.DataContext as WorkspaceNodeViewModel),
+                Border { Name: "Row", TemplatedParent: TreeViewItem item } => new TreeHitElement(TreeHitElementKind.Row, item.DataContext as WorkspaceNodeViewModel),
+                TreeViewItem item => new TreeHitElement(TreeHitElementKind.Item, item.DataContext as WorkspaceNodeViewModel),
+                _ => new TreeHitElement(TreeHitElementKind.Other),
+            };
+        }
+    }
+
+    /// <summary>The nearest <see cref="TreeViewItem"/> of <paramref name="node"/> above the pointer (nested items included).</summary>
+    private static TreeViewItem? RowItem(DependencyObject? d, WorkspaceNodeViewModel node)
+    {
+        for (; d is not null; d = d is System.Windows.Media.Visual or System.Windows.Media.Media3D.Visual3D
+                 ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+        {
+            if (d is TreeViewItem item && ReferenceEquals(item.DataContext, node))
+                return item;
+        }
+
+        return null;
+    }
+
     private void WorkspaceTree_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // WPF trees do not select on right-click; select the clicked node so the context menu acts on it.
-        for (var d = e.OriginalSource as DependencyObject; d is not null;
-             d = d is System.Windows.Media.Visual ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+        if (Main?.Workspace is not { } workspace)
+            return;
+        var hit = ClassifyTreePoint(e.OriginalSource);
+        if (hit.IsNodeRow)
         {
-            if (d is TreeViewItem { DataContext: WorkspaceNodeViewModel node } item)
-            {
-                node.IsSelected = true;
-                item.Focus();
-                return;
-            }
+            // WPF trees do not select on right-click; select the clicked row so the context menu acts on it (a Folder row stays the
+            // target of New Folder… / New Project…).
+            hit.Node!.IsSelected = true;
+            RowItem(e.OriginalSource as DependencyObject, hit.Node)?.Focus();
+        }
+        else if (hit.Kind == TreeHitKind.Background)
+        {
+            workspace.ClearSelection(); // §2.2 step 2: the menu then creates at the top level
         }
     }
 
     private void WorkspaceTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // Clicking a node while the Workspace Trash is open shows that node again — also the node that is already selected,
-        // which raises no selection change (the view model closes the panel on every other selection).
-        if (Main?.Workspace is not { IsTrashOpen: true } workspace)
+        _treeDragCandidate = null;
+        if (Main?.Workspace is not { } workspace)
             return;
-        for (var d = e.OriginalSource as DependencyObject; d is not null;
-             d = d is System.Windows.Media.Visual ? System.Windows.Media.VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d))
+        var hit = ClassifyTreePoint(e.OriginalSource);
+        switch (hit.Kind)
         {
-            if (d is TreeViewItem { DataContext: WorkspaceNodeViewModel { IsPlaceholder: false } })
-            {
-                workspace.CloseTrashCommand.Execute(null);
-                return;
-            }
+            case TreeHitKind.Background:
+                workspace.ClearSelection(); // §2.2 step 1 (with the Workspace Trash open, the Trash stays open)
+                break;
+            case TreeHitKind.Row when hit.IsNodeRow:
+                // Clicking a row while the Workspace Trash is open shows that node again — also the row that is already selected,
+                // which raises no selection change (the view model closes the panel on every other selection).
+                if (workspace.IsTrashOpen)
+                    workspace.CloseTrashCommand.Execute(null);
+                if (workspace.CanStartDrag(hit.Node))
+                    _treeDragCandidate = (e.GetPosition(WorkspaceTree), hit.Node!.Id);
+                break;
         }
+    }
+
+    private void WorkspaceTree_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => _treeDragCandidate = null;
+
+    /// <summary>§2.1 step 1: a left-button drag of a row area starts after the system drag threshold.</summary>
+    private void WorkspaceTree_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_treeDragCandidate is not { } candidate || e.LeftButton != MouseButtonState.Pressed || Main?.Workspace is not { } workspace)
+            return;
+        var position = e.GetPosition(WorkspaceTree);
+        if (Math.Abs(position.X - candidate.Start.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(position.Y - candidate.Start.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+        _treeDragCandidate = null;
+        if (workspace.BeginDragSession(candidate.NodeId) is not { } session)
+            return;
+        _treeDragSession = session;
+        try
+        {
+            DragDrop.DoDragDrop(WorkspaceTree, new DataObject(WorkspaceNodeDragFormat, candidate.NodeId), DragDropEffects.Move);
+        }
+        finally
+        {
+            workspace.EndDragSession(session); // drop done, cancelled (Esc) or left the window
+            _treeDragSession = null;
+        }
+    }
+
+    /// <summary>The running drag of THIS window and its source Id; null for anything else (another window's drag, files, text).</summary>
+    private (int Session, long SourceId)? CurrentTreeDrag(DragEventArgs e) =>
+        _treeDragSession is { } session && e.Data.GetDataPresent(WorkspaceNodeDragFormat) && e.Data.GetData(WorkspaceNodeDragFormat) is long id
+            ? (session, id)
+            : null;
+
+    /// <summary>§2.1 step 2: a Folder row area → that Folder; the background → the top level; anything else (Project row, expander, scroll bar) → none.</summary>
+    private (bool IsTarget, long? FolderId, long? HoverFolderId) TreeDropTarget(DragEventArgs e)
+    {
+        var hit = ClassifyTreePoint(e.OriginalSource);
+        return hit switch
+        {
+            { Kind: TreeHitKind.Row, Node: { IsPlaceholder: false, IsFolder: true } folder } => (true, folder.Id, folder.Id),
+            { Kind: TreeHitKind.Background } => (true, null, null),
+            _ => (false, null, null),
+        };
+    }
+
+    private void WorkspaceTree_DragOver(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.Effects = DragDropEffects.None;
+        if (CurrentTreeDrag(e) is not { } drag || Main?.Workspace is not { } workspace)
+            return;
+        var target = TreeDropTarget(e);
+        if (target.HoverFolderId is { } hover)
+            workspace.DragHoverEnter(drag.Session, hover);
+        else
+            workspace.DragHoverLeave(drag.Session);
+        if (target.IsTarget && workspace.CanDrop(drag.Session, drag.SourceId, target.FolderId))
+            e.Effects = DragDropEffects.Move;
+    }
+
+    private void WorkspaceTree_DragLeave(object sender, DragEventArgs e)
+    {
+        // DragLeave also bubbles from elements inside the tree; only leaving the tree itself cancels the pending hover.
+        var position = e.GetPosition(WorkspaceTree);
+        if (position.X >= 0 && position.Y >= 0 && position.X < WorkspaceTree.ActualWidth && position.Y < WorkspaceTree.ActualHeight)
+            return;
+        if (CurrentTreeDrag(e) is { } drag)
+            Main?.Workspace.DragHoverLeave(drag.Session);
+    }
+
+    private void WorkspaceTree_Drop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.Effects = DragDropEffects.None;
+        if (CurrentTreeDrag(e) is not { } drag || Main?.Workspace is not { } workspace)
+            return;
+        var target = TreeDropTarget(e);
+        if (!target.IsTarget)
+        {
+            workspace.DragHoverLeave(drag.Session);
+            return;
+        }
+
+        // The view model re-checks everything synchronously and takes the slot before its first await; the store decides.
+        _ = workspace.MoveByDropAsync(drag.Session, drag.SourceId, target.FolderId);
+        e.Effects = DragDropEffects.Move;
+    }
+
+    private void RootDropStrip_DragOver(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.Effects = DragDropEffects.None;
+        if (CurrentTreeDrag(e) is not { } drag || Main?.Workspace is not { } workspace)
+            return;
+        workspace.DragHoverLeave(drag.Session);
+        if (workspace.CanDrop(drag.Session, drag.SourceId, null))
+            e.Effects = DragDropEffects.Move;
+    }
+
+    private void RootDropStrip_Drop(object sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        e.Effects = DragDropEffects.None;
+        if (CurrentTreeDrag(e) is not { } drag || Main?.Workspace is not { } workspace)
+            return;
+        _ = workspace.MoveByDropAsync(drag.Session, drag.SourceId, null);
+        e.Effects = DragDropEffects.Move;
     }
 
     private ProjectContentViewModel? ProjectContent => Main?.Workspace.SelectedContent;

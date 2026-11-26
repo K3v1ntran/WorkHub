@@ -1059,12 +1059,26 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
 
+                            <!-- Phase 25: drag and drop (R1) and the background click (R2). The strip is the root drop zone shown during a
+                                 drag; the tree's own background below the rows is the other part of it (§2.1 step 2). -->
+                            <DockPanel>
+                            <Border x:Name="RootDropStrip" DockPanel.Dock="Top" Margin="8,0,8,4" Padding="8,4" AllowDrop="True"
+                                    Background="{StaticResource Brush.Hover}" BorderBrush="{StaticResource Brush.Accent}" BorderThickness="1"
+                                    DragOver="RootDropStrip_DragOver" Drop="RootDropStrip_Drop"
+                                    AutomationProperties.Name="Move to top level" AutomationProperties.AutomationId="WorkspaceRootDropStrip"
+                                    Visibility="{Binding IsDragActive, Converter={StaticResource BoolToVisibility}}">
+                                <TextBlock Text="Move to top level" Foreground="{StaticResource Brush.MutedText}" />
+                            </Border>
                             <TreeView x:Name="WorkspaceTree" BorderThickness="0" Background="Transparent" Padding="0"
                                       ItemsSource="{Binding Roots}" AutomationProperties.Name="Workspace tree"
                                       VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
                                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                       PreviewMouseRightButtonDown="WorkspaceTree_PreviewMouseRightButtonDown"
                                       PreviewMouseLeftButtonDown="WorkspaceTree_PreviewMouseLeftButtonDown"
+                                      PreviewMouseLeftButtonUp="WorkspaceTree_PreviewMouseLeftButtonUp"
+                                      PreviewMouseMove="WorkspaceTree_PreviewMouseMove"
+                                      AllowDrop="True" DragEnter="WorkspaceTree_DragOver" DragOver="WorkspaceTree_DragOver"
+                                      DragLeave="WorkspaceTree_DragLeave" Drop="WorkspaceTree_Drop"
                                       TreeViewItem.Selected="WorkspaceTree_ItemSelected"
                                       Visibility="{Binding Search.IsActive, Converter={StaticResource InverseBoolToVisibility}, FallbackValue=Visible}">
                                 <TreeView.InputBindings>
@@ -1095,6 +1109,7 @@
                                     <StaticResource ResourceKey="WorkspaceSelectionMenu" />
                                 </TreeView.ContextMenu>
                             </TreeView>
+                            </DockPanel>
 
                             <TextBlock Style="{StaticResource EmptyState}" Text="Workspace is empty. Create a folder or project."
                                        Visibility="{Binding IsEmpty, Converter={StaticResource BoolToVisibility}}" />
