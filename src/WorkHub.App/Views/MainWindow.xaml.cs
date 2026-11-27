@@ -22,6 +22,7 @@ public partial class MainWindow : Window
         // A placement applied before Show (e.g. maximized) raises no StateChanged; Loaded records it.
         Loaded += (_, _) => RememberState();
         StateChanged += (_, _) => RememberState();
+        PrimaryTabs.SelectionChanged += PrimaryTabs_SelectionChanged;
     }
 
     /// <summary>Phase 16A: the process's one window-state saver (set by the composition root).</summary>
@@ -68,6 +69,34 @@ public partial class MainWindow : Window
 
     private void ContentBanner_MouseChanged(object sender, MouseEventArgs e) =>
         ReportContentBanner(e.RoutedEvent == MouseEnterEvent);
+
+    /// <summary>
+    /// Phase 26 (GT26-7): when the Workspace tab is shown again, WPF may put keyboard focus on the first focusable element of the tab —
+    /// the banner's Dismiss button — and the D14 focus hold would then keep an auto-dismiss message although the user never focused it.
+    /// Only at that moment, and only when focus did land inside a banner, it is moved out. Selections of the tab's inner lists bubble
+    /// SelectionChanged too, so only the tab control's own change counts.
+    /// </summary>
+    private void PrimaryTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.OriginalSource, PrimaryTabs) || !ReferenceEquals(PrimaryTabs.SelectedItem, WorkspaceTab))
+            return;
+        // After WPF has placed focus for the newly shown tab content (layout, Loaded and input processing are done by then).
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(KeepReturnFocusOutOfBanners));
+    }
+
+    /// <summary>
+    /// The navigation point outside the banners: the Workspace tree (its selection is kept; focusing the tree does not select), or the
+    /// Workspace tab header while search results replace the tree. Dismiss stays in the Tab order; a later Tab to it is untouched.
+    /// </summary>
+    private void KeepReturnFocusOutOfBanners()
+    {
+        if (!ReferenceEquals(PrimaryTabs.SelectedItem, WorkspaceTab)
+            || (!WorkspaceBannerBorder.IsKeyboardFocusWithin && !ContentBannerBorder.IsKeyboardFocusWithin))
+            return;
+        if (WorkspaceTree.IsVisible && WorkspaceTree.Focus())
+            return;
+        WorkspaceTab.Focus();
+    }
 
     /// <summary>Reported to the content view model the banner is bound to now (a newly selected Project gets the current state).</summary>
     private void ReportContentBanner(bool pointerOver) =>

@@ -318,3 +318,8 @@ Notes and deviations (for review):
   result is the Archived panel's own notice. AD11 covers the Bulk Archive and Bulk Undo summaries.
 - **Sampling.** AD13 samples a typed drop refusal and the not-empty folder notice; AD19 covers the content Trash notice and a content
   Undo refusal. The Destination notice and the Owner / Repository banners are covered by contract (TG26-C2, TG26-C4), not by a view-model case.
+- **Focus on returning to the Workspace tab (GUI GT26-7 at `acd48b0`).** WPF put keyboard focus on the banner's Dismiss button when the
+  tab was shown again, so the D14 focus hold kept the message (> 15 s; it hid ~4.9 s after focus left). Fix in `MainWindow.xaml.cs`:
+  only when the tab control itself switches to the Workspace tab, and only if focus then sits inside the Workspace or content banner,
+  focus moves to the Workspace tree (selection kept), or to the Workspace tab header while search replaces the tree. D14 and the Tab
+  order (Dismiss included) are unchanged; a later Tab to Dismiss is not touched. GUI re-check: GT26-7, GT26-6b with the Tab key.
