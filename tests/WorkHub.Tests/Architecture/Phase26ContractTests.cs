@@ -74,8 +74,10 @@ public sealed class Phase26ContractTests
         // Content: only "Restored to …" after a typed Restored outcome.
         Assert.Equal(1, CountOf(Code(content), "BannerKind.AutoDismiss"));
         var undo = Between(content, "private async Task UndoCoreAsync()", "private ");
-        Assert.True(undo.IndexOf("if (result.Outcome != RestoreOutcome.Restored)", StringComparison.Ordinal)
-                    < undo.IndexOf("ShowBanner($\"Restored to {restored.ContainerPath}.\", BannerKind.AutoDismiss);", StringComparison.Ordinal));
+        var successCheck = undo.IndexOf("if (result.Outcome != RestoreOutcome.Restored)", StringComparison.Ordinal);
+        var autoDismiss = undo.IndexOf("ShowBanner($\"Restored to {restored.ContainerPath}.\", BannerKind.AutoDismiss);", StringComparison.Ordinal);
+        Assert.True(successCheck >= 0, "the content Undo's typed success check is missing");
+        Assert.True(autoDismiss > successCheck, "the content AutoDismiss call is missing or comes before the success check");
 
         // Owner and Repository banners are unchanged (D15(a)).
         foreach (var file in new[] { "OwnerAreaViewModel.cs", "RepositoryAreaViewModel.cs" })

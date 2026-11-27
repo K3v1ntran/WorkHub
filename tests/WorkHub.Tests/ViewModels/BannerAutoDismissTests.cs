@@ -573,30 +573,68 @@ public sealed class BannerAutoDismissTests : IDisposable
         await Settle(area);
     });
 
-    [Fact]
-    public Task AD15e_PanelRestoreAndUnarchive_KeepTheirNotice_TheBannerScheduleIsUntouched() => InContext(async () =>
+    /// <summary>
+    /// A panel Restore / Unarchive while a Workspace AutoDismiss result is counting: the panel keeps its own notice, and the banner,
+    /// its text and its ORIGINAL timer are untouched (not cancelled, no new timer); that timer still hides the banner.
+    /// </summary>
+    [Theory]
+    [InlineData("RestoreProjectFromTrash", "Restored “T” to Workspace (top level).")]
+    [InlineData("RestoreFolderFromTrash", "Restored folder “T” to Workspace (top level).")]
+    [InlineData("UnarchiveFolderFromArchived", "Unarchived folder “T” to Workspace (top level).")]
+    public Task AD15e_PanelRestoreOrUnarchive_KeepsItsNotice_TheRunningBannerTimerIsUntouched(string variant, string panelNotice) => InContext(async () =>
     {
-        var p = await Project("P");
         var f = await Folder("F");
-        await _other.TrashProjectAsync(p);
-        await OtherMarks(f, FolderLifecycleKind.Archive);
+        var p = await Project("P");
+        switch (variant)                                                            // window B prepares the panel entry "T"
+        {
+            case "RestoreProjectFromTrash":
+                await _other.TrashProjectAsync(await Project("T"));
+                break;
+            case "RestoreFolderFromTrash":
+                await OtherMarks(await Folder("T"), FolderLifecycleKind.Trash);
+                break;
+            default:
+                await OtherMarks(await Folder("T"), FolderLifecycleKind.Archive);
+                break;
+        }
+
         var area = await Area();
+        await Drop(area, p, f);                                                     // a valid AutoDismiss banner first
+        Assert.Equal("Moved “P” to “F”.", area.BannerMessage);
+        var original = Assert.Single(_clock.Scheduled);
+        Assert.Equal(BannerAutoDismiss.Delay, original.Delay);
+        Assert.False(original.Disposed);
+        Assert.True(area.BannerAutoDismiss.IsArmed);
 
-        await area.OpenTrashCommand.ExecuteAsync();
-        await area.Trash.CurrentLoad;
-        area.Trash.SelectedEntry = area.Trash.Entries.Single();
-        await area.Trash.RestoreCommand.ExecuteAsync();
-        Assert.Equal("Restored “P” to Workspace (top level).", area.Trash.Notice);  // the panel's notice, as today
-        Assert.NotEqual(area.Trash.Notice, area.BannerMessage);
-        AssertNoTimer(area, 0);
+        string? Notice()
+        {
+            return variant == "UnarchiveFolderFromArchived" ? area.Archived.Notice : area.Trash.Notice;
+        }
 
-        await area.OpenArchivedCommand.ExecuteAsync();
-        await area.Archived.CurrentLoad;
-        area.Archived.SelectedEntry = area.Archived.Entries.Single(e => e.NodeId == f);
-        await area.Archived.UnarchiveCommand.ExecuteAsync();
-        Assert.Equal("Unarchived folder “F” to Workspace (top level).", area.Archived.Notice);
-        Assert.NotEqual(area.Archived.Notice, area.BannerMessage);
-        AssertNoTimer(area, 0);
+        if (variant == "UnarchiveFolderFromArchived")
+        {
+            await area.OpenArchivedCommand.ExecuteAsync();
+            await area.Archived.CurrentLoad;
+            area.Archived.SelectedEntry = area.Archived.Entries.Single(e => e.Name == "T");
+            await area.Archived.UnarchiveCommand.ExecuteAsync();
+        }
+        else
+        {
+            await area.OpenTrashCommand.ExecuteAsync();
+            await area.Trash.CurrentLoad;
+            area.Trash.SelectedEntry = area.Trash.Entries.Single(e => e.Name == "T");
+            await area.Trash.RestoreCommand.ExecuteAsync();
+        }
+
+        Assert.Equal(panelNotice, Notice());                                       // the panel's notice, as today
+        Assert.Equal("Moved “P” to “F”.", area.BannerMessage);                     // the banner text is kept
+        Assert.False(original.Disposed);                                            // the original timer was not cancelled …
+        Assert.Single(_clock.Scheduled);                                            // … and no new timer was scheduled
+        Assert.True(area.BannerAutoDismiss.IsArmed);
+
+        _clock.Fire(0);                                                             // the original timer's own callback
+        Assert.Null(area.BannerMessage);
+        Assert.Equal(panelNotice, Notice());                                       // the panel notice stays
         await Settle(area);
     });
 
