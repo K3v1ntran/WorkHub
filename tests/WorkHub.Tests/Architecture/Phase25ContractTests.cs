@@ -147,12 +147,15 @@ public sealed class Phase25ContractTests
 
         var source = DragDropSource();
         Assert.Contains("private (int Session, long FolderId)? _hover;", source, StringComparison.Ordinal);
-        Assert.Contains("HoverClock.Schedule(HoverExpandDelay, () => OnDragHoverElapsed(hoverSession, folderId));", source, StringComparison.Ordinal);
+        Assert.Contains("HoverClock.Schedule(HoverExpandDelay, () => OnDragHoverElapsed(hoverSession, folderId, turn));", source, StringComparison.Ordinal);
         var elapsed = Between(source, "private void OnDragHoverElapsed(", "// ---- R1: the drop");
         Assert.Contains("session != _dragSession", elapsed, StringComparison.Ordinal);
         Assert.Contains("current.FolderId != folderId", elapsed, StringComparison.Ordinal);
+        Assert.Contains("turn != _hoverTurn", elapsed, StringComparison.Ordinal);                         // a late callback of an earlier hover
         Assert.Contains("_nodes.TryGetValue(folderId, out var folder)", elapsed, StringComparison.Ordinal);
-        Assert.Contains("_hoverProbe?.Invoke() != folderId", elapsed, StringComparison.Ordinal);          // the row under the pointer NOW
+        Assert.Contains("var probe = _hoverProbe;", elapsed, StringComparison.Ordinal);
+        Assert.Contains("CancelDragHover();", elapsed, StringComparison.Ordinal);                         // the expired hover is cleared
+        Assert.Contains("probe?.Invoke() != folderId", elapsed, StringComparison.Ordinal);                // the row under the pointer NOW
         Assert.Contains("!CanDrop(session, _dragSourceId, folderId)", elapsed, StringComparison.Ordinal);
         Assert.Equal(TimeSpan.FromMilliseconds(800), WorkHub.Presentation.ViewModels.WorkspaceAreaViewModel.HoverExpandDelay);
     }

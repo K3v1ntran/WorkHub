@@ -52,6 +52,7 @@ public sealed partial class WorkspaceAreaViewModel
     private (int Session, long FolderId)? _hover;
     private Func<long?>? _hoverProbe;
     private IDisposable? _hoverTimer;
+    private long _hoverTurn; // increases with every scheduled hover: a late callback of an earlier turn never touches a newer one
 
     /// <summary>Tests: the hover-expand clock (production: a delay posted back to the UI context).</summary>
     internal IDragHoverClock HoverClock { get; set; } = new TaskDelayHoverClock();
@@ -157,7 +158,8 @@ public sealed partial class WorkspaceAreaViewModel
         var hoverSession = session.Value;
         _hover = (hoverSession, folderId);
         _hoverProbe = folderUnderPointer;
-        _hoverTimer = HoverClock.Schedule(HoverExpandDelay, () => OnDragHoverElapsed(hoverSession, folderId));
+        var turn = ++_hoverTurn;
+        _hoverTimer = HoverClock.Schedule(HoverExpandDelay, () => OnDragHoverElapsed(hoverSession, folderId, turn));
     }
 
     /// <summary>The pointer left the Folder row (to another element that is not a Folder target, or out of the tree).</summary>
@@ -181,12 +183,14 @@ public sealed partial class WorkspaceAreaViewModel
     /// registered as a live collapsed Folder; and <see cref="CanDrop"/> for the current source and this Folder (a reconcile that moved
     /// the Folder below the source makes it an invalid target).
     /// </summary>
-    private void OnDragHoverElapsed(int session, long folderId)
+    private void OnDragHoverElapsed(int session, long folderId, long turn)
     {
-        if (session != _dragSession || _hover is not { } current || current.Session != session || current.FolderId != folderId)
-            return; // a late timer of another session or another Folder: never expands anything
-        _hoverTimer = null;
-        if (_hoverProbe?.Invoke() != folderId)
+        if (session != _dragSession || _hover is not { } current || current.Session != session || current.FolderId != folderId
+            || turn != _hoverTurn)
+            return; // a late timer of another session, Folder or earlier hover turn: never expands anything and leaves the current hover alone
+        var probe = _hoverProbe;
+        CancelDragHover(); // this hover has expired: however it ends below, the next valid DragOver on this Folder schedules a new timer
+        if (probe?.Invoke() != folderId)
             return; // the pointer is no longer over this Folder's row area
         if (!_nodes.TryGetValue(folderId, out var folder) || !folder.IsFolder || folder.IsPlaceholder || folder.IsExpanded
             || !CanWrite() || IsTreeReplacedBySearch || !CanDrop(session, _dragSourceId, folderId))

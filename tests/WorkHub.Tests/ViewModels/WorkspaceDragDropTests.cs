@@ -615,8 +615,10 @@ public sealed class WorkspaceDragDropTests : IDisposable
 
     // ---- Review fix 2: hover expiry re-checks the row actually under the pointer and CanDrop -------------------------------------------
 
-    [Fact]
-    public async Task DH6_TheRowUnderThePointerChangedWithoutANewDragOver_TheFolderStaysCollapsed()
+    [Theory]
+    [InlineData(true)]                                                      // the pointer is over F2's row now (layout change / recycled container)
+    [InlineData(false)]                                                     // the pointer is over no Folder row at all
+    public async Task DH6_TheRowUnderThePointerChangedWithoutANewDragOver_TheFolderStaysCollapsed_AndAReturnSchedulesANewTimer(bool overAnotherFolder)
     {
         await Folder("F1");
         await Folder("F2");
@@ -626,17 +628,28 @@ public sealed class WorkspaceDragDropTests : IDisposable
         var s = Session(area, p);
         long? underPointer = f1.Id;
         area.DragHoverEnter(s, f1.Id, () => underPointer);
+        Assert.Single(_clock.Scheduled);
 
-        underPointer = f2.Id;                                               // layout change / recycled container: F2's row is under the pointer now, no DragOver
-        _clock.Fire(0);
+        underPointer = overAnotherFolder ? f2.Id : null;                    // the pointer moved; no DragOver reached the window
+        _clock.Fire(0);                                                     // the first timer expires
         Assert.False(f1.IsExpanded);
         Assert.False(f2.IsExpanded);
 
-        underPointer = null;                                                // … or no Folder row at all
-        area.DragHoverLeave(s);
+        underPointer = f1.Id;                                               // back over F1, in the same drag session
         area.DragHoverEnter(s, f1.Id, () => underPointer);
-        _clock.Fire(1);
+        Assert.Equal(2, _clock.Scheduled.Count);                            // the expired hover was cleared: a new timer is scheduled
+        Assert.Equal(WorkspaceAreaViewModel.HoverExpandDelay, _clock.Scheduled[1].Delay);
+        Assert.False(f1.IsExpanded);                                        // nothing opens before the new timer expires
+
+        _clock.Fire(0);                                                     // a late fire of the first timer: ignored, the new hover stays pending
         Assert.False(f1.IsExpanded);
+        area.DragHoverEnter(s, f1.Id, () => underPointer);
+        Assert.Equal(2, _clock.Scheduled.Count);                            // the same pair still keeps the new pending timer
+
+        _clock.Fire(1);                                                     // the new timer expires with F1 under the pointer
+        Assert.True(f1.IsExpanded);
+        Assert.False(f2.IsExpanded);
+        await area.EnsureChildrenLoadedAsync(f1);
     }
 
     [Fact]
