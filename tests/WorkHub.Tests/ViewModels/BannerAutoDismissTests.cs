@@ -376,6 +376,11 @@ public sealed class BannerAutoDismissTests : IDisposable
             await Project(name, f);
         var area = await Area();
         area.SelectedNode = Node(area.Roots, "F");
+        _dialogs.OnBulkArchive = vm =>                                              // Active projects are not pre-ticked (as in
+        {                                                                           // BulkArchiveViewModelTests.World): tick all, confirm
+            vm.SelectAllCommand.Execute(null);
+            return true;
+        };
 
         await area.ArchiveProjectsInFolderCommand.ExecuteAsync();
         Assert.True(area.IsBulkDetailsAvailable);
