@@ -78,7 +78,8 @@ public sealed class Phase25ContractTests
             StringLiterals(source).Where(l => l.Contains("Nothing was changed", StringComparison.Ordinal)));
         Assert.Contains("internal static string CouldNotMoveText(string name) => $\"Could not move “{name}”. Nothing was changed.\";", source, StringComparison.Ordinal);
         // After the commit the banner is the moved text, plus TreeNotUpdatedNote when the tree could not be updated.
-        Assert.Contains("BannerMessage = MovedText(name, targetName) + (shown ? string.Empty : TreeNotUpdatedNote);", core, StringComparison.Ordinal);
+        // Phase 26: the same banner text, shown through ShowBanner (auto-hide only when the tree was updated).
+        Assert.Contains("ShowBanner(MovedText(name, targetName) + (shown ? string.Empty : TreeNotUpdatedNote), shown ? BannerKind.AutoDismiss : BannerKind.Persistent);", core, StringComparison.Ordinal);
         Assert.Contains("internal const string TreeNotUpdatedNote = \" The Workspace tree could not be updated.\";", source, StringComparison.Ordinal);
         Assert.Equal(1, CountOf(core, "_workspace.MoveAsync("));                                  // never a second Move
     }

@@ -79,6 +79,7 @@ public sealed class ProjectContentViewModel : ObservableObject
     private string? _loadError;
     private string? _containerMessage;
     private string? _bannerMessage;
+    private readonly BannerAutoDismiss _bannerAutoDismiss;
     private bool _isCheckingAll;
     private int _loadVersion;
     private int _generation;
@@ -109,6 +110,7 @@ public sealed class ProjectContentViewModel : ObservableObject
         TimeProvider? time = null,
         Func<bool>? noteAutoSave = null)
     {
+        _bannerAutoDismiss = new BannerAutoDismiss(() => BannerMessage = null);
         _content = content;
         _checker = checker;
         _dialogs = dialogs;
@@ -258,7 +260,35 @@ public sealed class ProjectContentViewModel : ObservableObject
     public bool IsFolderMissing => ContainerMessage is not null && CurrentFolderId is not null;
 
     /// <summary>Errors that changed nothing (open failures, write failures outside a dialog).</summary>
-    public string? BannerMessage { get => _bannerMessage; private set => SetProperty(ref _bannerMessage, value); }
+    public string? BannerMessage { get => _bannerMessage; private set => ShowBanner(value, BannerKind.Persistent); }
+
+    /// <summary>
+    /// Phase 26 (proposal Revision 2 §3.1, §3.2): shows a content message (null clears it). Every call is a new message turn, the same
+    /// text again included; <see cref="BannerKind.AutoDismiss"/> only at the reviewed success call site. The Trash notice (Undo) and
+    /// the Destination notice are separate strips and never auto-hide.
+    /// </summary>
+    private void ShowBanner(string? text, BannerKind kind)
+    {
+        SetProperty(ref _bannerMessage, text, nameof(BannerMessage));
+        _bannerAutoDismiss.OnShown(text, kind);
+    }
+
+    /// <summary>Phase 26: the content banner's 5-second schedule (tests read its turn, arm and pending state).</summary>
+    internal BannerAutoDismiss BannerAutoDismiss => _bannerAutoDismiss;
+
+    /// <summary>Tests (and the Workspace area): the banner clock.</summary>
+    internal IBannerClock BannerClock
+    {
+        get => _bannerAutoDismiss.Clock;
+        set => _bannerAutoDismiss.Clock = value;
+    }
+
+    /// <summary>Phase 26 §3.2 rule 11: the window reports the content banner's state (visible, pointer over it, focus inside it).</summary>
+    public void ReportBannerView(bool visible, bool pointerOver, bool focusWithin) =>
+        _bannerAutoDismiss.ReportView(visible, pointerOver, focusWithin);
+
+    /// <summary>Phase 26 §3.2 rule 9: the window closed; the content banner's timer is cancelled for good.</summary>
+    public void ShutdownBanner() => _bannerAutoDismiss.Shutdown();
 
     public bool IsCheckingAll
     {
@@ -466,6 +496,7 @@ public sealed class ProjectContentViewModel : ObservableObject
     public void Deactivate()
     {
         _isDeactivated = true;
+        _bannerAutoDismiss.Shutdown(); // Phase 26 rule 7/9: another Project is selected — this banner never counts again
         _loadVersion++;
         _loadCts?.Cancel();
         _loadCts = null;
@@ -932,7 +963,8 @@ public sealed class ProjectContentViewModel : ObservableObject
             var restored = result.Restored!;
             if (restored.ProjectNodeId != ProjectNodeId || restored.ContainerFolderId != CurrentFolderId)
             {
-                BannerMessage = $"Restored to {restored.ContainerPath}.";
+                // Phase 26 §2: a typed Restored outcome that lands elsewhere — the result carries no action, so it hides after 5 s.
+                ShowBanner($"Restored to {restored.ContainerPath}.", BannerKind.AutoDismiss);
                 return;
             }
 

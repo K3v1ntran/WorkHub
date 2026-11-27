@@ -265,7 +265,8 @@ public sealed partial class WorkspaceAreaViewModel
                 shown = false;
             }
 
-            BannerMessage = MovedText(name, targetName) + (shown ? string.Empty : TreeNotUpdatedNote);
+            // Phase 26 §2: the plain "Moved …" result hides after 5 s; with the tree-not-updated note it is a partial failure and stays.
+            ShowBanner(MovedText(name, targetName) + (shown ? string.Empty : TreeNotUpdatedNote), shown ? BannerKind.AutoDismiss : BannerKind.Persistent);
             return shown ? WorkspaceDropOutcome.Moved : WorkspaceDropOutcome.MovedTreeNotUpdated;
         }
         finally

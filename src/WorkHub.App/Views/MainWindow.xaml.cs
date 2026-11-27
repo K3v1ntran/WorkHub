@@ -45,6 +45,34 @@ public partial class MainWindow : Window
         WindowStateSaver?.OnWindowClosing(e.Cancel);
     }
 
+    /// <summary>Phase 26 §3.2 rule 9: once the window is closed no banner timer stays pending.</summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        Main?.Workspace.ShutdownBanners();
+        base.OnClosed(e);
+    }
+
+    // ---- Phase 26 (proposal Revision 2 §3.2 rule 11): the banners' view state. The view reports; the view model decides. ----
+
+    private void WorkspaceBanner_StateChanged(object sender, DependencyPropertyChangedEventArgs e) =>
+        ReportWorkspaceBanner(WorkspaceBannerBorder.IsMouseOver);
+
+    private void WorkspaceBanner_MouseChanged(object sender, MouseEventArgs e) =>
+        ReportWorkspaceBanner(e.RoutedEvent == MouseEnterEvent);
+
+    private void ReportWorkspaceBanner(bool pointerOver) =>
+        Main?.Workspace.ReportBannerView(WorkspaceBannerBorder.IsVisible, pointerOver, WorkspaceBannerBorder.IsKeyboardFocusWithin);
+
+    private void ContentBanner_StateChanged(object sender, DependencyPropertyChangedEventArgs e) =>
+        ReportContentBanner(ContentBannerBorder.IsMouseOver);
+
+    private void ContentBanner_MouseChanged(object sender, MouseEventArgs e) =>
+        ReportContentBanner(e.RoutedEvent == MouseEnterEvent);
+
+    /// <summary>Reported to the content view model the banner is bound to now (a newly selected Project gets the current state).</summary>
+    private void ReportContentBanner(bool pointerOver) =>
+        (ContentBannerBorder.DataContext as ProjectContentViewModel)?.ReportBannerView(ContentBannerBorder.IsVisible, pointerOver, ContentBannerBorder.IsKeyboardFocusWithin);
+
     /// <summary>The snapshot for the window-state save, read on the UI thread at the trigger.</summary>
     internal UiStateChanges? CaptureUiState()
     {

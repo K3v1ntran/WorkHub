@@ -43,6 +43,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
     private int _detailsVersion;
     private CancellationTokenSource? _detailsCts;
     private string? _bannerMessage;
+    private readonly BannerAutoDismiss _bannerAutoDismiss;
     private readonly ProjectContentService? _content;
     private readonly ILinkHealthChecker? _checker;
     private readonly LinkCheckCache _checkCache = new();
@@ -154,6 +155,8 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         WorkspaceSearchService? search = null, int searchDelayMs = WorkspaceSearchViewModel.DefaultDelayMs,
         SettingsService? settings = null)
     {
+        _bannerAutoDismiss = new BannerAutoDismiss(() => BannerMessage = null);
+        _bannerAutoDismiss.SetOwnerActive(false); // the Workspace tab is not selected yet
         _workspace = workspace;
         _dialogs = dialogs;
         _log = log;
@@ -479,6 +482,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         {
             if (!SetProperty(ref _isTabSelected, value))
                 return;
+            _bannerAutoDismiss.SetOwnerActive(value); // Phase 26 rule 7: hidden → cancel; shown again → a fresh 5 s
             if (value)
             {
                 _ = ActivateAsync();
@@ -600,6 +604,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         }
 
         var content = new ProjectContentViewModel(_content, _checker, _dialogs, _log, _checkCache, project.Id, project.Name, noteAutoSave: _noteAutoSave);
+        content.BannerClock = BannerClock; // Phase 26: the same clock as the Workspace banner (a test clock in tests)
         var projectId = project.Id;
         content.ProjectTrashedObserved = () => _ = ReconcileNodeAsync(projectId); // trashed by another window
         content.ProjectArchivedObserved = () => _ = ReconcileNodeAsync(projectId); // archived by another window (its listing says so)
@@ -645,18 +650,57 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
     /// <summary>"No longer exists" / load failure for the CURRENT selection only.</summary>
     public string? DetailsMessage { get => _detailsMessage; private set => SetProperty(ref _detailsMessage, value); }
 
-    /// <summary>The banner text. The Undo button sits in this banner: dismissing or replacing its message withdraws the Undo.</summary>
+    /// <summary>
+    /// The banner text. The Undo button sits in this banner: dismissing or replacing its message withdraws the Undo. Phase 26: every
+    /// write goes through <see cref="ShowBanner"/>; an assignment is a Persistent message.
+    /// </summary>
     public string? BannerMessage
     {
         get => _bannerMessage;
-        private set
+        private set => ShowBanner(value, BannerKind.Persistent);
+    }
+
+    /// <summary>
+    /// Phase 26 (proposal Revision 2 §3.1, §3.2): shows a message (null clears the banner). Every call is a new message turn, the same
+    /// text again included. <see cref="BannerKind.AutoDismiss"/> is chosen only at the reviewed success call sites; a message that
+    /// carries Undo or the Bulk Details is always Persistent.
+    /// </summary>
+    private void ShowBanner(string? text, BannerKind kind)
+    {
+        if (SetProperty(ref _bannerMessage, text, nameof(BannerMessage)))
         {
-            if (!SetProperty(ref _bannerMessage, value))
-                return;
-            if (_undo is not null && value != _undo.Message)
+            if (_undo is not null && text != _undo.Message)
                 ClearUndo();
             OnPropertyChanged(nameof(IsBulkDetailsAvailable));
         }
+
+        if (kind == BannerKind.AutoDismiss && (_undo is not null || IsBulkDetailsAvailable))
+            kind = BannerKind.Persistent; // D9(a), D12(a): Undo and Details keep their only access path
+        _bannerAutoDismiss.OnShown(text, kind);
+    }
+
+    /// <summary>Phase 26: the Workspace banner's 5-second schedule (tests read its turn, arm and pending state).</summary>
+    internal BannerAutoDismiss BannerAutoDismiss => _bannerAutoDismiss;
+
+    /// <summary>Tests: the banner clock; it is handed to every content view created afterwards.</summary>
+    internal IBannerClock BannerClock
+    {
+        get => _bannerAutoDismiss.Clock;
+        set => _bannerAutoDismiss.Clock = value;
+    }
+
+    /// <summary>
+    /// Phase 26 §3.2 rule 11: the window reports the Workspace banner's state — visible, pointer over it, keyboard focus inside it.
+    /// The view model alone decides when the message is cleared.
+    /// </summary>
+    public void ReportBannerView(bool visible, bool pointerOver, bool focusWithin) =>
+        _bannerAutoDismiss.ReportView(visible, pointerOver, focusWithin);
+
+    /// <summary>Phase 26 §3.2 rule 9: the main window closed; no banner timer stays pending.</summary>
+    public void ShutdownBanners()
+    {
+        _bannerAutoDismiss.Shutdown();
+        SelectedContent?.ShutdownBanner();
     }
 
     /// <summary>Phase 19: the banner shows a Bulk Archive or Bulk Undo summary, so its Details button is offered.</summary>
@@ -679,6 +723,8 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
     {
         InvalidateReveal();
         EndVisit();
+        _bannerAutoDismiss.SetOwnerActive(false); // Phase 26 rule 7: a Retry ends the visit — cancel, then count afresh while shown
+        _bannerAutoDismiss.SetOwnerActive(IsTabSelected);
         return _rootLoad = LoadRootsAsync();
     }
 
@@ -1013,9 +1059,10 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
     private async Task RevealTaggedProjectAsync(long projectNodeId)
     {
         var outcome = await RevealAsync(new SearchItemRef(SearchResultKind.Project, projectNodeId));
+        if (outcome is WorkspaceRevealOutcome.Selected or WorkspaceRevealOutcome.Superseded)
+            return; // Phase 26: the current message is kept as it is (not shown again, so its schedule is untouched)
         BannerMessage = outcome switch
         {
-            WorkspaceRevealOutcome.Selected or WorkspaceRevealOutcome.Superseded => BannerMessage,
             WorkspaceRevealOutcome.Archived => "The project is archived — it is selected under Archived.",
             WorkspaceRevealOutcome.InArchivedFolder => "The project is in an archived folder — that folder is selected under Archived.",
             WorkspaceRevealOutcome.NotFound => "The project no longer exists.",
@@ -1247,8 +1294,9 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         BannerMessage = $"Restoring “{undo.Name}”…";
         try
         {
-            var (notice, placed) = await RestoreCoreAsync(undo.NodeId, undo.Name);
-            BannerMessage = notice;
+            var (notice, placed, kind) = await RestoreCoreAsync(undo.NodeId, undo.Name);
+            // Phase 26 §3.3: the typed outcome decides; the notice is only displayed and placed only serves the tree / selection.
+            ShowBanner(notice, kind == RestoreResultKind.Restored ? BannerKind.AutoDismiss : BannerKind.Persistent);
             // Selected only while the Undo's visit is current and the user has not selected anything since the click.
             if (placed is not null && visit == _visit && selection == _selectionVersion && _nodes.TryGetValue(undo.NodeId, out var restored) && ReferenceEquals(restored, placed))
                 SelectedNode = placed;
@@ -1288,7 +1336,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
     }
 
     /// <summary>The Restore store call and its by-Id application; the caller holds the lifecycle slot.</summary>
-    private async Task<(string Notice, WorkspaceNodeViewModel? Placed)> RestoreCoreAsync(long nodeId, string name)
+    private async Task<(string Notice, WorkspaceNodeViewModel? Placed, RestoreResultKind Kind)> RestoreCoreAsync(long nodeId, string name)
     {
         ProjectRestoreResult result;
         try
@@ -1298,48 +1346,56 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         catch (Exception ex)
         {
             _log.Error("Restore project from the Trash failed.", ex); // operation only; no names
-            return ($"Could not restore “{name}”. It is still in the Trash.", null);
+            return ($"Could not restore “{name}”. It is still in the Trash.", null, RestoreResultKind.Failed);
         }
 
         WorkspaceNodeViewModel? placed = null;
         string notice;
+        RestoreResultKind kind; // Phase 26 §3.3: set in the same arm as the notice
         switch (result.Outcome)
         {
             case ProjectRestoreOutcome.Restored when result.Restored!.IsArchived:
                 // Archived and trashed by an earlier build: it comes back archived, so the tree does not show it (§10.6).
                 Touch(nodeId);
                 notice = $"Restored “{result.Restored.Node.Name}”. It is archived: find it under Archived.";
+                kind = RestoreResultKind.RestoredArchived; // a notice telling where to find it: stays
                 Trash.RemoveEntry(nodeId);
                 _ = Archived.RefreshCount();
                 break;
             case ProjectRestoreOutcome.Restored:
                 placed = await ApplyRestoredAsync(result.Restored!.Node);
                 notice = $"Restored “{result.Restored.Node.Name}” to {result.Restored.ParentPath ?? "Workspace (top level)"}.";
+                kind = RestoreResultKind.Restored;
                 Trash.RemoveEntry(nodeId);
                 break;
             case ProjectRestoreOutcome.NameConflict:
                 notice = $"The folder it came from already contains “{result.BlockingName ?? name}”. Rename or move that item first; nothing was restored.";
+                kind = RestoreResultKind.Refused;
                 break;
             case ProjectRestoreOutcome.ParentArchived:
                 notice = $"“{name}” is in an archived folder. Unarchive that folder first; nothing was restored.";
+                kind = RestoreResultKind.Refused;
                 break;
             case ProjectRestoreOutcome.ParentTrashed:
                 notice = $"The folder “{name}” came from is in the Trash. Restore that folder first; nothing was restored.";
+                kind = RestoreResultKind.Refused;
                 break;
             case ProjectRestoreOutcome.NotTrashed:
                 notice = $"“{name}” is no longer in the Trash (it may have been restored in another window).";
+                kind = RestoreResultKind.AlreadyCleared;
                 Trash.RemoveEntry(nodeId);
                 Touch(nodeId); // reads that started earlier are re-read; the tree shows it with the next load of its parent
                 break;
             default:
                 notice = "This project no longer exists.";
+                kind = RestoreResultKind.Missing;
                 Trash.RemoveEntry(nodeId);
                 ApplyRemoved(nodeId);
                 break;
         }
 
         Trash.OnLifecycleCompleted();
-        return (notice, placed);
+        return (notice, placed, kind);
     }
 
     // ---- Project Archive (Phase 12 proposal revision 3 §3, §6, §8) ---------------------------------------------------------
@@ -1449,7 +1505,8 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
                     var placed = await ApplyRestoredAsync(result.Restored!.Node);
                     Archived.RemoveEntry(undo.NodeId);
                     Search?.MarkArchived(undo.NodeId, archived: false);
-                    BannerMessage = $"Restored “{result.Restored.Node.Name}” to {result.Restored.ParentPath ?? "Workspace (top level)"}.";
+                    // Phase 26 §2: the typed Undone outcome; the Undo is consumed and none is offered, so the result hides after 5 s.
+                    ShowBanner($"Restored “{result.Restored.Node.Name}” to {result.Restored.ParentPath ?? "Workspace (top level)"}.", BannerKind.AutoDismiss);
                     // Selected only while the Undo's visit is current and the user has not selected anything since the click.
                     if (placed is not null && visit == _visit && selection == _selectionVersion && _nodes.TryGetValue(undo.NodeId, out var restored) && ReferenceEquals(restored, placed))
                         SelectedNode = placed;
@@ -2136,7 +2193,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
                 case FolderRemoveOutcome.Removed:
                     ApplyRemoved(id);
                     Search?.RemoveResult(new SearchItemRef(SearchResultKind.WorkspaceFolder, id));
-                    BannerMessage = $"Removed the empty folder “{name}”.";
+                    ShowBanner($"Removed the empty folder “{name}”.", BannerKind.AutoDismiss); // Phase 26 §2: a result without any action
                     break;
                 case FolderRemoveOutcome.NotEmpty:
                     if (_nodes.TryGetValue(id, out var folder))
@@ -2316,8 +2373,9 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         BannerMessage = $"Restoring “{undo.Name}”…";
         try
         {
-            var (notice, placed) = await ClearFolderCoreAsync(undo.NodeId, undo.Name, lifecycleEvent.Kind, lifecycleEvent);
-            BannerMessage = notice;
+            var (notice, placed, kind) = await ClearFolderCoreAsync(undo.NodeId, undo.Name, lifecycleEvent.Kind, lifecycleEvent);
+            // Phase 26 §3.3: the typed outcome decides; the notice is only displayed and placed only serves the tree / selection.
+            ShowBanner(notice, kind == RestoreResultKind.Restored ? BannerKind.AutoDismiss : BannerKind.Persistent);
             // Selected only while the Undo's visit is current and the user has not selected anything since the click (C7).
             if (placed is not null && visit == _visit && selection == _selectionVersion && _nodes.TryGetValue(undo.NodeId, out var restored) && ReferenceEquals(restored, placed))
                 SelectedNode = placed;
@@ -2332,7 +2390,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
     /// Unarchive or Restore of a Folder (from a panel), or the Undo of one event; the caller holds the lifecycle slot. Never changes
     /// the selection. The committed result is placed by C9.
     /// </summary>
-    private async Task<(string Notice, WorkspaceNodeViewModel? Placed)> ClearFolderCoreAsync(long nodeId, string name, FolderLifecycleKind kind, FolderLifecycleEvent? lifecycleEvent)
+    private async Task<(string Notice, WorkspaceNodeViewModel? Placed, RestoreResultKind Kind)> ClearFolderCoreAsync(long nodeId, string name, FolderLifecycleKind kind, FolderLifecycleEvent? lifecycleEvent)
     {
         FolderClearResult result;
         try
@@ -2344,16 +2402,18 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
         catch (Exception ex)
         {
             _log.Error(kind == FolderLifecycleKind.Archive ? "Unarchive folder failed." : "Restore folder from the Trash failed.", ex); // no names
-            return (kind == FolderLifecycleKind.Archive ? $"Could not unarchive “{name}”. It is still archived." : $"Could not restore “{name}”. It is still in the Trash.", null);
+            return (kind == FolderLifecycleKind.Archive ? $"Could not unarchive “{name}”. It is still archived." : $"Could not restore “{name}”. It is still in the Trash.", null, RestoreResultKind.Failed);
         }
 
         WorkspaceNodeViewModel? placed = null;
         string notice;
+        RestoreResultKind resultKind; // Phase 26 §3.3: set in the same arm as the notice
         switch (result.Outcome)
         {
             case FolderClearOutcome.Cleared:
                 placed = await ApplyRestoredAsync(result.Folder!.Node);
                 notice = $"{(kind == FolderLifecycleKind.Archive ? "Unarchived" : "Restored")} folder “{result.Folder.Node.Name}” to {result.Folder.ParentPath ?? "Workspace (top level)"}.";
+                resultKind = RestoreResultKind.Restored;
                 if (kind == FolderLifecycleKind.Archive)
                     Search?.MarkFolderArchived(nodeId, archived: false);
                 RemovePanelEntry(nodeId, kind);
@@ -2361,24 +2421,30 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
             case FolderClearOutcome.NotArchived or FolderClearOutcome.NotTrashed:
                 Touch(nodeId); // cleared elsewhere: reads that started earlier are re-read; the tree shows it with the next load of its parent
                 notice = kind == FolderLifecycleKind.Archive ? $"“{name}” is no longer archived." : $"“{name}” is no longer in the Trash (it may have been restored in another window).";
+                resultKind = RestoreResultKind.AlreadyCleared;
                 RemovePanelEntry(nodeId, kind);
                 break;
             case FolderClearOutcome.MarkedAgain:
                 notice = kind == FolderLifecycleKind.Archive
                     ? $"“{name}” was archived again elsewhere. Undo is no longer available; use Archived to unarchive it."
                     : $"“{name}” was moved to the Trash again elsewhere. Undo is no longer available; use the Trash to restore it.";
+                resultKind = RestoreResultKind.Refused;
                 break;
             case FolderClearOutcome.ParentArchived:
                 notice = $"“{name}” is inside an archived folder. Unarchive that folder first; nothing was changed.";
+                resultKind = RestoreResultKind.Refused;
                 break;
             case FolderClearOutcome.ParentTrashed:
                 notice = $"The folder that holds “{name}” is in the Trash. Restore that folder first; nothing was changed.";
+                resultKind = RestoreResultKind.Refused;
                 break;
             case FolderClearOutcome.NameConflict:
                 notice = $"The folder it came from already contains “{result.BlockingName ?? name}”. Rename or move that item first; nothing was restored.";
+                resultKind = RestoreResultKind.Refused;
                 break;
             default:
                 notice = "This folder no longer exists.";
+                resultKind = RestoreResultKind.Missing;
                 RemovePanelEntry(nodeId, kind);
                 ApplyRemoved(nodeId);
                 break;
@@ -2386,7 +2452,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
 
         Trash.OnLifecycleCompleted();
         Archived.OnLifecycleCompleted();
-        return (notice, placed);
+        return (notice, placed, resultKind);
     }
 
     private void RemovePanelEntry(long nodeId, FolderLifecycleKind kind)
@@ -2948,6 +3014,7 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
 
     private void OfferUndo(UndoOffer offer)
     {
+        _bannerAutoDismiss.MakePersistent(); // Phase 26 rule 8: a message with Undo never auto-hides (D9(a))
         _undo = offer;
         OnPropertyChanged(nameof(IsUndoAvailable));
         UndoCommand.RaiseCanExecuteChanged();
@@ -3046,9 +3113,10 @@ public sealed partial class WorkspaceAreaViewModel : ObservableObject
             _ => SearchResultKind.Note,
         };
         var outcome = await RevealAsync(new SearchItemRef(kind, item.Id));
+        if (outcome is WorkspaceRevealOutcome.Selected or WorkspaceRevealOutcome.Superseded)
+            return; // Phase 26: the current message is kept as it is (not shown again, so its schedule is untouched)
         BannerMessage = outcome switch
         {
-            WorkspaceRevealOutcome.Selected or WorkspaceRevealOutcome.Superseded => BannerMessage,
             WorkspaceRevealOutcome.NotFound => "The copy no longer exists.",
             WorkspaceRevealOutcome.Trashed => "The copy is in the Trash.",
             WorkspaceRevealOutcome.FolderTrashed => "The copy's folder is in the Trash.",

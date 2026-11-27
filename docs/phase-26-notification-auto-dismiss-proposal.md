@@ -1,8 +1,8 @@
 # WorkHub Phase 26 proposal: operation messages hide after 5 seconds
 
-Revision 2 (for review). Baseline: `main` = `0f42125` (Phase 25 merged); Revision 1 at `91d8380`. Branch
-`codex/phase-26-notification-auto-dismiss`. Request R3 of the Phase 25 proposal (§1 R3, §5 D7–D9). Nothing here is implemented yet;
-every Phase 26 decision (§6) is open.
+Revision 2 (approved). Baseline: `main` = `0f42125` (Phase 25 merged); Revision 1 at `91d8380`, Revision 2 at `ed6cb2c`. Branch
+`codex/phase-26-notification-auto-dismiss`. Request R3 of the Phase 25 proposal (§1 R3, §5 D7–D9). D7–D9 and D12–D16 are approved as
+recommended (§6). Implemented on this branch after `ed6cb2c`; verification pending (§8).
 
 ### Revision 1 → Revision 2
 
@@ -73,7 +73,7 @@ Archived), **Actionable** (the message carries Undo, Details, Edit, Fix or Open 
 | Restore / Unarchive from the Workspace Trash or Archived panel (`RestoreFromTrashAsync`, `:1264–1288`, and the Archived panel's Unarchive through `ClearFolderCoreAsync`, `:1789`) — the text goes to the **panel**, not the banner | panel notice | unchanged (out of scope) |
 | Content: "Restored to {path}." (`ProjectContentViewModel.cs:935`) | Result | **auto-hide** |
 | "Moved “X” to the Trash." (`:1198`), "Archived “X”." (`:1389`), "Archived folder / Moved folder … to the Trash." (`:2260`) — Undo offered | Result + Undo | keep while Undo is offered (D9) |
-| Bulk Archive summary (`:1633`, Details + Undo), Bulk Unarchive summary (`:1769`, Details) | Result + Details | keep (D12) |
+| Bulk Archive summary (`:1633`, Details + Undo), Bulk Undo summary (`:1769`, Details) | Result + Details | keep (D12) |
 | "Moving … to the Trash…", "Archiving …", "Restoring …", "Archiving N projects…", "Archiving folder …" (`:1178`, `:1369`, `:1247`, `:1431`, `:1554`, `:1698`, `:2227`, `:2316`) | Progress | keep (replaced by the result) |
 | "Could not … Nothing was changed.", `ReportError` texts, typed refusals ("This project is archived. Unarchive it first.", duplicate name, cycle, "No projects to archive here.", "… changed since you confirmed. Review it again.") | Error / refusal | keep |
 | Reconcile / reveal notices ("The project is archived — it is selected under Archived.", "This folder no longer exists.", "This item's folder is in the Trash.", `:1016`, `:2490`, `:3049`) | Notice | keep (D16) |
@@ -202,7 +202,7 @@ Proposed:
 | AD8 | result A while the Workspace tab is hidden | no timer until the tab is shown; then 5 s |
 | AD9 | Move to Trash success (Undo offered); advance any time | no timer; message and Undo stay until replaced or dismissed (D9(a)) |
 | AD10 | Archive success, Folder Archive / Trash success (Undo offered) | as AD9 |
-| AD11 | Bulk Archive summary with Details (and Undo); Bulk Unarchive summary with Details | no timer; Details stays available |
+| AD11 | Bulk Archive summary with Details (and Undo); Bulk Undo summary with Details | no timer; Details stays available |
 | AD12 | progress "Archiving “X”…" then the store is held (gate) | no timer while progress shows; the result that follows decides |
 | AD13 | every refusal / error listed in §2 (sampled per family: Could not…, typed refusal, reconcile notice, ReportError, preferences) | Persistent: no timer |
 | AD14 | drop with the tree not updated ("… could not be updated.") | Persistent |
@@ -250,7 +250,13 @@ Proposed:
 | GT26-9 | drop P onto F and press Dismiss at once | gone at once; no later flicker |
 | GT26-10 | Owner / Repository open failure | banner stays (unchanged) |
 
-## 6. Decisions for review
+## 6. Decisions (D7–D9, D12–D16 approved)
+
+Approved as recommended: **D7(a)** only the successful results listed in §2, without any action in them, auto-hide; **D8** each new
+message (same text included) has its own 5-second schedule; **D9(a)** and **D12(a)** banners with Undo or Details stay; **D13(a)** count
+only while the banner is visible, a fresh 5 s when it is shown again; **D14(a)** hold while the pointer is over the banner or keyboard
+focus is inside it, a fresh 5 s once both are outside; **D15(a)** Owner and Repository banners unchanged; **D16(a)** reconcile and
+reveal notices stay. The options as they were proposed:
 
 - **D7 which messages auto-hide**: (a) only successful results without Undo, Details or another action (§2; recommended);
   (b) also reconcile / reveal notices; (c) every non-error message.
@@ -271,3 +277,44 @@ Proposed:
 
 Schema, migrations, packages, version, Phase 25 behaviour other than the drop's success message timing, the .NET 8 legacy variant.
 No release.
+
+## 8. Implementation status (pending verification)
+
+Implemented on `codex/phase-26-notification-auto-dismiss` after `ed6cb2c`. The solution builds in Debug and Release (0 warnings,
+0 errors). Tests and contracts are written but **not run**; no GUI run. Pending: `BannerAutoDismissTests` (AD1–AD16b, AD18),
+`ContentBannerAutoDismissTests` (content success, AD17, AD19), `Phase26ContractTests` (TG26-C1–C6) and the synced `Phase25ContractTests`
+in Debug and Release; the full suites; GUI GT26-1–12 (with GT26-6b) on a Windows test profile. Phase 25 evidence (§0, including the
+failing full-suite figures and O2 with no known cause) and the separately tracked Phase 15–23, D10 and P3 items are unchanged.
+Toolbar button customisation stays in Phase 27.
+
+Files:
+
+- `BannerAutoDismiss.cs` (new): `BannerKind`, `IBannerClock` / `TaskDelayBannerClock`, the per-banner schedule `BannerAutoDismiss`
+  (message turn, timer arm, rules 1–10 of §3.2) and `RestoreResultKind` (§3.3).
+- `WorkspaceAreaViewModel.cs`: `BannerMessage` setter → `ShowBanner(value, Persistent)`; `ShowBanner` with the Undo / Details guard;
+  `ReportBannerView`, `ShutdownBanners`, `BannerClock` (handed to each new content view); tab selection and Retry drive the owner
+  state; `OfferUndo` makes the message Persistent; `AutoDismiss` at Removed empty folder and the Undo Archive `Undone` arm;
+  `RestoreCoreAsync` / `ClearFolderCoreAsync` return `RestoreResultKind`, and `UndoCoreAsync` / `UndoFolderCoreAsync` choose the kind
+  from it. `WorkspaceAreaViewModel.DragDrop.cs`: the drop result is `AutoDismiss` only when the tree was updated.
+- `ProjectContentViewModel.cs`: the same entry point; `AutoDismiss` only for "Restored to …" after a typed `Restored` outcome;
+  `Deactivate` shuts the schedule down; the Trash notice (Undo) and the Destination notice are unchanged.
+- `MainWindow.xaml` / `.xaml.cs`: both banner borders report visible / pointer over / keyboard focus within; `OnClosed` shuts the
+  timers down. The view never clears a banner.
+
+Notes and deviations (for review):
+
+- **Persistent through the setter.** The proposal says every write goes through `ShowBanner`; the existing ~80 assignments were kept
+  as `BannerMessage = …`, and the private setter itself is `ShowBanner(value, BannerKind.Persistent)`, so every write does go through
+  it with Persistent as the default (TG26-C1). Only the reviewed sites call `ShowBanner(…, AutoDismiss)` (TG26-C2).
+- **Reveal outcomes that keep the message.** Two reveal handlers re-assigned the current text (`Selected` / `Superseded =>
+  BannerMessage`). That would now start a new turn and stop a running countdown, so they return early instead; the text shown is the
+  same as before.
+- **Phase 25 contract sync.** TG25-C2 asserted the old drop banner line; the assertion now names the `ShowBanner(…)` line with the same
+  text (no other Phase 25 assertion changed).
+- **Visibility.** "Visible" is the window's report (`IsVisible` of the banner border, which also covers the tab and the message being
+  set) combined with the owner state (Workspace tab selected; content view not deactivated). A content view is created per Project, so
+  its `Deactivate` ends its schedule for good (rule 7 / 9).
+- **§2 / AD11 wording.** `:1769` is the **Bulk Undo** summary (it carries Details), not a Bulk Unarchive summary; the Bulk Unarchive
+  result is the Archived panel's own notice. AD11 covers the Bulk Archive and Bulk Undo summaries.
+- **Sampling.** AD13 samples a typed drop refusal and the not-empty folder notice; AD19 covers the content Trash notice and a content
+  Undo refusal. The Destination notice and the Owner / Repository banners are covered by contract (TG26-C2, TG26-C4), not by a view-model case.

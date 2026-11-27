@@ -830,8 +830,11 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- Workspace banner (errors that did not change anything) -->
-                    <Border Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
+                    <!-- Workspace banner (errors that did not change anything). Phase 26: the view only reports visible / pointer / focus;
+                         the view model decides when a reviewed success result hides. -->
+                    <Border x:Name="WorkspaceBannerBorder" Grid.Row="0" Grid.ColumnSpan="3" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}"
+                            IsVisibleChanged="WorkspaceBanner_StateChanged" IsKeyboardFocusWithinChanged="WorkspaceBanner_StateChanged"
+                            MouseEnter="WorkspaceBanner_MouseChanged" MouseLeave="WorkspaceBanner_MouseChanged">
                         <Border.Style>
                             <Style TargetType="Border" BasedOn="{StaticResource Banner}">
                                 <Style.Triggers>
@@ -1666,7 +1669,10 @@
                             </WrapPanel>
                         </Border>
 
-                        <Border DockPanel.Dock="Top" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}">
+                        <!-- Content banner. Phase 26: the view only reports visible / pointer / focus to the current content view model. -->
+                        <Border x:Name="ContentBannerBorder" DockPanel.Dock="Top" Background="{StaticResource Brush.ErrorBackground}" BorderBrush="{StaticResource Brush.Border}"
+                                IsVisibleChanged="ContentBanner_StateChanged" IsKeyboardFocusWithinChanged="ContentBanner_StateChanged" DataContextChanged="ContentBanner_StateChanged"
+                                MouseEnter="ContentBanner_MouseChanged" MouseLeave="ContentBanner_MouseChanged">
                             <Border.Style>
                                 <Style TargetType="Border" BasedOn="{StaticResource Banner}">
                                     <Style.Triggers>
