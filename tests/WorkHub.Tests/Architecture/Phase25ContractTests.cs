@@ -71,7 +71,14 @@ public sealed class Phase25ContractTests
         Assert.Equal(1, CountOf(core, "CouldNotMoveText(name)"));
         var writeCatch = Between(core, "result = await _workspace.MoveAsync(sourceId, targetId);", "if (!result.Succeeded)");
         Assert.Contains("CouldNotMoveText(name)", writeCatch, StringComparison.Ordinal);
-        Assert.DoesNotContain("Nothing was changed", core, StringComparison.Ordinal);
+        // Banner text only (string literals; comments are not banner text): the core writes no "Nothing was changed" of its own, and the
+        // only drop banner literal carrying it is CouldNotMoveText's.
+        Assert.DoesNotContain(StringLiterals(core), l => l.Contains("Nothing was changed", StringComparison.Ordinal));
+        Assert.Equal(["Could not move “{name}”. Nothing was changed."],
+            StringLiterals(source).Where(l => l.Contains("Nothing was changed", StringComparison.Ordinal)));
+        Assert.Contains("internal static string CouldNotMoveText(string name) => $\"Could not move “{name}”. Nothing was changed.\";", source, StringComparison.Ordinal);
+        // After the commit the banner is the moved text, plus TreeNotUpdatedNote when the tree could not be updated.
+        Assert.Contains("BannerMessage = MovedText(name, targetName) + (shown ? string.Empty : TreeNotUpdatedNote);", core, StringComparison.Ordinal);
         Assert.Contains("internal const string TreeNotUpdatedNote = \" The Workspace tree could not be updated.\";", source, StringComparison.Ordinal);
         Assert.Equal(1, CountOf(core, "_workspace.MoveAsync("));                                  // never a second Move
     }
@@ -120,14 +127,16 @@ public sealed class Phase25ContractTests
         // Review fix: both drop handlers report the view model's synchronous acceptance; nothing reports Move on its own at drop time.
         Assert.DoesNotContain("workspace.MoveByDropAsync(", code, StringComparison.Ordinal);
         Assert.Equal(2, CountOf(code, "e.Effects = ToWpf(workspace.Drop("));
+        Assert.Contains("private void WorkspaceTree_Drop(object sender, DragEventArgs e)", code, StringComparison.Ordinal);   // synchronous handlers
+        Assert.Contains("private void RootDropStrip_Drop(object sender, DragEventArgs e)", code, StringComparison.Ordinal);
         foreach (var drop in new[]
                  {
                      Between(code, "private void WorkspaceTree_Drop(", "private static DragDropEffects ToWpf("),
                      Between(code, "private void RootDropStrip_Drop(", "\n    }"),
                  })
         {
+            Assert.Equal(1, CountOf(drop, "e.Effects = ToWpf(workspace.Drop("));                      // the effect is the view model's acceptance
             Assert.DoesNotContain("e.Effects = DragDropEffects.Move;", drop, StringComparison.Ordinal);
-            Assert.DoesNotContain("await", drop, StringComparison.Ordinal);
         }
 
         Assert.Contains("workspace.DragHoverEnter(drag.Session, hover, FolderRowUnderPointer);", code, StringComparison.Ordinal);
@@ -166,6 +175,45 @@ public sealed class Phase25ContractTests
         for (var i = text.IndexOf(value, StringComparison.Ordinal); i >= 0; i = text.IndexOf(value, i + value.Length, StringComparison.Ordinal))
             count++;
         return count;
+    }
+
+    /// <summary>The contents of the regular and interpolated string literals in C# source, skipping comments and char literals.</summary>
+    private static List<string> StringLiterals(string code)
+    {
+        var literals = new List<string>();
+        for (var i = 0; i < code.Length; i++)
+        {
+            if (code[i] == '/' && i + 1 < code.Length && code[i + 1] == '/')
+            {
+                while (i < code.Length && code[i] != '\n')
+                    i++;
+            }
+            else if (code[i] == '/' && i + 1 < code.Length && code[i + 1] == '*')
+            {
+                var close = code.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                i = close < 0 ? code.Length : close + 1;
+            }
+            else if (code[i] == '\'')
+            {
+                for (i++; i < code.Length && code[i] != '\''; i++)
+                    if (code[i] == '\\')
+                        i++;
+            }
+            else if (code[i] == '"')
+            {
+                var text = new System.Text.StringBuilder();
+                for (i++; i < code.Length && code[i] != '"'; i++)
+                {
+                    if (code[i] == '\\' && i + 1 < code.Length)
+                        text.Append(code[i++]);
+                    text.Append(code[i]);
+                }
+
+                literals.Add(text.ToString());
+            }
+        }
+
+        return literals;
     }
 
     private static string FindRepoRoot()
